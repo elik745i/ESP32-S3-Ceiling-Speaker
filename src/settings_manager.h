@@ -1,0 +1,33 @@
+#pragma once
+
+#include <Arduino.h>
+#include <ArduinoJson.h>
+#include <Preferences.h>
+
+#include "settings_schema.h"
+
+class SettingsManager {
+  public:
+    bool begin();
+    SettingsBundle load();
+    bool save(const SettingsBundle& settings);
+    bool reset();
+    SettingsBundle defaults() const;
+    void toJson(const SettingsBundle& settings, JsonObject root) const;
+    bool updateFromJson(SettingsBundle& settings, JsonVariantConst root, String& error) const;
+
+  private:
+    Preferences preferences_;
+
+    SettingsBundle sanitize(const SettingsBundle& input) const;
+    bool writeStringIfChanged(const char* key, const String& value);
+    bool writeBoolIfChanged(const char* key, bool value);
+    bool writeUIntIfChanged(const char* key, uint32_t value);
+    bool writeIntIfChanged(const char* key, int32_t value);
+    bool writeFloatIfChanged(const char* key, float value);
+    String readString(const char* key, const String& fallback);
+    bool readBool(const char* key, bool fallback);
+    uint32_t readUInt(const char* key, uint32_t fallback);
+    int32_t readInt(const char* key, int32_t fallback);
+    float readFloat(const char* key, float fallback);
+};

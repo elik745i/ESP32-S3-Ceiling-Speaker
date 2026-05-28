@@ -1,0 +1,200 @@
+#include "app_state.h"
+
+#include <cstring>
+
+namespace {
+void lockAppState(SemaphoreHandle_t mutex) {
+    if (mutex != nullptr) {
+        xSemaphoreTake(mutex, portMAX_DELAY);
+    }
+}
+
+void unlockAppState(SemaphoreHandle_t mutex) {
+    if (mutex != nullptr) {
+        xSemaphoreGive(mutex);
+    }
+}
+}  // namespace
+
+AppState::AppState() : mutex_(nullptr), mutexBuffer_{} {}
+
+AppState::~AppState() {
+    mutex_ = nullptr;
+}
+
+bool AppState::begin() {
+    return ensureMutex();
+}
+
+bool AppState::ensureMutex() const {
+    if (mutex_ != nullptr) {
+        return true;
+    }
+
+    memset(&mutexBuffer_, 0, sizeof(mutexBuffer_));
+    mutex_ = xSemaphoreCreateMutexStatic(&mutexBuffer_);
+    return mutex_ != nullptr;
+}
+
+void AppState::setDevice(const String& deviceName, const String& friendlyName, bool usingSaved) {
+    if (!ensureMutex()) {
+        return;
+    }
+    lockAppState(mutex_);
+    state_.device.deviceName = deviceName;
+    state_.device.friendlyName = friendlyName;
+    state_.settings.usingSaved = usingSaved;
+    unlockAppState(mutex_);
+}
+
+void AppState::setWiFiStatus(bool connected, bool apMode, const String& ssid, const IPAddress& ip, int32_t rssi, const String& apSsid) {
+    if (!ensureMutex()) {
+        return;
+    }
+    lockAppState(mutex_);
+    state_.network.wifiConnected = connected;
+    state_.network.apMode = apMode;
+    state_.network.ssid = ssid;
+    state_.network.ip = ip.toString();
+    state_.network.wifiRssi = rssi;
+    state_.network.apSsid = apSsid;
+    unlockAppState(mutex_);
+}
+
+void AppState::setMqttConnected(bool connected) {
+    if (!ensureMutex()) {
+        return;
+    }
+    lockAppState(mutex_);
+    state_.network.mqttConnected = connected;
+    unlockAppState(mutex_);
+}
+
+void AppState::setPlayback(const String& state, const String& type, const String& title, const String& url, const String& source, uint8_t volumePercent) {
+    if (!ensureMutex()) {
+        return;
+    }
+    lockAppState(mutex_);
+    if (state_.playback.state == state && state_.playback.type == type && state_.playback.title == title &&
+        state_.playback.url == url && state_.playback.source == source && state_.playback.volumePercent == volumePercent) {
+        unlockAppState(mutex_);
+        return;
+    }
+    state_.playback.state = state;
+    state_.playback.type = type;
+    state_.playback.title = title;
+    state_.playback.url = url;
+    state_.playback.source = source;
+    state_.playback.volumePercent = volumePercent;
+    unlockAppState(mutex_);
+}
+
+void AppState::setBattery(float voltage, float rawAdcVoltage, uint16_t rawAdc, bool charging) {
+    if (!ensureMutex()) {
+        return;
+    }
+    lockAppState(mutex_);
+    state_.battery.voltage = voltage;
+    state_.battery.rawAdcVoltage = rawAdcVoltage;
+    state_.battery.rawAdc = rawAdc;
+    state_.battery.charging = charging;
+    unlockAppState(mutex_);
+}
+
+void AppState::setOta(bool busy, bool updateAvailable, const String& latestVersion, const String& lastResult, const String& lastError,
+                      const String& phase, uint8_t progressPercent) {
+    if (!ensureMutex()) {
+        return;
+    }
+    lockAppState(mutex_);
+    state_.ota.busy = busy;
+    state_.ota.updateAvailable = updateAvailable;
+    state_.ota.latestVersion = latestVersion;
+    state_.ota.lastResult = lastResult;
+    state_.ota.lastError = lastError;
+    state_.ota.phase = phase;
+    state_.ota.progressPercent = progressPercent;
+    unlockAppState(mutex_);
+}
+
+void AppState::setLastError(const String& lastError) {
+    if (!ensureMutex()) {
+        return;
+    }
+    lockAppState(mutex_);
+    if (state_.system.lastError == lastError) {
+        unlockAppState(mutex_);
+        return;
+    }
+    state_.system.lastError = lastError;
+    unlockAppState(mutex_);
+}
+
+void AppState::setFreeHeap(uint32_t freeHeap) {
+    if (!ensureMutex()) {
+        return;
+    }
+    lockAppState(mutex_);
+    if (state_.system.freeHeap == freeHeap) {
+        unlockAppState(mutex_);
+        return;
+    }
+    state_.system.freeHeap = freeHeap;
+    unlockAppState(mutex_);
+}
+
+AppStateSnapshot AppState::snapshot() const {
+    if (!ensureMutex()) {
+        return state_;
+    }
+    lockAppState(mutex_);
+    AppStateSnapshot copy = state_;
+    unlockAppState(mutex_);
+    return copy;
+}
+
+void AppState::toJson(JsonObject root) const {
+    const AppStateSnapshot copy = snapshot();
+    JsonObject device = root["device"].to<JsonObject>();
+    device["deviceName"] = copy.device.deviceName;
+    device["friendlyName"] = copy.device.friendlyName;
+
+    JsonObject network = root["network"].to<JsonObject>();
+    network["wifiConnected"] = copy.network.wifiConnected;
+    network["apMode"] = copy.network.apMode;
+    network["mqttConnected"] = copy.network.mqttConnected;
+    network["ssid"] = copy.network.ssid;
+    network["ip"] = copy.network.ip;
+    network["apSsid"] = copy.network.apSsid;
+    network["wifiRssi"] = copy.network.wifiRssi;
+
+    JsonObject playback = root["playback"].to<JsonObject>();
+    playback["state"] = copy.playback.state;
+    playback["type"] = copy.playback.type;
+    playback["title"] = copy.playback.title;
+    playback["url"] = copy.playback.url;
+    playback["source"] = copy.playback.source;
+    playback["volumePercent"] = copy.playback.volumePercent;
+
+    JsonObject battery = root["battery"].to<JsonObject>();
+    battery["voltage"] = copy.battery.voltage;
+    battery["rawAdcVoltage"] = copy.battery.rawAdcVoltage;
+    battery["rawAdc"] = copy.battery.rawAdc;
+    battery["charging"] = copy.battery.charging;
+
+    JsonObject ota = root["ota"].to<JsonObject>();
+    ota["busy"] = copy.ota.busy;
+    ota["updateAvailable"] = copy.ota.updateAvailable;
+    ota["latestVersion"] = copy.ota.latestVersion;
+    ota["lastResult"] = copy.ota.lastResult;
+    ota["lastError"] = copy.ota.lastError;
+    ota["phase"] = copy.ota.phase;
+    ota["progressPercent"] = copy.ota.progressPercent;
+
+    JsonObject settings = root["settings"].to<JsonObject>();
+    settings["usingSaved"] = copy.settings.usingSaved;
+
+    JsonObject system = root["system"].to<JsonObject>();
+    system["freeHeap"] = copy.system.freeHeap;
+    system["lastError"] = copy.system.lastError;
+}

@@ -1,0 +1,13 @@
+.pio/
+.vscode/
+.idea/
+compile_commands.json
+src/generated_web_assets.cpp
+include/generated_web_assets.h
+*.bin
+*.elf
+*.map
+*.log
+build.log
+upload_check.log
+

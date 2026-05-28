@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32 Notifier</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <div class="hero-header">
+        <h1 id="deviceTitle">ESP32 Notifier</h1>
+      </div>
+
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-label">Wi-Fi</div>
+          <div class="stat-value" id="wifiPill">-</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">MQTT</div>
+          <div class="stat-value" id="mqttPill">-</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Playback</div>
+          <div class="stat-value" id="audioPill">-</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Battery</div>
+          <div class="stat-value" id="batteryHero">-</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="grid">
+      <section class="panel panel-wide">
+        <div class="tabs" role="tablist" aria-label="Notifier tabs">
+          <button class="tab-button" type="button" role="tab" aria-selected="true" aria-controls="tab-info" data-tab="info">Info</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-playback" data-tab="playback">Audio</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-wifi" data-tab="wifi">Wi-Fi</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-mqtt" data-tab="mqtt">MQTT</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-battery" data-tab="battery">Battery</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-device" data-tab="device">Device</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-oled" data-tab="oled">OLED</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-firmware" data-tab="firmware">Firmware</button>
+        </div>
+
+        <div id="tab-info" class="tab-panel active" role="tabpanel">
+          <h2>Info</h2>
+          <div class="status-list">
+            <div class="status-item"><span>Device</span><strong id="deviceNameValue">-</strong></div>
+            <div class="status-item"><span>IP Address</span><strong id="ipAddress">-</strong></div>
+            <div class="status-item"><span>Access Point</span><strong id="apInfo">-</strong></div>
+            <div class="status-item"><span>Wi-Fi RSSI</span><strong id="wifiRssi">-</strong></div>
+            <div class="status-item"><span>MQTT</span><strong id="mqttStatus">-</strong></div>
+            <div class="status-item"><span>Playback State</span><strong id="playbackState">-</strong></div>
+            <div class="status-item"><span>Current Track</span><strong id="currentTitle">-</strong></div>
+            <div class="status-item"><span>Firmware</span><strong id="firmwareVersion">-</strong></div>
+            <div class="status-item"><span>Free Heap</span><strong id="freeHeap">-</strong></div>
+            <div class="status-item"><span>Settings Source</span><strong id="settingsSource">-</strong></div>
+          </div>
+          <p class="note">Extras in this build: password reveal toggles, recent playback history, quick-copy current stream, and a firmware action dashboard.</p>
+        </div>
+
+        <div id="tab-playback" class="tab-panel" role="tabpanel">
+          <h2>Audio</h2>
+          <form id="playForm">
+            <div class="radio-browser-card">
+              <div class="radio-browser-head">
+                <strong>Radio Browser</strong>
+                <span id="radioBrowserStatus" class="scan-status">Loading countries...</span>
+              </div>
+              <div class="row radio-browser-row">
+                <label>Country
+                  <select id="radioCountrySelect">
+                    <option value="">Loading countries...</option>
+                  </select>
+                </label>
+                <label>Station
+                  <select id="radioStationSelect" disabled>
+                    <option value="">Select a country first</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div class="row">
+              <label>URL
+                <input id="playUrl" name="url" type="url" placeholder="https://example.com/stream.mp3" required>
+              </label>
+              <label>Label
+                <input id="playLabel" name="label" type="text" placeholder="Optional title">
+              </label>
+            </div>
+            <div class="row">
+              <label>Type
+                <select id="playType" name="type">
+                  <option value="stream">Stream</option>
+                  <option value="tts">TTS</option>
+                  <option value="media">Media</option>
+                </select>
+              </label>
+              <label>Current URL
+                <input id="currentUrl" type="text" readonly>
+              </label>
+            </div>
+            <div class="inline-actions">
+              <button type="button" id="playbackActionButton">Play</button>
+              <button type="button" id="copyUrlButton" class="secondary">Copy Current URL</button>
+              <span id="playbackHint" class="scan-status">Recent playback is stored locally in this browser.</span>
+            </div>
+            <div class="volume-card">
+              <label for="volumeSlider">Volume <span id="volumeValue">0%</span></label>
+              <input id="volumeSlider" name="device.savedVolumePercent" form="settingsForm" type="range" min="0" max="100" step="1">
+            </div>
+            <div class="status-grid compact-status-grid">
+              <div class="status-item"><span>I2S LRC / WS</span><strong id="audioWsSummary">-</strong></div>
+              <div class="status-item"><span>I2S BCLK</span><strong id="audioBclkSummary">-</strong></div>
+              <div class="status-item"><span>I2S DIN</span><strong id="audioDoutSummary">-</strong></div>
+            </div>
+            <div class="row">
+              <label>I2S LRC / WS
+                <select id="audioWsPin" name="audio.wsPin" form="settingsForm"></select>
+              </label>
+              <label>I2S BCLK
+                <select id="audioBclkPin" name="audio.bclkPin" form="settingsForm"></select>
+              </label>
+              <label>I2S DIN
+                <select id="audioDoutPin" name="audio.doutPin" form="settingsForm"></select>
+              </label>
+            </div>
+            <div class="inline-actions">
+              <button type="button" id="saveAudioButton">Save Audio Mapping</button>
+              <span class="scan-status">Saving reapplies the MAX98357A DIN / WS / BCLK mapping.</span>
+            </div>
+            <label class="check"><input id="audioMutedToggle" name="device.audioMuted" form="settingsForm" type="checkbox"> Mute audio and sound effects</label>
+            <p id="audioMutedNote" class="note">Stream playback is enabled in this build. Pick a Radio Browser station or enter a direct stream URL manually.</p>
+          </form>
+
+          <div class="firmware-list" id="recentPlaybackList"></div>
+        </div>
+
+        <div id="tab-wifi" class="tab-panel" role="tabpanel">
+          <h2>Wi-Fi</h2>
+          <form id="settingsForm">
+            <div class="row">
+              <label>Wi-Fi SSID
+                <input name="wifi.ssid" type="text" autocomplete="off">
+              </label>
+              <label>Wi-Fi Password
+                <div class="password-field">
+                  <input name="wifi.password" type="password" autocomplete="new-password">
+                  <button class="password-toggle" type="button" data-target-name="wifi.password" aria-label="Show Wi-Fi password">
+                    <span class="eye-icon" aria-hidden="true"></span>
+                  </button>
+                </div>
+              </label>
+            </div>
+            <div class="inline-actions">
+              <button id="scanWifiButton" type="button" class="secondary">Scan Network</button>
+              <span id="scanStatus" class="scan-status"></span>
+            </div>
+            <label>Found Networks
+              <select id="wifiNetworkList">
+                <option value="">Select a scanned SSID</option>
+              </select>
+            </label>
+            <div class="row">
+              <label>Access Point SSID
+                <input name="wifi.apSsid" type="text" autocomplete="off" placeholder="ESP32-Notifier-XXXXXX">
+              </label>
+              <label>Access Point Password
+                <div class="password-field">
+                  <input name="wifi.apPassword" type="password" autocomplete="new-password" placeholder="configureme">
+                  <button class="password-toggle" type="button" data-target-name="wifi.apPassword" aria-label="Show access point password">
+                    <span class="eye-icon" aria-hidden="true"></span>
+                  </button>
+                </div>
+              </label>
+            </div>
+            <label class="check"><input name="wifi.apFallbackEnabled" type="checkbox"> Enable AP fallback</label>
+            <label class="check"><input id="useStaticIpToggle" name="wifi.useStaticIp" type="checkbox"> Use static IP</label>
+            <div class="row static-ip-group">
+              <label>Static IP
+                <input name="wifi.staticIp" type="text" placeholder="192.168.1.80">
+              </label>
+              <label>Gateway
+                <input name="wifi.gateway" type="text">
+              </label>
+            </div>
+            <div class="row static-ip-group">
+              <label>Subnet
+                <input name="wifi.subnet" type="text">
+              </label>
+              <label>DNS 1
+                <input name="wifi.dns1" type="text">
+              </label>
+            </div>
+            <label class="static-ip-group">DNS 2
+              <input name="wifi.dns2" type="text">
+            </label>
+            <p class="note">Leave Access Point SSID blank to keep the firmware-generated name. Access Point passwords shorter than 8 characters fall back to the default firmware password.</p>
+          </form>
+        </div>
+
+        <div id="tab-mqtt" class="tab-panel" role="tabpanel">
+          <h2>MQTT</h2>
+          <form>
+            <div class="row">
+              <label>MQTT Host
+                <input form="settingsForm" name="mqtt.host" type="text" autocomplete="off">
+              </label>
+              <label>MQTT Port
+                <input form="settingsForm" name="mqtt.port" type="number" min="1" max="65535">
+              </label>
+            </div>
+            <div class="row">
+              <label>MQTT Username
+                <input form="settingsForm" name="mqtt.username" type="text" autocomplete="off">
+              </label>
+              <label>MQTT Password
+                <div class="password-field">
+                  <input form="settingsForm" name="mqtt.password" type="password" autocomplete="new-password">
+                  <button class="password-toggle" type="button" data-target-name="mqtt.password" aria-label="Show MQTT password">
+                    <span class="eye-icon" aria-hidden="true"></span>
+                  </button>
+                </div>
+              </label>
+            </div>
+            <div class="row">
+              <label>Client ID
+                <input form="settingsForm" name="mqtt.clientId" type="text" autocomplete="off">
+              </label>
+              <label>Base Topic
+                <input form="settingsForm" name="mqtt.baseTopic" type="text" autocomplete="off">
+              </label>
+            </div>
+            <label class="check"><input form="settingsForm" name="mqtt.discoveryEnabled" type="checkbox"> Publish Home Assistant discovery</label>
+            <div class="inline-actions">
+              <button id="mqttConnectButton" type="button">Connect MQTT</button>
+              <span id="mqttConnectStatus" class="scan-status"></span>
+            </div>
+          </form>
+        </div>
+
+        <div id="tab-battery" class="tab-panel" role="tabpanel">
+          <h2>Battery</h2>
+          <form>
+            <div class="row">
+              <label>ADC GPIO
+                <select id="batteryAdcPin" form="settingsForm" name="battery.adcPin"></select>
+              </label>
+              <label>Measured Battery Voltage
+                <input id="batteryMeasuredVoltage" type="number" min="0" step="0.001" placeholder="Measure at battery terminals">
+              </label>
+            </div>
+            <div class="row">
+              <label>Moving Average Window
+                <input form="settingsForm" name="battery.movingAverageWindowSize" type="number" min="1" max="32">
+              </label>
+            </div>
+            <input form="settingsForm" name="battery.calibrationMultiplier" type="hidden">
+            <label>Update Interval (ms)
+              <input form="settingsForm" name="battery.updateIntervalMs" type="number" min="500">
+            </label>
+            <p id="batteryNote" class="note">Measure the real voltage with a multimeter, enter it here, and save. The UI converts that value into the stored calibration multiplier using the live raw ADC voltage on the selected GPIO. Example Li-ion divider for GPIO3: BAT+ --- 220K - GPIO3 - 220K ---- GND.</p>
+            <div class="firmware-summary compact-summary">
+              <div class="firmware-card"><span>ADC Pin</span><strong id="batteryPinSummary">-</strong></div>
+              <div class="firmware-card"><span>Charge Sense</span><strong id="chargingSenseSummary">-</strong></div>
+              <div class="firmware-card"><span>Battery</span><strong id="batteryVoltage">-</strong></div>
+              <div class="firmware-card"><span>Raw ADC</span><strong id="batteryRaw">-</strong></div>
+              <div class="firmware-card"><span>Derived Multiplier</span><strong id="batteryDerivedMultiplier">-</strong></div>
+            </div>
+            <p class="note">Charging is inferred from the same battery ADC input. When the measured battery voltage trends upward, the device treats that as charging.</p>
+          </form>
+        </div>
+
+        <div id="tab-device" class="tab-panel" role="tabpanel">
+          <h2>Device</h2>
+          <form>
+            <div class="row">
+              <label>Device Name
+                <input form="settingsForm" name="device.deviceName" type="text" autocomplete="off">
+              </label>
+              <label>Friendly Name
+                <input form="settingsForm" name="device.friendlyName" type="text" autocomplete="off">
+              </label>
+            </div>
+            <div class="row">
+              <label>Saved Volume (%)
+                <input form="settingsForm" name="device.savedVolumePercent" type="number" min="0" max="100">
+              </label>
+              <label>WS2812 GPIO
+                <select id="statusLedPin" form="settingsForm" name="device.statusLedPin"></select>
+              </label>
+            </div>
+            <p class="note">On ESP32-S3 Super Mini / Zero style boards, the built-in WS2812 is typically on GPIO21. GPIO10 is the current external RGB default in this firmware.</p>
+            <label class="check"><input id="lowBatterySleepToggle" form="settingsForm" name="device.lowBatterySleepEnabled" type="checkbox"> Deep sleep on low battery</label>
+            <label>Sleep Threshold <span id="lowBatterySleepThresholdValue">20%</span>
+              <input id="lowBatterySleepThreshold" form="settingsForm" name="device.lowBatterySleepThresholdPercent" type="range" min="1" max="100" step="1">
+            </label>
+            <label>Wake Every (minutes)
+              <input id="lowBatteryWakeIntervalMinutes" form="settingsForm" name="device.lowBatteryWakeIntervalMinutes" type="number" min="0" max="1440">
+            </label>
+            <p class="note">When enabled, the notifier estimates charge from battery voltage, enters deep sleep at or below the threshold, turns the OLED off, then wakes on the configured timer to briefly reconnect and check network activity before sleeping again while battery remains low. Set wake interval to 0 to stay asleep until a manual wake or power cycle.</p>
+            <label class="check"><input form="settingsForm" name="webAuth.enabled" type="checkbox"> Require login</label>
+            <div class="row">
+              <label>Web Username
+                <input form="settingsForm" name="webAuth.username" type="text" autocomplete="off">
+              </label>
+              <label>Web Password
+                <div class="password-field">
+                  <input form="settingsForm" name="webAuth.password" type="password" autocomplete="new-password">
+                  <button class="password-toggle" type="button" data-target-name="webAuth.password" aria-label="Show web password">
+                    <span class="eye-icon" aria-hidden="true"></span>
+                  </button>
+                </div>
+              </label>
+            </div>
+            <div class="actions">
+              <button id="saveDeviceButton" type="button">Save Device Settings</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="tab-oled" class="tab-panel" role="tabpanel">
+          <h2>OLED</h2>
+          <form>
+            <div class="row">
+              <label>Display Type
+                <select id="displayType" form="settingsForm" name="oled.displayType">
+                  <option value="oled">OLED</option>
+                  <option value="wape">Wape Display</option>
+                </select>
+              </label>
+              <div></div>
+            </div>
+            <div id="oledModeSection">
+            <label class="check"><input form="settingsForm" name="oled.enabled" type="checkbox"> Enable OLED</label>
+            <div id="oledPreviewCard" class="oled-preview-card">
+              <div class="oled-preview-header">
+                <strong>Virtual OLED</strong>
+                <span id="oledPreviewMeta" class="scan-status">128 x 64</span>
+              </div>
+              <div class="oled-preview-layout">
+                <label class="oled-button-control">
+                  <span class="oled-button-title">Button 1</span>
+                  <select form="settingsForm" name="device.button1Action"></select>
+                  <small>GPIO5, left side</small>
+                </label>
+                <div class="oled-preview-shell">
+                  <div id="oledPreview" class="oled-preview-screen">
+                    <div class="oled-preview-top"></div>
+                    <div class="oled-preview-divider oled-preview-divider-top"></div>
+                    <div class="oled-preview-center"></div>
+                    <div id="oledPreviewProgress" class="oled-preview-progress" hidden>
+                      <div id="oledPreviewProgressLabel" class="oled-preview-progress-label">Updating 0%</div>
+                      <div class="oled-preview-progress-bar">
+                        <div id="oledPreviewProgressFill" class="oled-preview-progress-fill"></div>
+                      </div>
+                    </div>
+                    <div class="oled-preview-divider oled-preview-divider-bottom"></div>
+                    <div class="oled-preview-bottom"></div>
+                    <div id="oledPreviewDisabled" class="oled-preview-disabled" hidden>OLED disabled</div>
+                  </div>
+                </div>
+                <label class="oled-button-control oled-button-control-right">
+                  <span class="oled-button-title">Button 2</span>
+                  <select form="settingsForm" name="device.button2Action"></select>
+                  <small>GPIO6 on ESP32-S3, GPIO18 on ESP32</small>
+                </label>
+              </div>
+            </div>
+            <div class="row">
+              <label>Driver
+                <select form="settingsForm" name="oled.driver"><option value="ssd1306">SSD1306</option><option value="sh1106">SH1106</option></select>
+              </label>
+              <label>I2C Address
+                <input form="settingsForm" name="oled.i2cAddress" type="number" min="1" max="127">
+              </label>
+            </div>
+            <div class="row">
+              <label>Width
+                <input form="settingsForm" name="oled.width" type="number" min="64" max="128">
+              </label>
+              <label>Height
+                <input form="settingsForm" name="oled.height" type="number" min="32" max="64">
+              </label>
+            </div>
+            <div class="row">
+              <label>Rotation
+                <select form="settingsForm" name="oled.rotation">
+                  <option value="0">0 deg</option>
+                  <option value="90">90 deg</option>
+                  <option value="180">180 deg</option>
+                  <option value="270">270 deg</option>
+                </select>
+              </label>
+              <label>Dim Timeout (s)
+                <input form="settingsForm" name="oled.dimTimeoutSeconds" type="number" min="0" max="3600">
+              </label>
+            </div>
+            <div class="row">
+              <label>SDA Pin
+                <select id="oledSdaPin" form="settingsForm" name="oled.sdaPin"></select>
+              </label>
+              <label>SCL Pin
+                <select id="oledSclPin" form="settingsForm" name="oled.sclPin"></select>
+              </label>
+            </div>
+            <div class="row">
+              <label>Reset Pin
+                <select id="oledResetPin" form="settingsForm" name="oled.resetPin"></select>
+              </label>
+              <div></div>
+            </div>
+            <p class="note">Button 1 defaults to GPIO5. Button 2 defaults to GPIO6 on ESP32-S3 builds and GPIO18 on regular ESP32 builds, because GPIO6 is part of the flash bus on ESP32. Both inputs are treated as active-high touch/button inputs, and the Home Assistant Previous and Next actions publish MQTT events on the button-action topic so you can bind those touches to Home Assistant automations. When rotated 90 or 270 degrees the renderer automatically uses the effective portrait resolution so text and OTA progress fit the rotated screen. OLED SDA, SCL, and RESET must not reuse the active I2S pins used by the MAX98357A.</p>
+            </div>
+            <div id="wapeModeSection" hidden>
+              <div class="row">
+                <label>Trigger GPIO
+                  <select id="wapeTriggerPin" form="settingsForm" name="oled.wapeTriggerPin"></select>
+                </label>
+                <label>Trigger On
+                  <select id="wapeTriggerEvent" form="settingsForm" name="oled.wapeTriggerEvent">
+                    <option value="play_start">Play Start</option>
+                    <option value="device_start">Device Start</option>
+                    <option value="charging_start">Charging Start</option>
+                  </select>
+                </label>
+              </div>
+              <div class="actions">
+                <button id="displayTriggerButton" type="button">Display Trigger</button>
+              </div>
+              <p class="note">When triggered, the selected GPIO is pulled low for 500 ms and then driven high again.</p>
+              <p class="note">Available GPIOs exclude the active I2S pins, the battery ADC pin used for battery/charging sensing, and the current WS2812/status LED pin.</p>
+              <p class="note">MQTT command topic: <code>BASE_TOPIC/cmd/display_trigger</code>. Home Assistant discovery exposes this as a button named Display Trigger.</p>
+            </div>
+          </form>
+        </div>
+
+        <div id="tab-firmware" class="tab-panel" role="tabpanel">
+          <h2>Firmware</h2>
+          <div class="firmware-summary">
+            <div class="firmware-card">
+              <span>Current Firmware</span>
+              <strong id="firmwareVersionCard">-</strong>
+            </div>
+            <div class="firmware-card">
+              <span>OTA Status</span>
+              <strong id="otaStatusLabel">-</strong>
+            </div>
+            <div class="firmware-card">
+              <span>Latest Version</span>
+              <strong id="latestVersion">-</strong>
+            </div>
+          </div>
+          <div class="actions">
+            <button id="checkOtaButton" type="button">Check Releases</button>
+            <button id="applyOtaButton" type="button" class="secondary">Install Selected</button>
+            <button id="uploadFirmwareButton" type="button" class="secondary">Upload Local Firmware</button>
+          </div>
+          <div class="actions actions-inline-text">
+            <span id="firmwareSelectionLabel" class="scan-status">No firmware selected</span>
+            <span id="localFirmwareLabel" class="scan-status">No local firmware selected</span>
+          </div>
+          <input id="localFirmwareFile" type="file" accept=".bin,application/octet-stream" hidden>
+          <p class="note">Settings auto-save after edits. Number fields accept commas, but they are normalized to dots before saving. Local upload accepts a single ESP32 application .bin and reboots automatically after a successful flash.</p>
+          <div class="actions">
+            <button id="rebootButton" type="button" class="secondary">Reboot</button>
+            <button id="factoryResetButton" type="button" class="danger">Factory Reset</button>
+          </div>
+          <div class="progress-wrap">
+            <div class="progress-bar"><div id="otaProgressFill" class="progress-fill"></div></div>
+            <div id="otaProgressLabel" class="progress-label">Idle</div>
+          </div>
+          <div id="firmwareList" class="firmware-list"></div>
+          <pre id="otaStatus" class="log-box">Waiting for status...</pre>
+          <div id="message"></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <template id="toastTemplate">
+    <div class="toast"></div>
+  </template>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

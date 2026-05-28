@@ -1,0 +1,130 @@
+#pragma once
+
+#include <Arduino.h>
+#include <IPAddress.h>
+#include <stdint.h>
+
+#ifndef APP_DEFAULT_OLED_ENABLED
+#define APP_DEFAULT_OLED_ENABLED 1
+#endif
+
+#ifndef APP_DEFAULT_STATUS_LED_PIN
+#define APP_DEFAULT_STATUS_LED_PIN 22
+#endif
+
+struct WiFiSettings {
+    String ssid;
+    String password;
+    String apSsid;
+    String apPassword;
+    bool apFallbackEnabled = true;
+    bool useStaticIp = false;
+    String staticIp;
+    String gateway;
+    String subnet;
+    String dns1;
+    String dns2;
+};
+
+struct MqttSettings {
+    String host;
+    uint16_t port = 1883;
+    String username;
+    String password;
+    String clientId;
+    String baseTopic;
+    bool discoveryEnabled = true;
+};
+
+struct OtaSettings {
+    String owner;
+    String repository;
+    String channel;
+    String assetTemplate;
+    String manifestUrl;
+    bool allowInsecureTls = true;
+    bool autoCheck = false;
+};
+
+struct BatterySettings {
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    float calibrationMultiplier = 2.0f;
+    uint8_t adcPin = 3;
+#else
+    float calibrationMultiplier = 3.866f;
+    uint8_t adcPin = 36;
+#endif
+    uint8_t chargingSensePin = 0;
+    uint32_t updateIntervalMs = 10000;
+    uint16_t movingAverageWindowSize = 10;
+};
+
+struct WebAuthSettings {
+    bool enabled = false;
+    String username;
+    String password;
+};
+
+struct AudioSettings {
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    uint8_t doutPin = 9;
+    uint8_t wsPin = 12;
+    uint8_t bclkPin = 11;
+#else
+    uint8_t doutPin = 25;
+    uint8_t wsPin = 26;
+    uint8_t bclkPin = 27;
+#endif
+};
+
+struct OledSettings {
+    String displayType = "oled";
+    bool enabled = APP_DEFAULT_OLED_ENABLED;
+    String driver;
+    uint8_t i2cAddress = 0x3C;
+    uint8_t width = 128;
+    uint8_t height = 64;
+    uint16_t rotation = 0;
+    uint8_t sdaPin = 23;
+    uint8_t sclPin = 19;
+    int8_t resetPin = -1;
+    uint16_t dimTimeoutSeconds = 0;
+    uint8_t wapeTriggerPin = 0;
+    String wapeTriggerEvent = "play_start";
+};
+
+struct DeviceSettings {
+    String deviceName;
+    String friendlyName;
+    uint8_t statusLedPin = APP_DEFAULT_STATUS_LED_PIN;
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    uint8_t savedVolumePercent = 35;
+#else
+    uint8_t savedVolumePercent = 5;
+#endif
+    bool audioMuted = false;
+    String button1Action = "previous";
+    String button2Action = "next";
+    bool lowBatterySleepEnabled = false;
+    uint8_t lowBatterySleepThresholdPercent = 20;
+    uint16_t lowBatteryWakeIntervalMinutes = 15;
+};
+
+struct SettingsBundle {
+    WiFiSettings wifi;
+    MqttSettings mqtt;
+    OtaSettings ota;
+    BatterySettings battery;
+    WebAuthSettings webAuth;
+    AudioSettings audio;
+    OledSettings oled;
+    DeviceSettings device;
+    bool usingSavedSettings = false;
+};
+
+inline bool parseIp(const String& raw, IPAddress& address) {
+    if (raw.isEmpty()) {
+        return false;
+    }
+    return address.fromString(raw);
+}
