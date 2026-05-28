@@ -24,7 +24,17 @@
         </div>
         <div class="stat">
           <div class="stat-label">Playback</div>
-          <div class="stat-value" id="audioPill">-</div>
+          <div class="stat-value stat-value-playback" id="audioPill">
+            <div class="playback-hero-widget">
+              <div id="audioPillState" class="playback-hero-state">-</div>
+              <div id="audioPillTitle" class="playback-hero-meta">No station selected</div>
+              <div class="playback-hero-controls" aria-label="Playback controls">
+                <button type="button" id="playbackPrevButton" class="playback-hero-button secondary" aria-label="Previous station">&#9664;</button>
+                <button type="button" id="playbackHeroToggleButton" class="playback-hero-button" aria-label="Play">&#9654;</button>
+                <button type="button" id="playbackNextButton" class="playback-hero-button secondary" aria-label="Next station">&#9654;</button>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="stat">
           <div class="stat-label">Battery</div>

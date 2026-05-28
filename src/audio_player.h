@@ -8,16 +8,29 @@ class AudioPlayer {
   public:
     class Impl;
 
+    struct DiagnosticsSnapshot {
+        uint32_t requestedSampleRateHz = 0;
+        uint32_t activeSampleRateHz = 0;
+        uint8_t bitsPerSample = 16;
+        uint8_t channelCount = 2;
+        uint8_t libraryVolume = 0;
+        bool stereoEnabled = false;
+        bool diagnosticTestMode = false;
+    };
+
     void begin(uint8_t bclkPin, uint8_t wsPin, uint8_t doutPin, uint8_t initialVolumePercent, AppState& appState);
     void loop();
     bool play(const String& url, const String& title, const String& mediaType, const String& source);
     void stop();
     bool reconfigureOutputPins(uint8_t bclkPin, uint8_t wsPin, uint8_t doutPin);
     void setVolumePercent(uint8_t volumePercent);
+    void setDirectLibraryVolume(uint8_t libraryVolume);
     uint8_t volumePercent() const;
+    uint8_t libraryVolume() const;
     String currentTitle() const;
     String currentUrl() const;
     String currentState() const;
+    DiagnosticsSnapshot diagnostics() const;
 
     void onStationName(const char* text);
     void onStreamTitle(const char* text);

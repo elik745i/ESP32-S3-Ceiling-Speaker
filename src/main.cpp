@@ -997,7 +997,11 @@ void applyRuntimeSettings() {
             activeI2sDoutPin = settings->audio.doutPin;
         }
     }
+#if APP_AUDIO_DIAGNOSTIC_TEST
+    audioPlayer->setDirectLibraryVolume(DefaultConfig::AUDIO_DIAGNOSTIC_LIBRARY_VOLUME);
+#else
     audioPlayer->setVolumePercent(settings->device.savedVolumePercent);
+#endif
     soundEffects->applySettings(*settings);
     mqttManager->applySettings(*settings);
     otaManager->applySettings(*settings);
@@ -1023,6 +1027,12 @@ bool playRequest(const String& url, const String& label, const String& type, con
         error = "URL is required";
         return false;
     }
+#if APP_AUDIO_DIAGNOSTIC_TEST
+    if (source != "diagnostic-test") {
+        error = "Diagnostic audio test build only plays the configured MAX98357A test stream.";
+        return false;
+    }
+#endif
 #ifdef APP_DISABLE_AUDIO
     error = "Audio disabled in diagnostic build";
     return false;
@@ -1250,6 +1260,15 @@ void setup() {
     activeI2sWsPin = settings->audio.wsPin;
     activeI2sDoutPin = settings->audio.doutPin;
     audioPlayer->begin(activeI2sBclkPin, activeI2sWsPin, activeI2sDoutPin, settings->device.savedVolumePercent, *appState);
+#if APP_AUDIO_DIAGNOSTIC_TEST
+    audioPlayer->setDirectLibraryVolume(DefaultConfig::AUDIO_DIAGNOSTIC_LIBRARY_VOLUME);
+    Serial.printf("[audio-test] build enabled, waiting for Wi-Fi to start %s at library volume %u using BCLK=%u WS=%u DOUT=%u\n",
+                  DefaultConfig::AUDIO_DIAGNOSTIC_STREAM_URL,
+                  static_cast<unsigned>(DefaultConfig::AUDIO_DIAGNOSTIC_LIBRARY_VOLUME),
+                  static_cast<unsigned>(activeI2sBclkPin),
+                  static_cast<unsigned>(activeI2sWsPin),
+                  static_cast<unsigned>(activeI2sDoutPin));
+#endif
 
     soundEffects->begin(*settings);
     otaManager->begin(*settings, *appState);
@@ -1288,13 +1307,19 @@ void setup() {
         });
 
     displayManager->setBootMessage("Idle");
+#if !APP_AUDIO_DIAGNOSTIC_TEST
     soundEffects->playBoot();
+#endif
     if (settings->oled.displayType == "wape" && settings->oled.wapeTriggerEvent == "device_start") {
         requestWapeTriggerPulse();
     }
 }
 
 void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
+#if APP_AUDIO_DIAGNOSTIC_TEST
+    (void)snapshot;
+    return;
+#endif
     if (soundEffects == nullptr) {
         return;
     }
@@ -1338,6 +1363,55 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
     previousCharging = snapshot.battery.charging;
 }
 
+void serviceAudioDiagnosticTest() {
+#if !APP_AUDIO_DIAGNOSTIC_TEST
+    return;
+#else
+    static bool diagnosticAudioStartQueued = false;
+    static unsigned long diagnosticAudioRetryAt = 0;
+
+    if (appState == nullptr || audioPlayer == nullptr || wifiManager == nullptr) {
+        return;
+    }
+
+    if (!wifiManager->isConnected()) {
+        diagnosticAudioStartQueued = false;
+        diagnosticAudioRetryAt = 0;
+        return;
+    }
+
+    const AppStateSnapshot snapshot = appState->snapshot();
+    if (snapshot.playback.state == "playing" || snapshot.playback.state == "buffering") {
+        diagnosticAudioStartQueued = true;
+        return;
+    }
+
+    if (diagnosticAudioRetryAt != 0 && static_cast<long>(millis() - diagnosticAudioRetryAt) < 0) {
+        return;
+    }
+
+    audioPlayer->setDirectLibraryVolume(DefaultConfig::AUDIO_DIAGNOSTIC_LIBRARY_VOLUME);
+    const AudioPlayer::DiagnosticsSnapshot diagnostics = audioPlayer->diagnostics();
+    Serial.printf("[audio-test] init driver=ESP32-audioI2S fmt=std-i2s preferred_rate=%lu stereo=%s bclk=%u ws=%u dout=%u lib_volume=%u url=%s\n",
+                  static_cast<unsigned long>(diagnostics.requestedSampleRateHz),
+                  diagnostics.stereoEnabled ? "on" : "off",
+                  static_cast<unsigned>(activeI2sBclkPin),
+                  static_cast<unsigned>(activeI2sWsPin),
+                  static_cast<unsigned>(activeI2sDoutPin),
+                  static_cast<unsigned>(DefaultConfig::AUDIO_DIAGNOSTIC_LIBRARY_VOLUME),
+                  DefaultConfig::AUDIO_DIAGNOSTIC_STREAM_URL);
+
+    if (audioPlayer->play(DefaultConfig::AUDIO_DIAGNOSTIC_STREAM_URL, "MAX98357A Test Stream", "stream", "diagnostic-test")) {
+        diagnosticAudioStartQueued = true;
+        diagnosticAudioRetryAt = 0;
+        return;
+    }
+
+    diagnosticAudioRetryAt = millis() + 5000UL;
+    Serial.println("[audio-test] playback start failed, retrying in 5s");
+#endif
+}
+
 void loop() {
     if (appState == nullptr || settingsManager == nullptr || wifiManager == nullptr || batteryMonitor == nullptr ||
         displayManager == nullptr || audioPlayer == nullptr || otaManager == nullptr || mqttManager == nullptr ||
@@ -1350,6 +1424,7 @@ void loop() {
     serviceWapeTriggerPulse();
     pollPhysicalButtons();
     wifiManager->loop();
+    serviceAudioDiagnosticTest();
     audioPlayer->loop();
     const bool batteryUpdated = batteryMonitor->loop(isBatterySamplingAllowed());
     otaManager->loop();

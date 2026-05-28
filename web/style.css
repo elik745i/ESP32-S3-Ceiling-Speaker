@@ -131,6 +131,86 @@
     margin-top: 8px;
   }
 
+  .stat-value-playback {
+    margin-top: 8px;
+    align-content: stretch;
+  }
+
+  .playback-hero-widget {
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 100%;
+  }
+
+  .playback-hero-state {
+    font-size: clamp(1.3rem, 3vw, 1.85rem);
+    font-weight: 700;
+    color: #2d2d2d;
+    line-height: 1.05;
+    text-transform: lowercase;
+  }
+
+  .playback-hero-state.ok {
+    color: var(--ok);
+  }
+
+  .playback-hero-state.warn {
+    color: var(--warn);
+  }
+
+  .playback-hero-state.bad {
+    color: var(--danger);
+  }
+
+  .playback-hero-meta {
+    max-width: 100%;
+    min-height: 2.2em;
+    font-size: 0.83rem;
+    line-height: 1.1;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .playback-hero-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .playback-hero-button {
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    border-radius: 999px;
+    display: inline-grid;
+    place-items: center;
+    font-size: 1rem;
+    line-height: 1;
+    flex: 0 0 auto;
+  }
+
+  .playback-hero-button:disabled {
+    cursor: default;
+    opacity: 0.45;
+    filter: none;
+    box-shadow: none;
+  }
+
+  .playback-hero-button:disabled:active {
+    transform: none;
+  }
+
+  .playback-hero-button.playing {
+    background: linear-gradient(180deg, #dd6b55, #b42318);
+  }
+
   .wifi-hero-widget,
   .battery-hero-widget {
     display: grid;

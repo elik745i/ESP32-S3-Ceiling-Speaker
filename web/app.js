@@ -81,6 +81,11 @@ const elements = {
   wifiPill: document.getElementById("wifiPill"),
   mqttPill: document.getElementById("mqttPill"),
   audioPill: document.getElementById("audioPill"),
+  audioPillState: document.getElementById("audioPillState"),
+  audioPillTitle: document.getElementById("audioPillTitle"),
+  playbackPrevButton: document.getElementById("playbackPrevButton"),
+  playbackHeroToggleButton: document.getElementById("playbackHeroToggleButton"),
+  playbackNextButton: document.getElementById("playbackNextButton"),
   volumeSlider: document.getElementById("volumeSlider"),
   volumeValue: document.getElementById("volumeValue"),
   statusLedPin: document.getElementById("statusLedPin"),
@@ -159,6 +164,124 @@ function currentI2sPins() {
 function hasDistinctI2sPins() {
   const pins = currentI2sPins().filter((pin) => pin >= 0);
   return pins.length === 3 && new Set(pins).size === 3;
+}
+
+function isPlaybackActive(status = state.status) {
+  const playbackState = String(status?.playback?.state || "idle");
+  return playbackState === "playing" || playbackState === "buffering";
+}
+
+function selectedRadioStation() {
+  const selectedIndex = Number(elements.radioStationSelect?.value ?? -1);
+  if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= state.radioStations.length) {
+    return null;
+  }
+  return state.radioStations[selectedIndex] || null;
+}
+
+function currentPlaybackHeroTitle(status = state.status) {
+  const playingTitle = normalizePlaybackTitle(status?.playback?.title, status?.playback?.url);
+  if (playingTitle) {
+    return playingTitle;
+  }
+
+  const selectedStation = selectedRadioStation();
+  if (selectedStation?.name) {
+    return selectedStation.name;
+  }
+
+  const manualLabel = normalizePlaybackTitle(elements.playLabel?.value, elements.playUrl?.value);
+  if (manualLabel) {
+    return manualLabel;
+  }
+
+  return "No station selected";
+}
+
+function updatePlaybackHeroControls() {
+  const audioEnabled = Boolean(state.status?.firmware?.audioEnabled);
+  const playbackActive = isPlaybackActive();
+  const busy = Boolean(state.playbackActionInProgress);
+  const stationStepReady = audioEnabled && state.radioStations.length > 0 && !elements.radioStationSelect?.disabled && !busy;
+  const hasSelection = playbackActive || Boolean(String(elements.playUrl?.value || "").trim());
+
+  if (elements.playbackPrevButton) {
+    elements.playbackPrevButton.disabled = !stationStepReady;
+    elements.playbackPrevButton.title = stationStepReady ? "Previous station" : "Load a station list first";
+  }
+
+  if (elements.playbackNextButton) {
+    elements.playbackNextButton.disabled = !stationStepReady;
+    elements.playbackNextButton.title = stationStepReady ? "Next station" : "Load a station list first";
+  }
+
+  if (!elements.playbackHeroToggleButton) {
+    return;
+  }
+
+  const button = elements.playbackHeroToggleButton;
+  button.classList.toggle("playing", playbackActive && !busy);
+
+  if (state.playbackActionInProgress === "play") {
+    button.textContent = "...";
+    button.disabled = true;
+    button.title = "Starting playback";
+    button.setAttribute("aria-label", "Starting playback");
+    return;
+  }
+
+  if (state.playbackActionInProgress === "stop") {
+    button.textContent = "...";
+    button.disabled = true;
+    button.title = "Stopping playback";
+    button.setAttribute("aria-label", "Stopping playback");
+    return;
+  }
+
+  button.textContent = playbackActive ? "■" : "▶";
+  button.disabled = !audioEnabled || (!playbackActive && !hasSelection);
+  button.title = playbackActive ? "Stop playback" : "Play selected station";
+  button.setAttribute("aria-label", playbackActive ? "Stop playback" : "Play selected station");
+}
+
+function renderPlaybackHero(status, audioMuted) {
+  if (!elements.audioPill || !elements.audioPillState || !elements.audioPillTitle) {
+    return;
+  }
+
+  const playbackState = audioMuted ? "Muted" : String(status?.playback?.state || "idle");
+  const tone = audioMuted ? "warn" : (isPlaybackActive(status) ? "ok" : "warn");
+
+  elements.audioPill.className = "stat-value stat-value-playback";
+  elements.audioPillState.textContent = playbackState;
+  elements.audioPillState.className = `playback-hero-state ${tone}`;
+  elements.audioPillTitle.textContent = currentPlaybackHeroTitle(status);
+  elements.audioPillTitle.title = elements.audioPillTitle.textContent;
+  updatePlaybackHeroControls();
+}
+
+async function stepRadioStationSelection(delta) {
+  if (state.playbackActionInProgress) {
+    return;
+  }
+
+  if (!elements.radioStationSelect || !state.radioStations.length || elements.radioStationSelect.disabled) {
+    toast("Load a station list first");
+    return;
+  }
+
+  const stationCount = state.radioStations.length;
+  const currentIndex = Number(elements.radioStationSelect.value ?? -1);
+  const normalizedCurrentIndex = Number.isInteger(currentIndex) && currentIndex >= 0 && currentIndex < stationCount
+    ? currentIndex
+    : (delta >= 0 ? -1 : 0);
+  const nextIndex = normalizedCurrentIndex < 0
+    ? (delta >= 0 ? 0 : stationCount - 1)
+    : (normalizedCurrentIndex + delta + stationCount) % stationCount;
+
+  elements.radioStationSelect.value = String(nextIndex);
+  await applySelectedRadioStation({ autoPlay: isPlaybackActive() });
+  updatePlaybackHeroControls();
 }
 
 function populateAudioI2sPinOptions(settings = state.settings) {
@@ -626,6 +749,7 @@ function resetRadioStationSelect(placeholder = "Select a country first") {
   elements.radioStationSelect.appendChild(option);
   elements.radioStationSelect.value = "";
   elements.radioStationSelect.disabled = true;
+  updatePlaybackHeroControls();
 }
 
 function renderRadioCountries(countries) {
@@ -674,6 +798,7 @@ function renderRadioStations(stations) {
   });
 
   elements.radioStationSelect.disabled = !stations.length;
+  updatePlaybackHeroControls();
 }
 
 async function loadRadioCountries(forceRefresh = false) {
@@ -787,7 +912,8 @@ async function loadRadioStations(countryName) {
   }
 }
 
-function applySelectedRadioStation() {
+async function applySelectedRadioStation(options = {}) {
+  const { autoPlay = false } = options;
   const selectedIndex = Number(elements.radioStationSelect?.value ?? -1);
   if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= state.radioStations.length) {
     return;
@@ -822,6 +948,17 @@ function applySelectedRadioStation() {
     meta.push(`${station.bitrate} kbps`);
   }
   setRadioBrowserStatus(meta.length ? `${station.name} selected (${meta.join(" | ")}).` : `${station.name} selected.`);
+
+  if (!autoPlay || !isPlaybackActive() || state.playbackActionInProgress) {
+    return;
+  }
+
+  if (!elements.playForm?.reportValidity()) {
+    return;
+  }
+
+  setRadioBrowserStatus(`Switching to ${station.name}...`);
+  await submitPlay();
 }
 
 function renderFirmwareList(releases, currentVersion, latestVersion, selectedVersion) {
@@ -1788,7 +1925,7 @@ function renderStatus(status) {
 
   renderWifiHero(wifiConnected, status.network.ip || (status.network.apMode ? "192.168.4.1" : "No IP"), status.network.wifiRssi);
   setPill(elements.mqttPill, mqttConnected ? "MQTT Connected" : "MQTT Offline", mqttConnected ? "ok" : "warn");
-  setPill(elements.audioPill, audioMuted ? "Muted" : (status.playback.state || "idle"), playbackActive && !audioMuted ? "ok" : "warn");
+  renderPlaybackHero(status, audioMuted);
   renderBatteryHero(status.battery.voltage || 0);
 
   elements.otaStatusLabel.textContent = ota.message || ota.lastResult || "Idle";
@@ -1879,8 +2016,7 @@ function updatePlaybackActionButton() {
   }
 
   const playbackActionInProgress = String(state.playbackActionInProgress || "");
-  const playbackState = String(state.status?.playback?.state || "idle");
-  const playbackActive = playbackState === "playing" || playbackState === "buffering";
+  const playbackActive = isPlaybackActive();
   const audioEnabled = Boolean(state.status?.firmware?.audioEnabled);
 
   if (playbackActionInProgress === "play") {
@@ -1888,6 +2024,7 @@ function updatePlaybackActionButton() {
     elements.playbackActionButton.classList.remove("secondary");
     elements.playbackActionButton.disabled = true;
     elements.playbackActionButton.title = "Waiting for playback to start";
+    updatePlaybackHeroControls();
     return;
   }
 
@@ -1896,6 +2033,7 @@ function updatePlaybackActionButton() {
     elements.playbackActionButton.classList.add("secondary");
     elements.playbackActionButton.disabled = true;
     elements.playbackActionButton.title = "Waiting for playback to stop";
+    updatePlaybackHeroControls();
     return;
   }
 
@@ -1903,6 +2041,7 @@ function updatePlaybackActionButton() {
   elements.playbackActionButton.classList.toggle("secondary", playbackActive);
   elements.playbackActionButton.disabled = !audioEnabled;
   elements.playbackActionButton.title = audioEnabled ? "" : "Audio playback is disabled in this firmware build";
+  updatePlaybackHeroControls();
 }
 
 function setupTabs() {
@@ -2378,8 +2517,7 @@ async function handlePlaybackAction(event) {
     return;
   }
 
-  const playbackState = String(state.status?.playback?.state || "idle");
-  const playbackActive = playbackState === "playing" || playbackState === "buffering";
+  const playbackActive = isPlaybackActive();
 
   if (playbackActive) {
     await stopPlayback();
@@ -2521,6 +2659,9 @@ elements.scanWifiButton.addEventListener("click", () => {
   const shouldConnect = state.wifiSelectionPending || Boolean(ssid && password);
   return (shouldConnect ? connectWifi() : scanWifiNetworks()).catch(handleError);
 });
+elements.playbackPrevButton?.addEventListener("click", () => stepRadioStationSelection(-1).catch(handleError));
+elements.playbackHeroToggleButton?.addEventListener("click", () => handlePlaybackAction().catch(handleError));
+elements.playbackNextButton?.addEventListener("click", () => stepRadioStationSelection(1).catch(handleError));
 elements.playbackActionButton?.addEventListener("click", () => handlePlaybackAction().catch(handleError));
 document.getElementById("copyUrlButton").addEventListener("click", () => copyCurrentUrl().catch(handleError));
 document.getElementById("checkOtaButton").addEventListener("click", () => checkOta().catch(handleError));
@@ -2552,7 +2693,7 @@ elements.radioCountrySelect?.addEventListener("change", (event) => {
   loadRadioStations(event.target.value).catch(handleError);
 });
 elements.radioStationSelect?.addEventListener("change", () => {
-  applySelectedRadioStation();
+  applySelectedRadioStation({ autoPlay: true }).catch(handleError);
 });
 elements.wifiNetworkList.addEventListener("change", (event) => {
   if (!event.target.value) {

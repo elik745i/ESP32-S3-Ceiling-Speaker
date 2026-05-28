@@ -13,15 +13,11 @@ constexpr unsigned long kSwitchFadeOutMs = 70UL;
 constexpr unsigned long kStartFadeInMs = 90UL;
 constexpr unsigned long kSwitchQuietTimeMs = 18UL;
 
-int16_t saturatingDouble(int16_t sample) {
-    const int32_t boosted = static_cast<int32_t>(sample) * 2;
-    if (boosted > INT16_MAX) {
-        return INT16_MAX;
-    }
-    if (boosted < INT16_MIN) {
-        return INT16_MIN;
-    }
-    return static_cast<int16_t>(boosted);
+constexpr uint32_t kPreferredDiagnosticSampleRateHz = DefaultConfig::AUDIO_DIAGNOSTIC_PREFERRED_SAMPLE_RATE_HZ;
+
+uint8_t percentToLibraryVolume(uint8_t volumePercent) {
+    const long scaled = map(volumePercent, 0, 100, 0, DefaultConfig::AUDIO_MAX_HARDWARE_VOLUME);
+    return constrain(static_cast<uint8_t>(scaled), static_cast<uint8_t>(0), DefaultConfig::AUDIO_MAX_HARDWARE_VOLUME);
 }
 }  // namespace
 
@@ -34,6 +30,11 @@ class AudioPlayer::Impl {
         uint8_t doutPin = DefaultConfig::I2S_DOUT_PIN;
     uint8_t volume = DefaultConfig::DEFAULT_VOLUME_PERCENT;
     uint8_t hardwareAudioVolume = 0;
+        uint32_t requestedSampleRateHz = kPreferredDiagnosticSampleRateHz;
+        uint32_t activeSampleRateHz = 0;
+        uint8_t bitsPerSample = 16;
+        uint8_t channelCount = DefaultConfig::AUDIO_FORCE_MONO ? 1 : 2;
+        bool diagnosticTestMode = false;
     String state = "idle";
     String type = "idle";
     String title = "Idle";
@@ -64,7 +65,7 @@ class AudioPlayer::Impl {
     }
 
     void applyHardwareVolumePercent(uint8_t volumePercent) {
-        setHardwareAudioVolume(map(volumePercent, 0, 100, 0, DefaultConfig::AUDIO_MAX_HARDWARE_VOLUME));
+        setHardwareAudioVolume(percentToLibraryVolume(volumePercent));
     }
 
     void fadeToPercent(uint8_t targetVolumePercent, unsigned long durationMs) {
@@ -125,20 +126,36 @@ void audio_eof_stream(const char* info) {
 }
 
 void audio_process_i2s(uint32_t* sample, bool* continueI2S) {
-    if (sample == nullptr) {
-        return;
-    }
-
-    const uint32_t packedSample = *sample;
-    const int16_t left = static_cast<int16_t>(packedSample >> 16);
-    const int16_t right = static_cast<int16_t>(packedSample & 0xFFFF);
-    const uint16_t boostedLeft = static_cast<uint16_t>(saturatingDouble(left));
-    const uint16_t boostedRight = static_cast<uint16_t>(saturatingDouble(right));
-
-    *sample = (static_cast<uint32_t>(boostedLeft) << 16) | static_cast<uint32_t>(boostedRight);
+    (void)sample;
     if (continueI2S != nullptr) {
         *continueI2S = true;
     }
+}
+
+void audio_id3data(const char* info) {
+    if (info != nullptr) {
+        Serial.printf("[audio] id3 %s\n", info);
+    }
+}
+
+void audio_bitrate(const char* info) {
+    if (info != nullptr) {
+        Serial.printf("[audio] bitrate %s\n", info);
+    }
+}
+
+void audio_commercial(const char* info) {
+    if (info != nullptr) {
+        Serial.printf("[audio] codec %s\n", info);
+    }
+}
+
+void audio_eof_mp3(const char* info) {
+    Serial.printf("[audio] eof mp3 %s\n", info == nullptr ? "" : info);
+}
+
+void audio_eof_speech(const char* info) {
+    Serial.printf("[audio] eof speech %s\n", info == nullptr ? "" : info);
 }
 
 void AudioPlayer::begin(uint8_t bclkPin, uint8_t wsPin, uint8_t doutPin, uint8_t initialVolumePercent, AppState& appState) {
@@ -153,15 +170,20 @@ void AudioPlayer::begin(uint8_t bclkPin, uint8_t wsPin, uint8_t doutPin, uint8_t
     impl_->audio.setBufsize(DefaultConfig::AUDIO_BUFFER_SIZE_RAM, DefaultConfig::AUDIO_BUFFER_SIZE_PSRAM);
     impl_->audio.setI2SCommFMT_LSB(false);
     impl_->audio.setPinout(bclkPin, wsPin, doutPin);
+    impl_->requestedSampleRateHz = kPreferredDiagnosticSampleRateHz;
+    impl_->diagnosticTestMode = DefaultConfig::AUDIO_DIAGNOSTIC_TEST;
     impl_->audio.forceMono(DefaultConfig::AUDIO_FORCE_MONO);
+    impl_->channelCount = DefaultConfig::AUDIO_FORCE_MONO ? 1 : 2;
     impl_->audio.setConnectionTimeout(8000, 8000);
     impl_->volume = constrain(initialVolumePercent, static_cast<uint8_t>(0), static_cast<uint8_t>(100));
     impl_->applyHardwareVolumePercent(impl_->volume);
-    Serial.printf("[audio] init target=MAX98357A fmt=std-i2s bclk=%u ws=%u dout=%u volume=%u mono=%s\n",
+    Serial.printf("[audio] init driver=ESP32-audioI2S target=MAX98357A fmt=std-i2s bclk=%u ws=%u dout=%u requested_rate=%lu volume_percent=%u lib_volume=%u mono=%s\n",
                   bclkPin,
                   wsPin,
                   doutPin,
+                  static_cast<unsigned long>(impl_->requestedSampleRateHz),
                   impl_->volume,
+                  impl_->hardwareAudioVolume,
                   DefaultConfig::AUDIO_FORCE_MONO ? "on" : "off");
     impl_->publish();
 }
@@ -218,7 +240,15 @@ bool AudioPlayer::play(const String& url, const String& title, const String& med
         return false;
     }
 
+    impl_->activeSampleRateHz = impl_->audio.getSampleRate();
+    impl_->bitsPerSample = impl_->audio.getBitsPerSample();
+    impl_->channelCount = impl_->audio.getChannels();
     Serial.printf("[audio] connecttohost ok for %s\n", normalizedUrl.c_str());
+    Serial.printf("[audio] playback started rate=%lu bits=%u channels=%u lib_volume=%u\n",
+                  static_cast<unsigned long>(impl_->activeSampleRateHz),
+                  static_cast<unsigned>(impl_->bitsPerSample),
+                  static_cast<unsigned>(impl_->channelCount),
+                  static_cast<unsigned>(impl_->hardwareAudioVolume));
     impl_->markPlaying();
     impl_->fadeToPercent(impl_->volume, kStartFadeInMs);
     return true;
@@ -236,6 +266,7 @@ void AudioPlayer::stop() {
         delay(kSwitchQuietTimeMs);
     }
     impl_->audio.stopSong();
+    Serial.println("[audio] playback stopped");
     impl_->state = "idle";
     impl_->type = "idle";
     impl_->title = "Idle";
@@ -272,14 +303,17 @@ bool AudioPlayer::reconfigureOutputPins(uint8_t bclkPin, uint8_t wsPin, uint8_t 
     impl_->audio.setI2SCommFMT_LSB(false);
     impl_->audio.setPinout(bclkPin, wsPin, doutPin);
     impl_->audio.forceMono(DefaultConfig::AUDIO_FORCE_MONO);
+    impl_->channelCount = DefaultConfig::AUDIO_FORCE_MONO ? 1 : 2;
     impl_->applyHardwareVolumePercent(impl_->volume);
     impl_->bclkPin = bclkPin;
     impl_->wsPin = wsPin;
     impl_->doutPin = doutPin;
-    Serial.printf("[audio] reconfigured target=MAX98357A fmt=std-i2s bclk=%u ws=%u dout=%u mono=%s\n",
+    Serial.printf("[audio] reconfigured target=MAX98357A fmt=std-i2s bclk=%u ws=%u dout=%u requested_rate=%lu lib_volume=%u mono=%s\n",
                   bclkPin,
                   wsPin,
                   doutPin,
+                  static_cast<unsigned long>(impl_->requestedSampleRateHz),
+                  impl_->hardwareAudioVolume,
                   DefaultConfig::AUDIO_FORCE_MONO ? "on" : "off");
 
     if (!resumePlayback) {
@@ -300,11 +334,26 @@ void AudioPlayer::setVolumePercent(uint8_t volumePercent) {
     }
     impl_->volume = nextVolume;
     impl_->applyHardwareVolumePercent(impl_->volume);
+    Serial.printf("[audio] volume percent=%u lib_volume=%u\n", impl_->volume, impl_->hardwareAudioVolume);
+    impl_->publish();
+}
+
+void AudioPlayer::setDirectLibraryVolume(uint8_t libraryVolume) {
+    if (impl_ == nullptr) {
+        return;
+    }
+    impl_->setHardwareAudioVolume(libraryVolume);
+    impl_->volume = static_cast<uint8_t>(constrain(map(impl_->hardwareAudioVolume, 0, DefaultConfig::AUDIO_MAX_HARDWARE_VOLUME, 0, 100), 0L, 100L));
+    Serial.printf("[audio] direct lib_volume=%u mapped_percent=%u\n", impl_->hardwareAudioVolume, impl_->volume);
     impl_->publish();
 }
 
 uint8_t AudioPlayer::volumePercent() const {
     return impl_ == nullptr ? 0 : impl_->volume;
+}
+
+uint8_t AudioPlayer::libraryVolume() const {
+    return impl_ == nullptr ? 0 : impl_->hardwareAudioVolume;
 }
 
 String AudioPlayer::currentTitle() const {
@@ -317,6 +366,22 @@ String AudioPlayer::currentUrl() const {
 
 String AudioPlayer::currentState() const {
     return impl_ == nullptr ? String("idle") : impl_->state;
+}
+
+AudioPlayer::DiagnosticsSnapshot AudioPlayer::diagnostics() const {
+    DiagnosticsSnapshot snapshot;
+    if (impl_ == nullptr) {
+        return snapshot;
+    }
+
+    snapshot.requestedSampleRateHz = impl_->requestedSampleRateHz;
+    snapshot.activeSampleRateHz = impl_->activeSampleRateHz;
+    snapshot.bitsPerSample = impl_->bitsPerSample;
+    snapshot.channelCount = impl_->channelCount;
+    snapshot.libraryVolume = impl_->hardwareAudioVolume;
+    snapshot.stereoEnabled = impl_->channelCount >= 2;
+    snapshot.diagnosticTestMode = impl_->diagnosticTestMode;
+    return snapshot;
 }
 
 void AudioPlayer::onStationName(const char* text) { (void)text; }
