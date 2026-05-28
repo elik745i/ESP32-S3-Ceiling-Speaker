@@ -1,4 +1,4 @@
-# ESP32 Notifier for Home Assistant
+# ESP32-S3 Ceiling Speaker
 
 PlatformIO firmware for an ESP32-based Wi-Fi audio notifier / speaker with:
 
@@ -7,7 +7,7 @@ PlatformIO firmware for an ESP32-based Wi-Fi audio notifier / speaker with:
 - Wi-Fi station mode plus fallback AP configuration mode
 - MQTT command and state bridge for Home Assistant
 - I2S audio output for MP3 streams, radio streams, and URL-based TTS playback
-- OTA checks and installs from a GitHub release or manifest URL
+- OTA checks and installs from this repository's GitHub Releases or an optional manifest URL
 - battery voltage monitoring with smoothing and calibration
 - OLED status display support for SSD1306 and SH1106 panels
 - compile-time defaults plus saved settings in Preferences / NVS
@@ -44,11 +44,17 @@ The firmware in this repository documents and supports that direction, while kee
 
 ## Current Status
 
-The repository builds successfully with PlatformIO and emits [firmware.bin](.pio/build/esp32_notifier/firmware.bin) locally.
+The repository builds successfully with PlatformIO and emits local [firmware.bin](.pio/build/esp32s3_notifier_hacs/firmware.bin) artifacts for the selected environment.
 
 Current firmware version in this repository:
 
 - `v0.1.11`
+
+OTA release source for the Firmware tab:
+
+- GitHub repository: `elik745i/ESP32-S3-Ceiling-Speaker`
+- GitHub release feed: `https://api.github.com/repos/elik745i/ESP32-S3-Ceiling-Speaker/releases`
+- Default ESP32-S3 HACS OTA asset: `esp32s3-notifier-hacs-v0.1.11.bin`
 
 Recent firmware and web UI updates included in this version:
 
@@ -258,6 +264,19 @@ pio run -e esp32_notifier_hacs
 ```powershell
 pio run -t upload
 ```
+
+## Release Assets
+
+The Firmware tab checks this repository's GitHub Releases by default. OTA-compatible assets must keep the exact names the firmware expects for each PlatformIO environment:
+
+- `esp32-notifier-${version}.bin`
+- `esp32-notifier-hacs-${version}.bin`
+- `esp32-notifier-hacs-slim-${version}.bin`
+- `esp32s3-notifier-${version}.bin`
+- `esp32s3-notifier-hacs-${version}.bin`
+- `esp32s3-notifier-hacs-slim-${version}.bin`
+
+Publishing a GitHub Release now triggers `.github/workflows/platformio.yml`, which builds all six firmware variants and uploads them back to that release using those OTA asset names.
 
 5. Open serial monitor:
 

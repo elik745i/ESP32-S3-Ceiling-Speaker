@@ -2,10 +2,16 @@ name: PlatformIO CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+  workflow_dispatch:
+  release:
+    types:
+      - published
 
 jobs:
-  build:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,5 +20,42 @@ jobs:
           python-version: '3.x'
       - name: Install PlatformIO
         run: pip install platformio
-      - name: Build firmware
+      - name: Build default environment
         run: pio run
+
+  release-assets:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - env: esp32_notifier
+            asset: esp32-notifier-${{ github.event.release.tag_name }}.bin
+          - env: esp32_notifier_hacs
+            asset: esp32-notifier-hacs-${{ github.event.release.tag_name }}.bin
+          - env: esp32_notifier_hacs_slim
+            asset: esp32-notifier-hacs-slim-${{ github.event.release.tag_name }}.bin
+          - env: esp32s3_notifier
+            asset: esp32s3-notifier-${{ github.event.release.tag_name }}.bin
+          - env: esp32s3_notifier_hacs
+            asset: esp32s3-notifier-hacs-${{ github.event.release.tag_name }}.bin
+          - env: esp32s3_notifier_hacs_slim
+            asset: esp32s3-notifier-hacs-slim-${{ github.event.release.tag_name }}.bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install PlatformIO
+        run: pip install platformio
+      - name: Build release firmware
+        run: pio run -e ${{ matrix.env }}
+      - name: Stage OTA asset
+        run: |
+          mkdir -p dist
+          cp .pio/build/${{ matrix.env }}/firmware.bin dist/${{ matrix.asset }}
+      - name: Upload OTA asset to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.asset }}

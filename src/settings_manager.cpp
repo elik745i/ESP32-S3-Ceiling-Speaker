@@ -160,6 +160,18 @@ String defaultFriendlyBaseName() {
 #endif
 }
 
+bool usesLegacyOtaRepository(const String& owner, const String& repository) {
+    String normalizedOwner = owner;
+    normalizedOwner.trim();
+    normalizedOwner.toLowerCase();
+
+    String normalizedRepository = repository;
+    normalizedRepository.trim();
+    normalizedRepository.toLowerCase();
+
+    return normalizedOwner == "elik745i" && normalizedRepository == "esp32-notifier-for-homeassistant";
+}
+
 String defaultOtaAssetTemplate() {
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
     #ifdef APP_ENABLE_HACS_MQTT
@@ -353,6 +365,12 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     }
     if (settings.mqtt.baseTopic.isEmpty()) {
         settings.mqtt.baseTopic = DefaultConfig::MQTT_BASE_TOPIC;
+    }
+    if (settings.ota.owner.isEmpty() || usesLegacyOtaRepository(settings.ota.owner, settings.ota.repository)) {
+        settings.ota.owner = DefaultConfig::OTA_OWNER;
+    }
+    if (settings.ota.repository.isEmpty() || usesLegacyOtaRepository(settings.ota.owner, settings.ota.repository)) {
+        settings.ota.repository = DefaultConfig::OTA_REPOSITORY;
     }
     if (settings.ota.assetTemplate.isEmpty() || settings.ota.assetTemplate == DefaultConfig::OTA_ASSET_TEMPLATE ||
         settings.ota.assetTemplate == "esp32-notifier-hacs-${version}.bin" || settings.ota.assetTemplate == "esp32-notifier-hacs-slim-${version}.bin" ||

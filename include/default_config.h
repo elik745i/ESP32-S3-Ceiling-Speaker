@@ -77,7 +77,7 @@ constexpr char MQTT_BASE_TOPIC[] = "esp32_notifier";
 constexpr bool MQTT_DISCOVERY_ENABLED = true;
 
 constexpr char OTA_OWNER[] = "elik745i";
-constexpr char OTA_REPOSITORY[] = "ESP32-Notifier-for-Homeassistant";
+constexpr char OTA_REPOSITORY[] = "ESP32-S3-Ceiling-Speaker";
 constexpr char OTA_CHANNEL[] = "stable";
 constexpr char OTA_ASSET_TEMPLATE[] = "esp32-notifier-${version}.bin";
 constexpr char OTA_MANIFEST_URL[] = "";
