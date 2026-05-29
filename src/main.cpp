@@ -6,6 +6,7 @@
 #include <esp_system.h>
 
 #include "default_config.h"
+#include "storage_backend.h"
 
 namespace {
 void waitForSerialConsole(unsigned long timeoutMs = 1500) {
@@ -71,6 +72,7 @@ void applyStatusLedPin(uint8_t pin) {
     activeStatusLedPin = pin;
     initializeStatusLed();
 }
+
 }
 
 #ifdef SAFE_BOOT_DIAGNOSTIC
@@ -143,8 +145,10 @@ void loop() {
 #include "mqtt_manager.h"
 #include "ota_manager.h"
 #include "playback_text.h"
+#include "psram_allocator.h"
 #include "settings_manager.h"
 #include "sound_effects.h"
+#include "system_metrics.h"
 #include "version.h"
 #include "web_server.h"
 #include "wifi_manager.h"
@@ -312,6 +316,10 @@ bool isBatterySamplingAllowed() {
 
     const String audioState = audioPlayer->currentState();
     return audioState != "playing" && audioState != "buffering";
+}
+
+bool isPhysicalButtonEnabled(const PhysicalButtonState& button) {
+    return !sdStorageUsesPin(button.pin);
 }
 
 const char* resetReasonToString(esp_reset_reason_t reason) {
@@ -622,15 +630,24 @@ void showS3ButtonActionOnDisplay(const String& action) {
 }
 
 void initializeButtons() {
-    pinMode(button1.pin, INPUT_PULLDOWN);
-    pinMode(button2.pin, INPUT_PULLDOWN);
-
     const unsigned long now = millis();
-    button1.lastSampledPressed = digitalRead(button1.pin) == HIGH;
+    if (isPhysicalButtonEnabled(button1)) {
+        pinMode(button1.pin, INPUT_PULLDOWN);
+        button1.lastSampledPressed = digitalRead(button1.pin) == HIGH;
+    } else {
+        pinMode(button1.pin, INPUT);
+        button1.lastSampledPressed = false;
+    }
     button1.stablePressed = button1.lastSampledPressed;
     button1.lastTransitionAt = now;
 
-    button2.lastSampledPressed = digitalRead(button2.pin) == HIGH;
+    if (isPhysicalButtonEnabled(button2)) {
+        pinMode(button2.pin, INPUT_PULLDOWN);
+        button2.lastSampledPressed = digitalRead(button2.pin) == HIGH;
+    } else {
+        pinMode(button2.pin, INPUT);
+        button2.lastSampledPressed = false;
+    }
     button2.stablePressed = button2.lastSampledPressed;
     button2.lastTransitionAt = now;
 }
@@ -809,6 +826,12 @@ bool executeButtonAction(const PhysicalButtonState& button, const String& action
 }
 
 void pollPhysicalButton(PhysicalButtonState& button) {
+    if (!isPhysicalButtonEnabled(button)) {
+        button.lastSampledPressed = false;
+        button.stablePressed = false;
+        return;
+    }
+
     const bool pressed = digitalRead(button.pin) == HIGH;
     const unsigned long now = millis();
 
@@ -942,40 +965,40 @@ void pumpOtaDisplayProgress() {
 
 bool initializeRuntimeObjects() {
     if (appState == nullptr) {
-        appState = new AppState();
+        appState = allocatePreferPsram<AppState>();
     }
     if (settingsManager == nullptr) {
-        settingsManager = new SettingsManager();
+        settingsManager = allocatePreferPsram<SettingsManager>();
     }
     if (settings == nullptr) {
-        settings = new SettingsBundle();
+        settings = allocatePreferPsram<SettingsBundle>();
     }
     if (wifiManager == nullptr) {
-        wifiManager = new WiFiManager();
+        wifiManager = allocatePreferPsram<WiFiManager>();
     }
     if (batteryMonitor == nullptr) {
-        batteryMonitor = new BatteryMonitor();
+        batteryMonitor = allocatePreferPsram<BatteryMonitor>();
     }
     if (displayManager == nullptr) {
-        displayManager = new DisplayManager();
+        displayManager = allocatePreferPsram<DisplayManager>();
     }
     if (audioPlayer == nullptr) {
-        audioPlayer = new AudioPlayerType();
+        audioPlayer = allocatePreferPsram<AudioPlayerType>();
     }
     if (otaManager == nullptr) {
-        otaManager = new OtaManager();
+        otaManager = allocatePreferPsram<OtaManager>();
     }
     if (mqttManager == nullptr) {
-        mqttManager = new MqttManager();
+        mqttManager = allocatePreferPsram<MqttManager>();
     }
     if (webServer == nullptr) {
-        webServer = new WebServerManager();
+        webServer = allocatePreferPsram<WebServerManager>();
     }
     if (soundEffects == nullptr) {
-        soundEffects = new SoundEffectsManager();
+        soundEffects = allocatePreferPsram<SoundEffectsManager>();
     }
     if (deferredActions == nullptr) {
-        deferredActions = new DeferredActions();
+        deferredActions = allocatePreferPsram<DeferredActions>();
     }
 
     return appState != nullptr && settingsManager != nullptr && settings != nullptr && wifiManager != nullptr &&
@@ -984,6 +1007,8 @@ bool initializeRuntimeObjects() {
 }
 
 void applyRuntimeSettings() {
+    applyStorageSettings(*settings);
+    initializeButtons();
     appState->setDevice(settings->device.deviceName, settings->device.friendlyName, settings->usingSavedSettings);
     applyStatusLedPin(settings->device.statusLedPin);
     applyWapeTriggerPin(settings->oled.displayType == "wape" ? settings->oled.wapeTriggerPin : 0);
@@ -1005,6 +1030,7 @@ void applyRuntimeSettings() {
     soundEffects->applySettings(*settings);
     mqttManager->applySettings(*settings);
     otaManager->applySettings(*settings);
+    sampleSystemMetrics();
 
     // Repaint the current status immediately on the newly selected LED pin so
     // the pin change is visible right after Save Device Settings.
@@ -1207,6 +1233,7 @@ void setup() {
     Serial.begin(115200);
     waitForSerialConsole();
     delay(200);
+    beginSystemMetrics();
 
     const esp_reset_reason_t resetReason = esp_reset_reason();
     loadRollbackState();
@@ -1236,12 +1263,13 @@ void setup() {
         Serial.flush();
     }
 
-    initializeButtons();
-
     settingsManager->begin();
     *settings = settingsManager->load();
+    beginStorageBackends(*settings);
     activeStatusLedPin = settings->device.statusLedPin;
     activeWapeTriggerPin = settings->oled.displayType == "wape" ? settings->oled.wapeTriggerPin : 0;
+
+    initializeButtons();
 
     initializeStatusLed();
     writeStatusLed(false);
@@ -1426,6 +1454,7 @@ void loop() {
     wifiManager->loop();
     serviceAudioDiagnosticTest();
     audioPlayer->loop();
+    pollStorageBackends();
     const bool batteryUpdated = batteryMonitor->loop(isBatterySamplingAllowed());
     otaManager->loop();
     mqttManager->loop();
@@ -1438,9 +1467,10 @@ void loop() {
 
     publishOtaStateIfNeeded(snapshot);
 
-    if (millis() - lastHeapUpdateAt > 5000UL) {
+    if (millis() - lastHeapUpdateAt > 2000UL) {
         lastHeapUpdateAt = millis();
-        appState->setFreeHeap(ESP.getFreeHeap());
+        sampleSystemMetrics();
+        appState->setFreeHeap(getSystemMetricsSnapshot().freeHeapBytes);
         writeStatusLed((wifiManager->isConnected() && mqttManager->isConnected()) ? true : ((millis() / 300UL) % 2) != 0);
     }
 

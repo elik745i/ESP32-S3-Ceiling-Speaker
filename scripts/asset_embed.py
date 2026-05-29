@@ -37,12 +37,26 @@ def minify_css(text: str) -> str:
     return text.strip()
 
 
+def minify_svg(text: str) -> str:
+    text = re.sub(r"<\?xml.*?\?>", "", text, flags=re.S)
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    text = re.sub(r"<metadata\b.*?</metadata>", "", text, flags=re.S)
+    text = re.sub(r"<sodipodi:namedview\b.*?</sodipodi:namedview>", "", text, flags=re.S)
+    text = re.sub(r"\s+xmlns:(?:inkscape|sodipodi)=\"[^\"]*\"", "", text)
+    text = re.sub(r"\s+(?:inkscape|sodipodi):[\w.-]+=\"[^\"]*\"", "", text)
+    text = re.sub(r">\s+<", "><", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    return text.strip()
+
+
 def prepare_payload(path: Path) -> bytes:
     raw = path.read_bytes()
     if path.suffix.lower() == ".html":
         return minify_html(raw.decode("utf-8")).encode("utf-8")
     if path.suffix.lower() == ".css":
         return minify_css(raw.decode("utf-8")).encode("utf-8")
+    if path.suffix.lower() == ".svg":
+        return minify_svg(raw.decode("utf-8")).encode("utf-8")
     return raw
 
 
@@ -57,6 +71,7 @@ for path in sorted(WEB_DIR.glob("*")):
         ".html": "text/html; charset=utf-8",
         ".css": "text/css; charset=utf-8",
         ".js": "application/javascript; charset=utf-8",
+        ".svg": "image/svg+xml",
     }.get(path.suffix.lower(), "application/octet-stream")
     symbol = path.stem.replace("-", "_") + path.suffix.replace(".", "_")
     assets.append((path.name, symbol, mime, payload, gzip_encoded or is_gzip_payload(payload)))

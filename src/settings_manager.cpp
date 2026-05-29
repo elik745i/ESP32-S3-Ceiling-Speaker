@@ -8,6 +8,7 @@ namespace {
 constexpr char PREF_NAMESPACE[] = "notifier";
 constexpr char PREF_MARKER[] = "saved";
 constexpr float kLegacyEsp32BatteryCalibration = 3.866f;
+constexpr uint8_t kDocumentedBuzzerPin = 7;
 
 bool approximatelyEqual(float left, float right, float tolerance = 0.05f) {
     return fabsf(left - right) <= tolerance;
@@ -43,6 +44,14 @@ bool isValidWapeTriggerPin(uint8_t pin) {
 #endif
 }
 
+bool isValidSdPin(uint8_t pin) {
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    return pin <= 48;
+#else
+    return pin <= 39;
+#endif
+}
+
 bool isValidI2sPin(uint8_t pin) {
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
     return pin >= 9 && pin <= 12;
@@ -55,20 +64,33 @@ bool hasDistinctI2sPins(const AudioSettings& settings) {
     return settings.bclkPin != settings.wsPin && settings.bclkPin != settings.doutPin && settings.wsPin != settings.doutPin;
 }
 
-bool batteryPinConflictsWithI2s(const BatterySettings& battery, const AudioSettings& audio) {
-    return battery.adcPin == audio.bclkPin || battery.adcPin == audio.wsPin || battery.adcPin == audio.doutPin;
+bool sdUsesPin(const SdSettings& sd, int pin) {
+    if (!sd.enabled || pin < 0) {
+        return false;
+    }
+    return sd.csPin == pin || sd.sckPin == pin || sd.mosiPin == pin || sd.misoPin == pin;
 }
 
-bool chargingSensePinConflicts(const BatterySettings& battery, const AudioSettings& audio, const DeviceSettings& device) {
+bool hasDistinctSdPins(const SdSettings& sd) {
+    return sd.csPin != sd.sckPin && sd.csPin != sd.mosiPin && sd.csPin != sd.misoPin &&
+        sd.sckPin != sd.mosiPin && sd.sckPin != sd.misoPin && sd.mosiPin != sd.misoPin;
+}
+
+bool batteryPinConflicts(const BatterySettings& battery, const AudioSettings& audio, const SdSettings& sd) {
+    return battery.adcPin == audio.bclkPin || battery.adcPin == audio.wsPin || battery.adcPin == audio.doutPin ||
+        sdUsesPin(sd, battery.adcPin);
+}
+
+bool chargingSensePinConflicts(const BatterySettings& battery, const AudioSettings& audio, const DeviceSettings& device, const SdSettings& sd) {
     if (battery.chargingSensePin == 0) {
         return false;
     }
     return battery.chargingSensePin == battery.adcPin || battery.chargingSensePin == audio.bclkPin ||
            battery.chargingSensePin == audio.wsPin || battery.chargingSensePin == audio.doutPin ||
-           battery.chargingSensePin == device.statusLedPin;
+           battery.chargingSensePin == device.statusLedPin || sdUsesPin(sd, battery.chargingSensePin);
 }
 
-bool oledPinConflicts(const OledSettings& oled, const AudioSettings& audio, const BatterySettings& battery, const DeviceSettings& device) {
+bool oledPinConflicts(const OledSettings& oled, const AudioSettings& audio, const BatterySettings& battery, const DeviceSettings& device, const SdSettings& sd) {
     String displayType = oled.displayType;
     displayType.trim();
     displayType.toLowerCase();
@@ -84,7 +106,8 @@ bool oledPinConflicts(const OledSettings& oled, const AudioSettings& audio, cons
         return pin == audio.bclkPin || pin == audio.wsPin || pin == audio.doutPin ||
                pin == battery.adcPin || pin == battery.chargingSensePin ||
                pin == device.statusLedPin || pin == DefaultConfig::BUTTON1_PIN ||
-               pin == DefaultConfig::BUTTON2_PIN;
+             pin == DefaultConfig::BUTTON2_PIN || pin == kDocumentedBuzzerPin ||
+             sdUsesPin(sd, pin);
     };
 
     if (oled.sdaPin == oled.sclPin) {
@@ -98,16 +121,25 @@ bool oledPinConflicts(const OledSettings& oled, const AudioSettings& audio, cons
            conflictsWithReservedPins(oled.resetPin);
 }
 
-bool wapeTriggerPinConflicts(const OledSettings& oled, const AudioSettings& audio, const BatterySettings& battery, const DeviceSettings& device) {
+bool wapeTriggerPinConflicts(const OledSettings& oled, const AudioSettings& audio, const BatterySettings& battery, const DeviceSettings& device, const SdSettings& sd) {
     if (oled.wapeTriggerPin == 0) {
         return false;
     }
     return oled.wapeTriggerPin == audio.bclkPin || oled.wapeTriggerPin == audio.wsPin || oled.wapeTriggerPin == audio.doutPin ||
-           oled.wapeTriggerPin == battery.adcPin || oled.wapeTriggerPin == device.statusLedPin
+           oled.wapeTriggerPin == battery.adcPin || oled.wapeTriggerPin == device.statusLedPin || sdUsesPin(sd, oled.wapeTriggerPin)
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
            || oled.wapeTriggerPin == 21
 #endif
         ;
+}
+
+bool sdPinConflictsWithRequiredFunctions(const SdSettings& sd, const AudioSettings& audio, const BatterySettings& battery, const DeviceSettings& device) {
+    if (!sd.enabled) {
+        return false;
+    }
+
+    return sdUsesPin(sd, audio.bclkPin) || sdUsesPin(sd, audio.wsPin) || sdUsesPin(sd, audio.doutPin) ||
+        sdUsesPin(sd, battery.adcPin) || sdUsesPin(sd, battery.chargingSensePin) || sdUsesPin(sd, device.statusLedPin);
 }
 
 String normalizeDisplayType(String value) {
@@ -127,16 +159,16 @@ String normalizeWapeTriggerEvent(String value) {
     return String("play_start");
 }
 
-uint8_t fallbackBatteryAdcPin(const AudioSettings& audio) {
+uint8_t fallbackBatteryAdcPin(const AudioSettings& audio, const SdSettings& sd) {
     BatterySettings candidate;
     candidate.adcPin = DefaultConfig::BATTERY_ADC_PIN;
-    if (!batteryPinConflictsWithI2s(candidate, audio)) {
+    if (!batteryPinConflicts(candidate, audio, sd)) {
         return DefaultConfig::BATTERY_ADC_PIN;
     }
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
     for (uint8_t pin = 1; pin <= 20; ++pin) {
         candidate.adcPin = pin;
-        if (!batteryPinConflictsWithI2s(candidate, audio)) {
+        if (!batteryPinConflicts(candidate, audio, sd)) {
             return pin;
         }
     }
@@ -326,6 +358,12 @@ SettingsBundle SettingsManager::defaults() const {
     settings.oled.wapeTriggerPin = 0;
     settings.oled.wapeTriggerEvent = "play_start";
 
+    settings.sd.enabled = false;
+    settings.sd.csPin = 4;
+    settings.sd.sckPin = 5;
+    settings.sd.mosiPin = 6;
+    settings.sd.misoPin = 7;
+
     settings.device.deviceName = uniqueDeviceName;
     settings.device.friendlyName = uniqueFriendlyName;
     settings.device.statusLedPin = DefaultConfig::STATUS_LED_PIN;
@@ -412,11 +450,24 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
         settings.audio.wsPin = DefaultConfig::I2S_WS_PIN;
         settings.audio.doutPin = DefaultConfig::I2S_DOUT_PIN;
     }
-    if (!isValidBatteryAdcPin(settings.battery.adcPin) || batteryPinConflictsWithI2s(settings.battery, settings.audio)) {
-        settings.battery.adcPin = fallbackBatteryAdcPin(settings.audio);
+    if (!isValidSdPin(settings.sd.csPin) || !isValidSdPin(settings.sd.sckPin) || !isValidSdPin(settings.sd.mosiPin) ||
+        !isValidSdPin(settings.sd.misoPin) || !hasDistinctSdPins(settings.sd)) {
+        settings.sd = SdSettings();
     }
-    if (!isValidBatteryAdcPin(settings.battery.chargingSensePin) || chargingSensePinConflicts(settings.battery, settings.audio, settings.device)) {
+    if (sdPinConflictsWithRequiredFunctions(settings.sd, settings.audio, settings.battery, settings.device)) {
+        settings.sd.enabled = false;
+    }
+    if (!isValidBatteryAdcPin(settings.battery.adcPin) || batteryPinConflicts(settings.battery, settings.audio, settings.sd)) {
+        settings.battery.adcPin = fallbackBatteryAdcPin(settings.audio, settings.sd);
+    }
+    if (!isValidBatteryAdcPin(settings.battery.chargingSensePin) || chargingSensePinConflicts(settings.battery, settings.audio, settings.device, settings.sd)) {
         settings.battery.chargingSensePin = 0;
+    }
+    if (sdPinConflictsWithRequiredFunctions(settings.sd, settings.audio, settings.battery, settings.device)) {
+        settings.sd.enabled = false;
+    }
+    if (sdUsesPin(settings.sd, settings.device.statusLedPin)) {
+        settings.device.statusLedPin = DefaultConfig::STATUS_LED_PIN;
     }
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
     if (approximatelyEqual(settings.battery.calibrationMultiplier, kLegacyEsp32BatteryCalibration)) {
@@ -437,13 +488,13 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
         settings.oled.rotation = 0;
     }
     settings.oled.dimTimeoutSeconds = clampValue<uint16_t>(settings.oled.dimTimeoutSeconds, static_cast<uint16_t>(0), static_cast<uint16_t>(3600));
-    if (oledPinConflicts(settings.oled, settings.audio, settings.battery, settings.device)) {
+    if (oledPinConflicts(settings.oled, settings.audio, settings.battery, settings.device, settings.sd)) {
         settings.oled.enabled = false;
         settings.oled.sdaPin = DefaultConfig::OLED_SDA_PIN;
         settings.oled.sclPin = DefaultConfig::OLED_SCL_PIN;
         settings.oled.resetPin = DefaultConfig::OLED_RESET_PIN;
     }
-    if (!isValidWapeTriggerPin(settings.oled.wapeTriggerPin) || wapeTriggerPinConflicts(settings.oled, settings.audio, settings.battery, settings.device)) {
+    if (!isValidWapeTriggerPin(settings.oled.wapeTriggerPin) || wapeTriggerPinConflicts(settings.oled, settings.audio, settings.battery, settings.device, settings.sd)) {
         settings.oled.wapeTriggerPin = 0;
     }
     settings.oled.wapeTriggerEvent = normalizeWapeTriggerEvent(settings.oled.wapeTriggerEvent);
@@ -514,6 +565,12 @@ SettingsBundle SettingsManager::load() {
     settings.oled.dimTimeoutSeconds = readUInt("oled_dim", settings.oled.dimTimeoutSeconds);
     settings.oled.wapeTriggerPin = readUInt("oled_wape_pin", settings.oled.wapeTriggerPin);
     settings.oled.wapeTriggerEvent = readString("oled_wape_evt", settings.oled.wapeTriggerEvent);
+
+    settings.sd.enabled = readBool("sd_en", settings.sd.enabled);
+    settings.sd.csPin = readUInt("sd_cs", settings.sd.csPin);
+    settings.sd.sckPin = readUInt("sd_sck", settings.sd.sckPin);
+    settings.sd.mosiPin = readUInt("sd_mosi", settings.sd.mosiPin);
+    settings.sd.misoPin = readUInt("sd_miso", settings.sd.misoPin);
 
     settings.device.deviceName = readString("dev_name", settings.device.deviceName);
     settings.device.friendlyName = readString("dev_friendly", settings.device.friendlyName);
@@ -590,6 +647,12 @@ bool SettingsManager::save(const SettingsBundle& settings) {
     changed |= writeUIntIfChanged("oled_dim", sanitized.oled.dimTimeoutSeconds);
     changed |= writeUIntIfChanged("oled_wape_pin", sanitized.oled.wapeTriggerPin);
     changed |= writeStringIfChanged("oled_wape_evt", sanitized.oled.wapeTriggerEvent);
+
+    changed |= writeBoolIfChanged("sd_en", sanitized.sd.enabled);
+    changed |= writeUIntIfChanged("sd_cs", sanitized.sd.csPin);
+    changed |= writeUIntIfChanged("sd_sck", sanitized.sd.sckPin);
+    changed |= writeUIntIfChanged("sd_mosi", sanitized.sd.mosiPin);
+    changed |= writeUIntIfChanged("sd_miso", sanitized.sd.misoPin);
 
     changed |= writeStringIfChanged("dev_name", sanitized.device.deviceName);
     changed |= writeStringIfChanged("dev_friendly", sanitized.device.friendlyName);
@@ -672,6 +735,13 @@ void SettingsManager::toJson(const SettingsBundle& settings, JsonObject root) co
     oled["dimTimeoutSeconds"] = settings.oled.dimTimeoutSeconds;
     oled["wapeTriggerPin"] = settings.oled.wapeTriggerPin;
     oled["wapeTriggerEvent"] = settings.oled.wapeTriggerEvent;
+
+    JsonObject sd = root["sd"].to<JsonObject>();
+    sd["enabled"] = settings.sd.enabled;
+    sd["csPin"] = settings.sd.csPin;
+    sd["sckPin"] = settings.sd.sckPin;
+    sd["mosiPin"] = settings.sd.mosiPin;
+    sd["misoPin"] = settings.sd.misoPin;
 
     JsonObject device = root["device"].to<JsonObject>();
     device["deviceName"] = settings.device.deviceName;
@@ -776,6 +846,15 @@ bool SettingsManager::updateFromJson(SettingsBundle& settings, JsonVariantConst 
         if (oled["dimTimeoutSeconds"].is<uint16_t>()) settings.oled.dimTimeoutSeconds = oled["dimTimeoutSeconds"].as<uint16_t>();
         if (oled["wapeTriggerPin"].is<uint8_t>()) settings.oled.wapeTriggerPin = oled["wapeTriggerPin"].as<uint8_t>();
         copyString(oled, "wapeTriggerEvent", settings.oled.wapeTriggerEvent);
+    }
+
+    JsonObjectConst sd = object["sd"];
+    if (!sd.isNull()) {
+        if (sd["enabled"].is<bool>()) settings.sd.enabled = sd["enabled"].as<bool>();
+        if (sd["csPin"].is<uint8_t>()) settings.sd.csPin = sd["csPin"].as<uint8_t>();
+        if (sd["sckPin"].is<uint8_t>()) settings.sd.sckPin = sd["sckPin"].as<uint8_t>();
+        if (sd["mosiPin"].is<uint8_t>()) settings.sd.mosiPin = sd["mosiPin"].as<uint8_t>();
+        if (sd["misoPin"].is<uint8_t>()) settings.sd.misoPin = sd["misoPin"].as<uint8_t>();
     }
 
     JsonObjectConst device = object["device"];

@@ -1,27 +1,27 @@
 # ESP32-S3 Ceiling Speaker
 
-Custom PlatformIO firmware for an ESP32-based Wi-Fi ceiling speaker and notifier with a MAX98357A I2S amplifier, browser-based configuration UI, MQTT and Home Assistant integration, GitHub Releases OTA updates, and configurable pin mapping for audio, OLED, battery, and status hardware.
+Custom PlatformIO firmware for ESP32 and ESP32-S3 Wi-Fi speaker/notifier hardware with a MAX98357A I2S amplifier path, browser-based configuration UI, MQTT and Home Assistant integration, local storage management, GitHub-release-based update discovery, and configurable pin mapping for audio, OLED, battery, SD, and status hardware.
 
 ## Current Release
 
-- Firmware version: `v0.1.12`
-- Primary OTA repository: `elik745i/ESP32-S3-Ceiling-Speaker`
+- Firmware version: `v0.1.13`
+- Primary release repository: `elik745i/ESP32-S3-Ceiling-Speaker`
 - GitHub Releases feed: `https://api.github.com/repos/elik745i/ESP32-S3-Ceiling-Speaker/releases`
-- Default ESP32-S3 HACS OTA asset: `esp32s3-notifier-hacs-v0.1.12.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.13.bin`
 
 ## What This Firmware Does
 
-- Plays MP3, radio, and URL-based TTS streams over I2S audio
-- Targets the MAX98357A amplifier path for the ESP32-S3 ceiling-speaker build
-- Exposes a local web UI for playback, setup, monitoring, OTA, and pin remapping
-- Publishes MQTT state and accepts MQTT playback and control commands
-- Supports Home Assistant through standard MQTT topics and the HACS `mqtt_media_player` flow
-- Checks GitHub Releases for OTA updates and installs the correct build asset for the active firmware variant
-- Supports OLED status display, buzzer, touch buttons, battery monitoring, and configurable low-battery sleep
+- Plays MP3, internet radio, URL streams, and TTS over I2S audio.
+- Targets the MAX98357A mono amplifier path for the ceiling-speaker ESP32-S3 build.
+- Exposes a local web UI for playback, Wi-Fi, MQTT, battery, OLED, GPIO reference, storage, firmware, and device monitoring.
+- Publishes MQTT state and accepts MQTT playback, transport, OTA, and control commands.
+- Supports Home Assistant through standard MQTT topics and the HACS `mqtt_media_player` flow.
+- Browses GitHub Releases for matching firmware assets and supports local firmware uploads.
+- Supports OLED status display, touch buttons, buzzer, battery monitoring, low-battery sleep, SD storage, and configurable pin mapping.
 
 ## Hardware Target
 
-The current documented hardware target is the ESP32-S3 Super Mini ceiling-speaker build using:
+The current documented target is the ESP32-S3 Super Mini ceiling-speaker build using:
 
 - ESP32-S3 Super Mini
 - MAX98357A I2S mono amplifier
@@ -55,48 +55,54 @@ The ESP32-S3 environments in [platformio.ini](platformio.ini) default to this ce
 | Touch button 1 | 5 |
 | Touch button 2 | 6 |
 | Buzzer | 7 |
+| SD CS | 4 |
+| SD SCK | 5 |
+| SD MOSI | 6 |
+| SD MISO | 7 |
 
 Notes:
 
-- The web UI keeps I2S remapping available for the supported ESP32-S3 I2S pin set.
-- OLED and other configurable pins are sanitized to avoid conflicts with active I2S pins.
-- On the ceiling-speaker profiles, the documented amplifier is MAX98357A only.
+- ESP32-S3 audio pin remapping is intentionally limited to the supported `GPIO9` to `GPIO12` I2S set.
+- OLED, battery, LED, buzzer, and SD pins are sanitized to avoid active audio and required-function conflicts.
+- The documented amplifier path for the ceiling-speaker profiles is MAX98357A only.
 
 ## Audio Path
 
-Audio playback is implemented with `schreibfaul1/ESP32-audioI2S` and configured for the MAX98357A standard I2S path.
+Audio playback uses `schreibfaul1/ESP32-audioI2S` on the standard I2S path required by MAX98357A.
 
 Important current behavior:
 
 - The firmware uses standard I2S format, not a PCM5102-specific path.
-- The earlier software-side audio boost that could clip the stream was removed.
-- Active stream replacement already uses fade-out and fade-in for smoother station switching.
-- The Audio tab now allows changing Radio Browser stations directly while already playing.
-- The top playback card now includes previous station, play or stop, and next station controls.
+- The earlier software-side audio boost that could clip or distort playback was removed.
+- Active stream replacement uses fade-out and fade-in for smoother station switching.
+- The Audio tab supports direct Radio Browser station switching while already playing.
+- The hero playback card includes previous station, play or stop, and next station controls.
+- The browser default radio selection is Azerbaijan with AvtoFM preselected.
 
-There is also a dedicated diagnostic build profile for isolated MAX98357A testing:
+There is also a dedicated diagnostic build for isolated MAX98357A testing:
 
 - `esp32s3_notifier_hacs_audio_test`
 
-That build is meant for audio troubleshooting and is not part of the standard release asset matrix.
+That profile is for troubleshooting and is not part of the standard release asset matrix.
 
 ## Web UI
 
-The web frontend lives in [web/index.html](web/index.html), [web/style.css](web/style.css), and [web/app.js](web/app.js), then gets embedded into firmware at build time through [scripts/asset_embed.py](scripts/asset_embed.py).
+The web frontend lives in [web/index.html](web/index.html), [web/style.css](web/style.css), and [web/app.js](web/app.js), then gets embedded into firmware by [scripts/asset_embed.py](scripts/asset_embed.py).
 
-The web UI provides:
+Current UI highlights:
 
-- Live Wi-Fi, MQTT, playback, battery, heap, and firmware status
-- Radio Browser country and station selection
-- Direct URL playback and TTS playback entry
-- Smooth station switching from the Audio tab and playback dashboard controls
-- Play or stop toggle plus previous and next station controls in the top playback card
-- Volume control with immediate runtime update
-- I2S pin remapping for MAX98357A wiring
-- OLED pin remapping and display configuration
-- Battery configuration and calibration helpers
-- Firmware release browsing, OTA install, and local firmware upload
-- Reboot and factory reset actions
+- Hero header with live firmware version, release channel badge, and author link.
+- Live Wi-Fi, MQTT, playback, battery, heap, and firmware status.
+- Radio Browser country and station selection with recent playback history.
+- Direct URL playback and TTS playback entry.
+- Previous, play or stop, and next station transport controls from the top playback card.
+- I2S pin remapping for MAX98357A wiring.
+- OLED pin remapping and display configuration.
+- Battery configuration and calibration helpers.
+- GPIO Info tab with board selector, dedicated SVG board art, side-by-side pin guidance, and board suitability recommendations.
+- Internal flash and SD storage tabs with file browsing, folder creation, upload support, and SD pin configuration.
+- Firmware release browsing, local firmware upload, and firmware action dashboard.
+- Password reveal toggles, reboot, and factory-reset actions.
 
 ## Build Profiles
 
@@ -116,6 +122,18 @@ Additional diagnostic environment:
 Default workspace target in [platformio.ini](platformio.ini):
 
 - `esp32s3_notifier_hacs`
+
+## 4MB Flash Layout
+
+The current full-web release profiles are configured around 4MB hardware.
+
+Current release behavior:
+
+- ESP32 and ESP32-S3 release builds now use [partitions/single_4m.csv](partitions/single_4m.csv) so the current embedded web UI still fits on common 4MB boards.
+- [platformio.ini](platformio.ini) also sets `board_upload.flash_size = 4MB` for the ESP32-S3 environments to avoid generating an invalid 8MB image header.
+- This avoids the ESP32-S3 boot failure caused by flashing an 8MB-image header onto 4MB hardware and prevents the full-web ESP32 HACS variants from overflowing the old dual-OTA app slot.
+
+If your board reports only `4096k` flash, use the current configuration as-is and prefer USB flashing for recovery and major updates.
 
 ## Build And Flash
 
@@ -137,28 +155,36 @@ Upload:
 pio run -t upload
 ```
 
+List serial devices:
+
+```powershell
+pio device list
+```
+
 Open the serial monitor:
 
 ```powershell
 pio device monitor -b 115200
 ```
 
+If flashing an ESP32-S3 fails to connect cleanly, hold `BOOT`, start upload, and release `BOOT` after `Connecting...` appears.
+
 ## VS Code Tasks
 
-This workspace already includes PlatformIO-oriented tasks. Useful task labels include:
+This workspace already includes PlatformIO-oriented tasks. The most useful ones are:
 
 - `PlatformIO: Verify`
 - `PlatformIO: Upload (Auto Port)`
-- `PlatformIO: Upload (COM7)`
 - `PlatformIO: Monitor (Auto Port)`
-- `PlatformIO: Monitor (COM7)`
 - `PlatformIO: List Serial Devices`
+
+There are also optional fixed-port monitor and upload tasks for boards that stay on a stable COM port.
 
 ## First Boot And Provisioning
 
 On startup the firmware:
 
-1. Loads saved settings from Preferences if available.
+1. Loads saved settings from Preferences when available.
 2. Falls back to compile-time defaults from [include/default_config.h](include/default_config.h) otherwise.
 3. Attempts Wi-Fi station mode when credentials are configured.
 4. Starts fallback AP mode if station credentials are missing or connection fails.
@@ -168,6 +194,11 @@ Fallback AP defaults:
 - SSID prefix: `ESP32-Notifier-XXXXXX`
 - Password: `12345678`
 - Config page: `http://192.168.4.1`
+
+Default generated device identity:
+
+- ESP32 builds: `esp32-notifier-xxxxxx`
+- ESP32-S3 builds: `ceiling-speaker-xxxxxx`
 
 ## MQTT And Home Assistant
 
@@ -181,6 +212,8 @@ Typical command topics:
 - `esp32_notifier/cmd/tts`
 - `esp32_notifier/cmd/stop`
 - `esp32_notifier/cmd/volume`
+- `esp32_notifier/cmd/ota/select_version`
+- `esp32_notifier/cmd/ota/install_version`
 
 Typical state topics:
 
@@ -204,23 +237,23 @@ Example volume payload:
 
 For Home Assistant media-player style control, use the HACS-oriented build with `bkbilly/mqtt_media_player`:
 
-- Recommended build: `esp32s3_notifier_hacs` for ESP32-S3 hardware
+- Recommended ESP32-S3 build: `esp32s3_notifier_hacs`
 - Vendored backup integration: [home_assistant/custom_components/mqtt_media_player](home_assistant/custom_components/mqtt_media_player)
 
-## OTA Releases
+## Firmware And Releases
 
-The Firmware tab checks GitHub Releases by default. OTA asset names must match the build variant the firmware expects.
+The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
-Release asset names for `v0.1.12`:
+Release asset names for `v0.1.13`:
 
-- `esp32-notifier-v0.1.12.bin`
-- `esp32-notifier-hacs-v0.1.12.bin`
-- `esp32-notifier-hacs-slim-v0.1.12.bin`
-- `esp32s3-notifier-v0.1.12.bin`
-- `esp32s3-notifier-hacs-v0.1.12.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.12.bin`
+- `esp32-notifier-v0.1.13.bin`
+- `esp32-notifier-hacs-v0.1.13.bin`
+- `esp32-notifier-hacs-slim-v0.1.13.bin`
+- `esp32s3-notifier-v0.1.13.bin`
+- `esp32s3-notifier-hacs-v0.1.13.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.13.bin`
 
-GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers the workflow to build the six release variants and upload the matching OTA assets back to that release.
+GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard release variants and upload the matching OTA assets back to that release.
 
 ## Battery Monitoring
 
@@ -232,7 +265,7 @@ Current ESP32-S3 default behavior:
 - The default ESP32-S3 calibration multiplier is `2.0`.
 - On some ESP32-S3 Super Mini boards this reflects a built-in VBUS divider rather than a true direct cell-voltage measurement.
 
-If your reported voltage is off, recalibrate it from the Battery tab using a multimeter measurement.
+If the reported voltage is off, recalibrate it from the Battery tab using a multimeter measurement.
 
 ## OLED Support
 
@@ -242,14 +275,26 @@ Current behavior:
 
 - SSD1306 and SH1106 displays are supported.
 - OLED pins can be remapped from the UI.
-- OLED pin choices are sanitized to avoid clashes with active audio pins and other reserved functions.
+- OLED pin choices are sanitized to avoid clashes with audio, battery, LED, SD, and other reserved functions.
 - Only one display mode is intended to be active at a time.
+
+## Storage Support
+
+Storage management covers both internal flash and optional SD media.
+
+Current behavior:
+
+- Internal flash storage is browsable from the web UI.
+- SD storage can be enabled and pinned through the UI.
+- The web UI supports browsing, folder creation, and file upload actions for available storage targets.
+- SD pin choices are checked against active audio, battery, and status pin assignments.
 
 ## Repository Layout
 
 Key files and directories:
 
 - [platformio.ini](platformio.ini)
+- [partitions/single_4m.csv](partitions/single_4m.csv)
 - [include/default_config.h](include/default_config.h)
 - [include/settings_schema.h](include/settings_schema.h)
 - [include/version.h](include/version.h)
@@ -269,12 +314,12 @@ Key files and directories:
 
 - Native Home Assistant core MQTT discovery alone is still not enough for a first-class `media_player` entity on the standard build.
 - Some streams and codecs may still require library-side tuning depending on the source.
-- Firmware size remains tight for OTA-capable builds.
-- Basic web auth is supported, but it is still simple HTTP auth rather than a full access-control model.
-- The current project is output-only audio. No microphone or duplex voice path is implemented.
+- Firmware size is still tight, especially on ESP32-S3 4MB hardware.
+- Basic web auth is supported, but it remains simple HTTP auth rather than a full access-control model.
+- The project is output-only audio. No microphone or duplex voice path is implemented.
 
 ## Release Notes
 
 Current release notes live here:
 
-- [release-assets/v0.1.12/release-notes.md](release-assets/v0.1.12/release-notes.md)
+- [release-assets/v0.1.13/release-notes.md](release-assets/v0.1.13/release-notes.md)

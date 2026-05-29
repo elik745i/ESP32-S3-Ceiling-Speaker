@@ -1,6 +1,9 @@
 const state = {
   status: null,
   settings: null,
+  storageInfoByTarget: {},
+  currentStoragePathByTarget: { flash: "/", sd: "/" },
+  activeStorageTarget: "flash",
   recentPlayback: loadRecentPlayback(),
   radioCountries: [],
   radioStations: [],
@@ -8,7 +11,9 @@ const state = {
   radioStationsLoading: false,
   wifiScanPollTimer: null,
   firmwareProgressPollTimer: null,
+  statusPollTimer: null,
   firmwareReloadTimer: null,
+  statusRequestInFlight: false,
   settingsSaveTimer: null,
   settingsDirty: false,
   settingsLoading: false,
@@ -26,6 +31,7 @@ const state = {
   mqttConnectInProgress: false,
   mqttActionInProgress: "",
   playbackActionInProgress: "",
+  storageUploadInProgress: false,
   stationRedirectInProgress: false,
   oledPreviewScrollTimer: null,
   oledPreviewScrollSignature: "",
@@ -35,6 +41,96 @@ const state = {
 const SETTINGS_AUTOSAVE_DELAY_MS = 900;
 const ACTIVE_TAB_STORAGE_KEY = "notifierActiveTab";
 const RADIO_SELECTION_STORAGE_KEY = "notifierRadioSelection";
+const DEFAULT_RADIO_SELECTION = {
+  country: "Azerbaijan",
+  stationName: "AvtoFM",
+  stationUrl: "",
+};
+const GPIO_BOARD_PRESENTATION = {
+  "esp32-s3-super-mini": {
+    rotation: "rotate(90deg)",
+    rank: "Current board",
+    recommendation: "Compact ESP32-S3 board. Good for speaker builds, but with tighter pin breakout than larger S3 boards.",
+  },
+  "esp32-s3-zero": {
+    rotation: "rotate(90deg)",
+    rank: "Compact S3 option",
+    recommendation: "Very small ESP32-S3 board. Good when you need S3 features in a minimal footprint.",
+  },
+  "esp32-s3-psram": {
+    rotation: "rotate(90deg)",
+    rank: "1. Best",
+    recommendation: "Best for I2S speaker + I2S mic. Extra PSRAM gives the most headroom for audio buffers and UI tasks.",
+  },
+  "esp32-wrover": {
+    rotation: "rotate(90deg)",
+    rank: "2. Very good",
+    recommendation: "Strong classic ESP32 choice with PSRAM. A solid fallback when S3 boards are not available.",
+  },
+  "esp32-wroom": {
+    rotation: "rotate(90deg)",
+    rank: "3. Good",
+    recommendation: "Good for speaker projects, but with less memory headroom than PSRAM-equipped boards.",
+  },
+  "esp32-mini": {
+    rotation: "rotate(90deg)",
+    rank: "4. Compact fallback",
+    recommendation: "Compact board for lighter builds. Works, but GPIO and memory headroom are tighter.",
+  },
+  "esp32-s2-psram": {
+    rotation: "rotate(90deg)",
+    rank: "5. Acceptable",
+    recommendation: "Acceptable for simpler audio use, but it is not as strong as S3 or WROVER boards for this project.",
+  },
+  "esp32-c6": {
+    rotation: "rotate(90deg)",
+    rank: "6. Works",
+    recommendation: "Works, but it is not audio-focused. Choose it only if you specifically need the C6 platform.",
+  },
+  "esp32-c3": {
+    rotation: "rotate(90deg)",
+    rank: "7. Basic only",
+    recommendation: "Basic option only. Lowest recommendation for this speaker-oriented use case.",
+  },
+};
+const GPIO_BOARD_ASSETS = {
+  "esp32-s3-super-mini": {
+    src: "/esp32-s3-supermini-breadboard.svg",
+    alt: "ESP32-S3 Super Mini board",
+  },
+  "esp32-s3-zero": {
+    src: "/esp32-s3-zero-breadboard.svg",
+    alt: "ESP32-S3 Zero board",
+  },
+  "esp32-s3-psram": {
+    src: "/esp32-s3-psram-breadboard.svg",
+    alt: "ESP32-S3 with PSRAM board",
+  },
+  "esp32-wrover": {
+    src: "/esp32-wrover-breadboard.svg",
+    alt: "ESP32-WROVER board",
+  },
+  "esp32-wroom": {
+    src: "/esp32-wroom-breadboard.svg",
+    alt: "Classic ESP32-WROOM board",
+  },
+  "esp32-mini": {
+    src: "/esp32-mini-breadboard.svg",
+    alt: "ESP32 Mini board",
+  },
+  "esp32-s2-psram": {
+    src: "/esp32-s2-mini-breadboard.svg",
+    alt: "ESP32-S2 with PSRAM board",
+  },
+  "esp32-c6": {
+    src: "/esp32-c6-mini-breadboard.svg",
+    alt: "ESP32-C6 board",
+  },
+  "esp32-c3": {
+    src: "/esp32-c3-breadboard.svg",
+    alt: "ESP32-C3 board",
+  },
+};
 const OLED_PREVIEW_SCROLL_INTERVAL_MS = 300;
 const ESP32S3_I2S_GPIO_PINS = [9, 10, 11, 12];
 const DEFAULT_ESP32S3_AUDIO_PINS = {
@@ -46,9 +142,164 @@ const DEFAULT_ESP32S3_OLED_PREFERRED_PINS = {
   sda: 4,
   scl: 5,
 };
+const DEFAULT_SD_GPIO_PINS = {
+  cs: 4,
+  sck: 5,
+  mosi: 6,
+  miso: 7,
+};
+const DOCUMENTED_BUZZER_PIN = 7;
+const GPIO_BOARD_LAYOUTS = {
+  "esp32-s3-super-mini": {
+    left: [
+      { pin: 43, label: "TX / GPIO43" },
+      { pin: 44, label: "RX / GPIO44" },
+      ...[1, 2, 3, 4, 5, 6, 7, 8].map((pin) => ({ pin, label: `GPIO${pin}` })),
+    ],
+    right: [
+      { pin: 48, label: "GPIO48" },
+      ...[9, 10, 11, 12, 13].map((pin) => ({ pin, label: `GPIO${pin}` })),
+      { pin: null, label: "3V3" },
+      { pin: null, label: "GND" },
+      { pin: null, label: "5V" },
+    ],
+  },
+  "esp32-s3-zero": {
+    left: [
+      { pin: null, label: "GND" },
+      { pin: null, label: "3V3" },
+      ...[1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13].map((pin) => ({ pin, label: `GPIO${pin}` })),
+      { pin: 44, label: "RX / GPIO44" },
+    ],
+    right: [8, 14, 15, 16].map((pin) => ({ pin, label: `GPIO${pin}` })).concat([
+      { pin: null, label: "5V" },
+      { pin: 43, label: "TX / GPIO43" },
+    ]),
+  },
+  "esp32-s3-psram": {
+    left: [
+      { pin: null, label: "RST" },
+      { pin: 48, label: "GPIO48" },
+      ...[35, 36, 37, 38, 39, 41].map((pin) => ({ pin, label: `GPIO${pin}` })),
+      { pin: 43, label: "TX / GPIO43" },
+      ...[2, 1, 13, 14, 21, 47].map((pin) => ({ pin, label: `GPIO${pin}` })),
+    ],
+    right: [
+      { pin: null, label: "GND" },
+      { pin: 44, label: "RX / GPIO44" },
+      ...[42, 40, 0, 45].map((pin) => ({ pin, label: `GPIO${pin}` })),
+      { pin: null, label: "3V3" },
+      { pin: null, label: "EN" },
+      ...[4, 5, 6, 7, 15, 16, 17, 18, 8, 19, 20, 3, 46, 9, 10, 11, 12].map((pin) => ({ pin, label: `GPIO${pin}` })),
+      { pin: null, label: "3V3" },
+    ],
+  },
+  "esp32-wrover": {
+    left: [36, 39, 34, 35, 32, 33, 25, 26, 27, 14, 12, 13].map((pin) => ({ pin, label: `GPIO${pin}` })),
+    right: [23, 22, 1, 3, 21, 19, 18, 5, 17, 16, 4, 0, 2, 15].map((pin) => ({
+      pin,
+      label: pin === 1 ? "TX / GPIO1" : (pin === 3 ? "RX / GPIO3" : `GPIO${pin}`),
+    })),
+  },
+  "esp32-wroom": {
+    left: [36, 39, 34, 35, 32, 33, 25, 26, 27, 14, 12, 13].map((pin) => ({ pin, label: `GPIO${pin}` })),
+    right: [23, 22, 1, 3, 21, 19, 18, 5, 17, 16, 4, 0, 2, 15].map((pin) => ({
+      pin,
+      label: pin === 1 ? "TX / GPIO1" : (pin === 3 ? "RX / GPIO3" : `GPIO${pin}`),
+    })),
+  },
+  "esp32-mini": {
+    left: [
+      { pin: null, label: "RST" },
+      { pin: null, label: "A0" },
+      { pin: 16, label: "D0 / GPIO16" },
+      { pin: 14, label: "D5 / GPIO14" },
+      { pin: 12, label: "D6 / GPIO12" },
+      { pin: 13, label: "D7 / GPIO13" },
+      { pin: 15, label: "D8 / GPIO15" },
+    ],
+    right: [
+      { pin: null, label: "5V" },
+      { pin: null, label: "GND" },
+      { pin: 2, label: "D4 / GPIO2" },
+      { pin: 0, label: "D3 / GPIO0" },
+      { pin: 4, label: "D2 / GPIO4" },
+      { pin: 5, label: "D1 / GPIO5" },
+      { pin: 3, label: "RX / GPIO3" },
+      { pin: 1, label: "TX / GPIO1" },
+    ],
+  },
+  "esp32-s2-psram": {
+    left: [
+      { pin: null, label: "RST" },
+      { pin: null, label: "A0" },
+      { pin: null, label: "D0" },
+      { pin: null, label: "D5" },
+      { pin: null, label: "D6" },
+      { pin: null, label: "D7" },
+      { pin: null, label: "D8" },
+      { pin: null, label: "3V3" },
+    ],
+    right: [
+      { pin: null, label: "5V" },
+      { pin: null, label: "G" },
+      { pin: null, label: "D4" },
+      { pin: null, label: "D3" },
+      { pin: null, label: "D2" },
+      { pin: null, label: "D1" },
+      { pin: null, label: "RX" },
+      { pin: null, label: "TX" },
+    ],
+  },
+  "esp32-c6": {
+    left: [
+      { pin: 17, label: "RX / GPIO17" },
+      { pin: 16, label: "TX / GPIO16" },
+      ...[0, 1, 2, 3, 4, 5, 6].map((pin) => ({ pin, label: `GPIO${pin}` })),
+    ],
+    right: [
+      { pin: null, label: "5V" },
+      { pin: null, label: "GND" },
+      { pin: null, label: "3V3" },
+      ...[20, 19, 18, 15, 14, 9, 8, 13, 12, 22, 21].map((pin) => ({ pin, label: `GPIO${pin}` })),
+    ],
+  },
+  "esp32-c3": {
+    left: [0, 1, 2, 3, 4, 5].map((pin) => ({
+      pin,
+      label: pin === 1 ? "TX / GPIO1" : (pin === 3 ? "RX / GPIO3" : `GPIO${pin}`),
+    })),
+    right: [6, 7, 8, 9, 10, 20, 21].map((pin) => ({ pin, label: `GPIO${pin}` })),
+  },
+};
+const GPIO_ROLE_OPTIONS = [
+  "Unused",
+  "Battery ADC",
+  "Charge Sense",
+  "Status LED",
+  "Button 1",
+  "Button 2",
+  "I2S DIN",
+  "I2S WS",
+  "I2S BCLK",
+  "OLED SDA",
+  "OLED SCL",
+  "OLED RESET",
+  "Wape Trigger",
+  "SD CS",
+  "SD SCK",
+  "SD MOSI",
+  "SD MISO",
+  "Builtin RGB",
+  "Buzzer Reserved",
+];
 
 const elements = {
   deviceTitle: document.getElementById("deviceTitle"),
+  heroFirmwareVersion: document.getElementById("heroFirmwareVersion"),
+  heroFirmwareChannel: document.getElementById("heroFirmwareChannel"),
+  heroFirmwareAuthorLink: document.getElementById("heroFirmwareAuthorLink"),
+  gpioBoardRecommendations: document.getElementById("gpioBoardRecommendations"),
   deviceNameValue: document.getElementById("deviceNameValue"),
   connectionState: document.getElementById("connectionState"),
   ipAddress: document.getElementById("ipAddress"),
@@ -74,6 +325,32 @@ const elements = {
   saveAudioButton: document.getElementById("saveAudioButton"),
   batteryHero: document.getElementById("batteryHero"),
   freeHeap: document.getElementById("freeHeap"),
+  deviceHardwareBoard: document.getElementById("deviceHardwareBoard"),
+  deviceHardwareCpu: document.getElementById("deviceHardwareCpu"),
+  deviceHardwareFlash: document.getElementById("deviceHardwareFlash"),
+  deviceHardwareAudio: document.getElementById("deviceHardwareAudio"),
+  deviceHardwareDisplay: document.getElementById("deviceHardwareDisplay"),
+  deviceHardwareBattery: document.getElementById("deviceHardwareBattery"),
+  deviceHardwareSd: document.getElementById("deviceHardwareSd"),
+  deviceCpuLoadValue: document.getElementById("deviceCpuLoadValue"),
+  deviceCpuLoadBar: document.getElementById("deviceCpuLoadBar"),
+  deviceCpuLoadMeta: document.getElementById("deviceCpuLoadMeta"),
+  deviceSramValue: document.getElementById("deviceSramValue"),
+  deviceSramBar: document.getElementById("deviceSramBar"),
+  deviceSramMeta: document.getElementById("deviceSramMeta"),
+  devicePsramValue: document.getElementById("devicePsramValue"),
+  devicePsramBar: document.getElementById("devicePsramBar"),
+  devicePsramMeta: document.getElementById("devicePsramMeta"),
+  deviceSpiffsValue: document.getElementById("deviceSpiffsValue"),
+  deviceSpiffsBar: document.getElementById("deviceSpiffsBar"),
+  deviceSpiffsMeta: document.getElementById("deviceSpiffsMeta"),
+  deviceSpiffsCard: document.getElementById("deviceSpiffsCard"),
+  deviceSdValue: document.getElementById("deviceSdValue"),
+  deviceSdBar: document.getElementById("deviceSdBar"),
+  deviceSdMeta: document.getElementById("deviceSdMeta"),
+  deviceSdCard: document.getElementById("deviceSdCard"),
+  gpioLeftPins: document.getElementById("gpioLeftPins"),
+  gpioRightPins: document.getElementById("gpioRightPins"),
   settingsSource: document.getElementById("settingsSource"),
   playbackState: document.getElementById("playbackState"),
   currentTitle: document.getElementById("currentTitle"),
@@ -114,6 +391,8 @@ const elements = {
   radioCountrySelect: document.getElementById("radioCountrySelect"),
   radioStationSelect: document.getElementById("radioStationSelect"),
   radioBrowserStatus: document.getElementById("radioBrowserStatus"),
+  gpioBoardSelector: document.getElementById("gpioBoardSelector"),
+  gpioBoardImage: document.getElementById("gpioBoardImage"),
   settingsForm: document.getElementById("settingsForm"),
   recentPlaybackList: document.getElementById("recentPlaybackList"),
   useStaticIpToggle: document.getElementById("useStaticIpToggle"),
@@ -139,6 +418,28 @@ const elements = {
   oledPreviewProgressLabel: document.getElementById("oledPreviewProgressLabel"),
   oledPreviewProgressFill: document.getElementById("oledPreviewProgressFill"),
   oledPreviewDisabled: document.getElementById("oledPreviewDisabled"),
+  storageModal: document.getElementById("storageModal"),
+  storageCloseButton: document.getElementById("storageCloseButton"),
+  storageTitle: document.getElementById("storageTitle"),
+  storageFlashButton: document.getElementById("storageFlashButton"),
+  storageSdButton: document.getElementById("storageSdButton"),
+  storageSdConfig: document.getElementById("storageSdConfig"),
+  storageSummary: document.getElementById("storageSummary"),
+  storageStatus: document.getElementById("storageStatus"),
+  storageLimit: document.getElementById("storageLimit"),
+  storageUpButton: document.getElementById("storageUpButton"),
+  storageBreadcrumbs: document.getElementById("storageBreadcrumbs"),
+  storageNewFolderButton: document.getElementById("storageNewFolderButton"),
+  storageUploadButton: document.getElementById("storageUploadButton"),
+  storageFileInput: document.getElementById("storageFileInput"),
+  storageProgressFill: document.getElementById("storageProgressFill"),
+  storageProgressLabel: document.getElementById("storageProgressLabel"),
+  storageFileList: document.getElementById("storageFileList"),
+  sdEnabled: document.getElementById("sdEnabled"),
+  sdCsPin: document.getElementById("sdCsPin"),
+  sdSckPin: document.getElementById("sdSckPin"),
+  sdMosiPin: document.getElementById("sdMosiPin"),
+  sdMisoPin: document.getElementById("sdMisoPin"),
 };
 
 function namedField(name) {
@@ -322,6 +623,9 @@ function populateBatteryAdcPinOptions(settings = state.settings) {
   if (Number.isFinite(statusLedPin) && statusLedPin > 0) {
     reservedPins.add(statusLedPin);
   }
+  for (const pin of currentSdPins(settings)) {
+    reservedPins.add(pin);
+  }
   const adcPins = Array.from({ length: 20 }, (_, index) => index + 1)
     .filter((pin) => !reservedPins.has(pin));
 
@@ -365,6 +669,9 @@ function populateStatusLedPinOptions(settings = state.settings) {
 
   const selectedPin = String(elements.statusLedPin.value || settings?.device?.statusLedPin || "");
   const reservedPins = new Set(currentI2sPins());
+  for (const pin of currentSdPins(settings)) {
+    reservedPins.add(pin);
+  }
   elements.statusLedPin.innerHTML = "";
 
   for (const pin of availableStatusLedPins()) {
@@ -392,6 +699,95 @@ function currentButtonPins() {
   return chipFamily === "esp32" ? [5, 18] : [5, 6];
 }
 
+function storageTargetLabel(target = state.activeStorageTarget) {
+  return target === "sd" ? "SD Card" : "Flash FS";
+}
+
+function currentSdPins(settings = state.settings, options = {}) {
+  const { respectEnabled = true } = options;
+  const enabled = Boolean(elements.sdEnabled?.checked ?? settings?.sd?.enabled ?? false);
+  if (respectEnabled && !enabled) {
+    return [];
+  }
+
+  return [
+    Number(elements.sdCsPin?.value || settings?.sd?.csPin || DEFAULT_SD_GPIO_PINS.cs),
+    Number(elements.sdSckPin?.value || settings?.sd?.sckPin || DEFAULT_SD_GPIO_PINS.sck),
+    Number(elements.sdMosiPin?.value || settings?.sd?.mosiPin || DEFAULT_SD_GPIO_PINS.mosi),
+    Number(elements.sdMisoPin?.value || settings?.sd?.misoPin || DEFAULT_SD_GPIO_PINS.miso),
+  ].filter((pin) => Number.isFinite(pin) && pin >= 0);
+}
+
+function reservedSdPins(settings = state.settings) {
+  const reservedPins = new Set(currentI2sPins());
+  const batteryAdcPin = Number(elements.batteryAdcPin?.value || settings?.battery?.adcPin || 0);
+  const chargingSensePin = Number(settings?.battery?.chargingSensePin || 0);
+  const statusLedPin = Number(elements.statusLedPin?.value || settings?.device?.statusLedPin || 0);
+  const displayType = String(elements.displayType?.value || settings?.oled?.displayType || "oled").toLowerCase();
+  const wapeTriggerPin = Number(elements.wapeTriggerPin?.value || settings?.oled?.wapeTriggerPin || 0);
+
+  if (Number.isFinite(batteryAdcPin) && batteryAdcPin > 0) {
+    reservedPins.add(batteryAdcPin);
+  }
+  if (Number.isFinite(chargingSensePin) && chargingSensePin > 0) {
+    reservedPins.add(chargingSensePin);
+  }
+  if (Number.isFinite(statusLedPin) && statusLedPin >= 0) {
+    reservedPins.add(statusLedPin);
+  }
+  if (displayType === "wape" && Number.isFinite(wapeTriggerPin) && wapeTriggerPin > 0) {
+    reservedPins.add(wapeTriggerPin);
+  }
+
+  return reservedPins;
+}
+
+function populateSdPinOptions(settings = state.settings) {
+  const sdFields = [elements.sdCsPin, elements.sdSckPin, elements.sdMosiPin, elements.sdMisoPin];
+  if (sdFields.some((field) => !field)) {
+    return;
+  }
+
+  const selectedPins = {
+    cs: String(elements.sdCsPin.value || settings?.sd?.csPin || DEFAULT_SD_GPIO_PINS.cs),
+    sck: String(elements.sdSckPin.value || settings?.sd?.sckPin || DEFAULT_SD_GPIO_PINS.sck),
+    mosi: String(elements.sdMosiPin.value || settings?.sd?.mosiPin || DEFAULT_SD_GPIO_PINS.mosi),
+    miso: String(elements.sdMisoPin.value || settings?.sd?.misoPin || DEFAULT_SD_GPIO_PINS.miso),
+  };
+  const reservedPins = reservedSdPins(settings);
+
+  for (const field of sdFields) {
+    field.innerHTML = "";
+    for (let pin = 0; pin <= chipMaxPin(); pin += 1) {
+      if (reservedPins.has(pin)) {
+        continue;
+      }
+      const option = document.createElement("option");
+      option.value = String(pin);
+      option.textContent = `GPIO${pin}`;
+      field.append(option);
+    }
+  }
+
+  const applySelectedOrFallback = (field, selectedValue, fallbackPin) => {
+    if ([...field.options].some((option) => option.value === selectedValue)) {
+      field.value = selectedValue;
+      return;
+    }
+    const fallbackValue = String(fallbackPin);
+    if ([...field.options].some((option) => option.value === fallbackValue)) {
+      field.value = fallbackValue;
+      return;
+    }
+    field.value = field.options[0]?.value || "0";
+  };
+
+  applySelectedOrFallback(elements.sdCsPin, selectedPins.cs, DEFAULT_SD_GPIO_PINS.cs);
+  applySelectedOrFallback(elements.sdSckPin, selectedPins.sck, DEFAULT_SD_GPIO_PINS.sck);
+  applySelectedOrFallback(elements.sdMosiPin, selectedPins.mosi, DEFAULT_SD_GPIO_PINS.mosi);
+  applySelectedOrFallback(elements.sdMisoPin, selectedPins.miso, DEFAULT_SD_GPIO_PINS.miso);
+}
+
 function reservedOledPins(settings = state.settings) {
   const reservedPins = new Set(currentI2sPins());
   const batteryAdcPin = Number(elements.batteryAdcPin?.value || settings?.battery?.adcPin || 0);
@@ -410,6 +806,10 @@ function reservedOledPins(settings = state.settings) {
   for (const pin of currentButtonPins()) {
     reservedPins.add(pin);
   }
+  for (const pin of currentSdPins(settings)) {
+    reservedPins.add(pin);
+  }
+  reservedPins.add(DOCUMENTED_BUZZER_PIN);
 
   return reservedPins;
 }
@@ -499,6 +899,9 @@ function availableWapeTriggerPins(settings = state.settings) {
   }
   if (Number.isFinite(statusLedPin) && statusLedPin > 0) {
     reservedPins.add(statusLedPin);
+  }
+  for (const pin of currentSdPins(settings)) {
+    reservedPins.add(pin);
   }
   if (chipFamily === "esp32s3") {
     reservedPins.add(21);
@@ -679,6 +1082,15 @@ function loadSavedRadioSelection() {
   }
 }
 
+function preferredRadioSelection() {
+  const savedSelection = loadSavedRadioSelection();
+  return {
+    country: savedSelection.country || DEFAULT_RADIO_SELECTION.country,
+    stationName: savedSelection.stationName || DEFAULT_RADIO_SELECTION.stationName,
+    stationUrl: savedSelection.stationUrl || DEFAULT_RADIO_SELECTION.stationUrl,
+  };
+}
+
 function saveRadioSelection(selection) {
   try {
     window.localStorage.setItem(RADIO_SELECTION_STORAGE_KEY, JSON.stringify({
@@ -757,7 +1169,7 @@ function renderRadioCountries(countries) {
     return;
   }
 
-  const savedSelection = loadSavedRadioSelection();
+  const savedSelection = preferredRadioSelection();
   const previousValue = elements.radioCountrySelect.value || savedSelection.country;
   elements.radioCountrySelect.innerHTML = "";
 
@@ -835,7 +1247,7 @@ async function loadRadioCountries(forceRefresh = false) {
     resetRadioStationSelect();
     setRadioBrowserStatus(state.radioCountries.length ? "Choose a country to load stations." : "No countries available.");
 
-    const savedSelection = loadSavedRadioSelection();
+    const savedSelection = preferredRadioSelection();
     if (savedSelection.country && state.radioCountries.some((country) => country.name === savedSelection.country)) {
       elements.radioCountrySelect.value = savedSelection.country;
       await loadRadioStations(savedSelection.country);
@@ -889,7 +1301,7 @@ async function loadRadioStations(countryName) {
 
     renderRadioStations(state.radioStations);
 
-    const savedSelection = loadSavedRadioSelection();
+    const savedSelection = preferredRadioSelection();
     const savedIndex = state.radioStations.findIndex((station) => (
       (savedSelection.stationUrl && station.url === savedSelection.stationUrl) ||
       (savedSelection.stationName && station.name === savedSelection.stationName)
@@ -1105,6 +1517,14 @@ function setMqttConnectStatus(message, isError = false) {
   elements.mqttConnectStatus.style.color = isError ? "#b42318" : "";
 }
 
+function setStorageStatus(message, isError = false) {
+  if (!elements.storageStatus) {
+    return;
+  }
+  elements.storageStatus.textContent = message;
+  elements.storageStatus.style.color = isError ? "#b42318" : "";
+}
+
 function isApHost() {
   const host = String(window.location.hostname || "").trim();
   return host === "192.168.4.1";
@@ -1151,6 +1571,293 @@ function normalizeDecimalField(field) {
 
 function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function formatTransferRate(bytesPerSecond) {
+  const numericRate = Number(bytesPerSecond || 0);
+  if (!Number.isFinite(numericRate) || numericRate <= 0) {
+    return "0 B/s";
+  }
+  if (numericRate >= 1024 * 1024) {
+    return `${(numericRate / (1024 * 1024)).toFixed(1)} MiB/s`;
+  }
+  if (numericRate >= 1024) {
+    return `${Math.round(numericRate / 1024)} KiB/s`;
+  }
+  return `${Math.round(numericRate)} B/s`;
+}
+
+function storageStreamUrl(path, target = state.activeStorageTarget, download = false) {
+  const encodedPath = encodeURIComponent(String(path || ""));
+  return `/api/storage/file?target=${encodeURIComponent(target)}&path=${encodedPath}${download ? "&download=1" : ""}`;
+}
+
+function normalizeStorageDirectoryPath(path) {
+  const raw = String(path || "/").trim().replaceAll("\\", "/");
+  if (!raw || raw === "/") {
+    return "/";
+  }
+  const normalized = `/${raw.replace(/^\/+/, "").replace(/\/+/g, "/")}`.replace(/\/+$/, "");
+  return normalized || "/";
+}
+
+function storageParentPath(path) {
+  const normalized = normalizeStorageDirectoryPath(path);
+  if (normalized === "/") {
+    return "";
+  }
+  const parts = normalized.split("/").filter(Boolean);
+  parts.pop();
+  return parts.length ? `/${parts.join("/")}` : "/";
+}
+
+function storageJoinPath(directoryPath, name) {
+  const leaf = String(name || "").trim().replaceAll("\\", "/").replace(/^\/+/, "").replace(/\/+$/, "");
+  if (!leaf) {
+    return "";
+  }
+  const dir = normalizeStorageDirectoryPath(directoryPath);
+  return dir === "/" ? `/${leaf}` : `${dir}/${leaf}`;
+}
+
+function renderStorageBreadcrumbs(currentPath) {
+  if (!elements.storageBreadcrumbs || !elements.storageUpButton) {
+    return;
+  }
+
+  const normalized = normalizeStorageDirectoryPath(currentPath);
+  const segments = normalized.split("/").filter(Boolean);
+  const crumbs = [{ label: "Root", path: "/" }];
+  let runningPath = "";
+  for (const segment of segments) {
+    runningPath += `/${segment}`;
+    crumbs.push({ label: segment, path: runningPath });
+  }
+
+  elements.storageBreadcrumbs.innerHTML = crumbs.map((crumb, index) => (
+    `<button type="button" class="storage-crumb" data-storage-nav="${escapeHtml(crumb.path)}">${escapeHtml(crumb.label)}</button>${index < crumbs.length - 1 ? '<span class="storage-crumb-sep">/</span>' : ''}`
+  )).join("");
+  elements.storageUpButton.disabled = normalized === "/";
+}
+
+function renderStorageManager(payload) {
+  const target = String(payload?.target || state.activeStorageTarget || "flash");
+  const label = storageTargetLabel(target);
+  const storage = payload?.storage || state.storageInfoByTarget[target] || {};
+  const currentPath = normalizeStorageDirectoryPath(payload?.currentPath || state.currentStoragePathByTarget[target] || "/");
+  const entries = Array.isArray(payload?.entries) ? payload.entries : (Array.isArray(payload?.files) ? payload.files : []);
+  state.activeStorageTarget = target;
+  state.storageInfoByTarget[target] = storage;
+  state.currentStoragePathByTarget[target] = currentPath;
+
+  if (elements.storageTitle) {
+    elements.storageTitle.textContent = `${label} File Manager`;
+  }
+  if (elements.storageFlashButton) {
+    elements.storageFlashButton.setAttribute("aria-selected", String(target === "flash"));
+  }
+  if (elements.storageSdButton) {
+    elements.storageSdButton.setAttribute("aria-selected", String(target === "sd"));
+  }
+  if (elements.storageSdConfig) {
+    elements.storageSdConfig.hidden = target !== "sd";
+  }
+  renderStorageBreadcrumbs(currentPath);
+
+  if (elements.storageSummary) {
+    elements.storageSummary.textContent = storage.mounted
+      ? `${formatBytes(storage.usedBytes || 0)} used of ${formatBytes(storage.totalBytes || 0)} • ${formatBytes(storage.freeBytes || 0)} free • ${currentPath}`
+      : (target === "sd"
+        ? (state.settings?.sd?.enabled ? "SD card is not mounted." : "SD card support is disabled.")
+        : "Flash filesystem is not mounted.");
+  }
+  if (elements.storageLimit) {
+    elements.storageLimit.textContent = storage.mounted
+      ? `Max upload: ${formatBytes(storage.maxUploadBytes || 0)}`
+      : (target === "sd" && !state.settings?.sd?.enabled ? "Enable SD card storage to mount it" : "Uploads unavailable");
+  }
+  if (elements.storageUploadButton) {
+    elements.storageUploadButton.disabled = !storage.mounted || state.storageUploadInProgress;
+  }
+  if (!elements.storageFileList) {
+    return;
+  }
+
+  if (!storage.mounted) {
+    elements.storageFileList.innerHTML = `<div class="note">${label} is not mounted, so melody storage is unavailable.</div>`;
+    return;
+  }
+
+  if (!entries.length) {
+    elements.storageFileList.innerHTML = `<div class="note">This folder is empty.</div>`;
+    return;
+  }
+
+  elements.storageFileList.innerHTML = entries.map((file) => file.isDirectory ? `
+    <div class="storage-file-row storage-folder-row">
+      <div class="storage-file-meta">
+        <div class="storage-file-name">${escapeHtml(file.name || file.path || "Folder")}</div>
+        <div class="storage-file-subtitle">Folder • ${escapeHtml(file.path || "")}</div>
+      </div>
+      <div class="storage-file-actions">
+        <button type="button" data-storage-open="${escapeHtml(file.path || "")}">Open</button>
+        <button type="button" class="danger" data-storage-delete="${escapeHtml(file.path || "")}">Delete</button>
+      </div>
+    </div>
+  ` : `
+    <div class="storage-file-row">
+      <div class="storage-file-meta">
+        <div class="storage-file-name">${escapeHtml(file.name || file.path || "Unnamed file")}</div>
+        <div class="storage-file-subtitle">${formatBytes(file.sizeBytes || 0)} • ${escapeHtml(file.path || "")}</div>
+      </div>
+      <div class="storage-file-actions">
+        <a href="${storageStreamUrl(file.path, target, true)}">Download</a>
+        <button type="button" class="secondary" data-storage-copy="${escapeHtml(file.path || "")}">Copy URL</button>
+        <button type="button" class="danger" data-storage-delete="${escapeHtml(file.path || "")}">Delete</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+async function refreshStorageManager(target = state.activeStorageTarget, directoryPath = state.currentStoragePathByTarget[target] || "/") {
+  const payload = await request(`/api/storage?target=${encodeURIComponent(target)}&dir=${encodeURIComponent(normalizeStorageDirectoryPath(directoryPath))}`);
+  renderStorageManager(payload);
+  return payload;
+}
+
+async function openStorageManager(target = "flash", directoryPath = state.currentStoragePathByTarget[target] || "/") {
+  if (!elements.storageModal) {
+    return;
+  }
+  state.activeStorageTarget = target;
+  state.currentStoragePathByTarget[target] = normalizeStorageDirectoryPath(directoryPath);
+  setStorageStatus("Loading files...");
+  await refreshStorageManager(target, directoryPath);
+  elements.storageProgressFill.style.width = "0%";
+  elements.storageProgressLabel.textContent = "Idle";
+  if (!elements.storageModal.open) {
+    elements.storageModal.showModal();
+  }
+  setStorageStatus("Ready");
+}
+
+function closeStorageManager() {
+  elements.storageModal?.close();
+}
+
+async function deleteStorageFile(path) {
+  if (!path) {
+    return;
+  }
+  if (!window.confirm(`Delete ${path}?`)) {
+    return;
+  }
+  setStorageStatus(`Deleting ${path}...`);
+  const result = await request(`/api/storage/delete?target=${encodeURIComponent(state.activeStorageTarget)}&dir=${encodeURIComponent(state.currentStoragePathByTarget[state.activeStorageTarget] || "/")}`, {
+    method: "POST",
+    body: JSON.stringify({ path }),
+  });
+  renderStorageManager(result);
+  await loadStatus();
+  setStorageStatus(result.message || `Deleted ${path}`);
+  toast(result.message || `Deleted ${path}`);
+}
+
+async function createStorageFolder() {
+  const name = window.prompt("Folder name");
+  if (!name) {
+    return;
+  }
+  const trimmedName = String(name).trim();
+  if (!trimmedName) {
+    setStorageStatus("Folder name is required.", true);
+    return;
+  }
+  setStorageStatus(`Creating ${trimmedName}...`);
+  const result = await request(`/api/storage/mkdir?target=${encodeURIComponent(state.activeStorageTarget)}&dir=${encodeURIComponent(state.currentStoragePathByTarget[state.activeStorageTarget] || "/")}`, {
+    method: "POST",
+    body: JSON.stringify({ name: trimmedName }),
+  });
+  renderStorageManager(result);
+  setStorageStatus(result.message || `Created ${trimmedName}`);
+  toast(result.message || `Created ${trimmedName}`);
+}
+
+async function uploadStorageFile() {
+  const file = elements.storageFileInput?.files?.[0];
+  if (!file) {
+    setStorageStatus("Select an audio file first.", true);
+    return;
+  }
+
+  const info = state.storageInfoByTarget[state.activeStorageTarget] || (await refreshStorageManager(state.activeStorageTarget)).storage || {};
+  const maxUploadBytes = Number(info.maxUploadBytes || 0);
+  if (file.size <= 0) {
+    setStorageStatus("Selected file is empty.", true);
+    return;
+  }
+  if (maxUploadBytes <= 0 || file.size > maxUploadBytes) {
+    setStorageStatus(`File exceeds remaining space. Max upload is ${formatBytes(maxUploadBytes)}.`, true);
+    return;
+  }
+
+  state.storageUploadInProgress = true;
+  renderStorageManager({ storage: info, files: [] });
+  setStorageStatus(`Uploading ${file.name}...`);
+  elements.storageProgressFill.style.width = "0%";
+  elements.storageProgressLabel.textContent = `Uploading ${file.name}... 0%`;
+
+  const formData = new FormData();
+  formData.append("file", file, file.name);
+  const uploadStartedAt = performance.now();
+
+  await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/storage/upload?target=${encodeURIComponent(state.activeStorageTarget)}&dir=${encodeURIComponent(state.currentStoragePathByTarget[state.activeStorageTarget] || "/")}`);
+
+    xhr.upload.addEventListener("progress", (event) => {
+      if (!event.lengthComputable) {
+        return;
+      }
+      const percent = Math.max(0, Math.min(100, Math.round((event.loaded * 100) / event.total)));
+      const elapsedSeconds = Math.max((performance.now() - uploadStartedAt) / 1000, 0.001);
+      const rate = event.loaded / elapsedSeconds;
+      elements.storageProgressFill.style.width = `${percent}%`;
+      elements.storageProgressLabel.textContent = `Uploading ${file.name}... ${percent}% (${formatBytes(event.loaded)} / ${formatBytes(event.total)} at ${formatTransferRate(rate)})`;
+    });
+
+    xhr.addEventListener("load", () => {
+      let payload = {};
+      try {
+        payload = JSON.parse(xhr.responseText || "{}");
+      } catch {
+        payload = {};
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload);
+        return;
+      }
+      reject(new Error(payload.error || xhr.statusText || "Storage upload failed."));
+    });
+
+    xhr.addEventListener("error", () => reject(new Error("Storage upload failed.")));
+    xhr.send(formData);
+  }).then(async (payload) => {
+    renderStorageManager(payload);
+    await loadStatus();
+    setStorageStatus(payload.message || `Uploaded ${file.name}`);
+    toast(payload.message || `Uploaded ${file.name}`);
+  }).catch(async (error) => {
+    await refreshStorageManager(state.activeStorageTarget);
+    throw error;
+  }).finally(() => {
+    state.storageUploadInProgress = false;
+    elements.storageFileInput.value = "";
+    if (state.storageInfoByTarget[state.activeStorageTarget]) {
+      elements.storageUploadButton.disabled = !state.storageInfoByTarget[state.activeStorageTarget].mounted;
+    }
+  });
 }
 
 function settingsSubsetMatches(actual, expected) {
@@ -1416,6 +2123,394 @@ function renderOledPreview() {
   }
 }
 
+function formatBytes(bytes) {
+  const numericBytes = Number(bytes || 0);
+  if (!Number.isFinite(numericBytes) || numericBytes <= 0) {
+    return "0 B";
+  }
+  if (numericBytes >= 1024 * 1024) {
+    return `${(numericBytes / (1024 * 1024)).toFixed(numericBytes >= 10 * 1024 * 1024 ? 0 : 1)} MiB`;
+  }
+  if (numericBytes >= 1024) {
+    return `${Math.round(numericBytes / 1024)} KiB`;
+  }
+  return `${Math.round(numericBytes)} B`;
+}
+
+function setResourceBar(fillElement, percent) {
+  if (!fillElement) {
+    return;
+  }
+
+  const clampedPercent = Math.max(0, Math.min(100, Math.round(Number(percent || 0))));
+  fillElement.style.width = `${clampedPercent}%`;
+  fillElement.classList.remove("ok", "warn", "bad");
+  fillElement.classList.add(clampedPercent >= 80 ? "bad" : (clampedPercent >= 55 ? "warn" : "ok"));
+}
+
+function updateResourceCard(valueElement, fillElement, metaElement, valueText, percent, metaText) {
+  if (valueElement) {
+    valueElement.textContent = valueText;
+  }
+  setResourceBar(fillElement, percent);
+  if (metaElement) {
+    metaElement.textContent = metaText;
+  }
+}
+
+function pinSummary(pin) {
+  const numericPin = Number(pin);
+  return Number.isFinite(numericPin) && numericPin >= 0 ? `GPIO${numericPin}` : "-";
+}
+
+function setCurrentFirmwareVersion(version) {
+  const displayVersion = version || "-";
+  elements.firmwareVersionCard.textContent = displayVersion;
+  if (elements.heroFirmwareVersion) {
+    elements.heroFirmwareVersion.textContent = displayVersion;
+  }
+  if (elements.heroFirmwareChannel) {
+    elements.heroFirmwareChannel.textContent = `(${firmwareReleaseChannel(displayVersion)})`;
+  }
+}
+
+function updateGpioBoardImage() {
+  if (!elements.gpioBoardSelector || !elements.gpioBoardImage) {
+    return;
+  }
+  const selectedBoard = String(elements.gpioBoardSelector.value || "esp32-s3-super-mini");
+  const asset = GPIO_BOARD_ASSETS[selectedBoard] || GPIO_BOARD_ASSETS["esp32-s3-super-mini"];
+  const presentation = GPIO_BOARD_PRESENTATION[selectedBoard] || GPIO_BOARD_PRESENTATION["esp32-s3-super-mini"];
+  elements.gpioBoardImage.src = asset.src;
+  elements.gpioBoardImage.alt = asset.alt;
+  elements.gpioBoardImage.style.transform = presentation.rotation;
+  if (elements.gpioBoardRecommendations) {
+    elements.gpioBoardRecommendations.innerHTML = `
+      <div><strong>${escapeHtml(presentation.rank)}</strong></div>
+      <div>${escapeHtml(presentation.recommendation)}</div>
+    `;
+  }
+  renderGpioOverview();
+}
+
+function firmwareReleaseChannel(version) {
+  const normalized = String(version || "").trim().toLowerCase();
+  if (!normalized) {
+    return "release";
+  }
+  return /(alpha|beta|rc|dev|nightly|preview|pre)/.test(normalized) ? "beta" : "release";
+}
+
+function setFirmwareAuthorLink(settings = state.settings) {
+  if (!elements.heroFirmwareAuthorLink) {
+    return;
+  }
+  const owner = String(settings?.ota?.owner || "elik745i").trim() || "elik745i";
+  const repository = String(settings?.ota?.repository || "ESP32-S3-Ceiling-Speaker").trim() || "ESP32-S3-Ceiling-Speaker";
+  elements.heroFirmwareAuthorLink.href = `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`;
+}
+
+function gpioRoleMap(settings = state.settings, status = state.status) {
+  const roleMap = new Map();
+  const addRole = (pin, label) => {
+    const numericPin = Number(pin);
+    if (!Number.isFinite(numericPin) || numericPin < 0) {
+      return;
+    }
+    if (!roleMap.has(numericPin)) {
+      roleMap.set(numericPin, []);
+    }
+    roleMap.get(numericPin).push(label);
+  };
+
+  const audio = settings?.audio || {};
+  const battery = settings?.battery || {};
+  const device = settings?.device || {};
+  const oled = settings?.oled || {};
+  const sd = settings?.sd || {};
+  const chipFamily = String(status?.firmware?.chipFamily || "esp32s3").toLowerCase();
+
+  addRole(audio.doutPin, "I2S DIN");
+  addRole(audio.wsPin, "I2S WS");
+  addRole(audio.bclkPin, "I2S BCLK");
+  addRole(battery.adcPin, "Battery ADC");
+  if (Number(battery.chargingSensePin || 0) > 0) {
+    addRole(battery.chargingSensePin, "Charge Sense");
+  }
+  addRole(device.statusLedPin, device.statusLedPin === 21 ? "Builtin RGB" : "Status LED");
+  addRole(5, "Button 1");
+  addRole(chipFamily === "esp32" ? 18 : 6, "Button 2");
+
+  if (String(oled.displayType || "oled").toLowerCase() === "wape") {
+    if (Number(oled.wapeTriggerPin || 0) > 0) {
+      addRole(oled.wapeTriggerPin, "Wape Trigger");
+    }
+  } else if (oled.enabled) {
+    addRole(oled.sdaPin, "OLED SDA");
+    addRole(oled.sclPin, "OLED SCL");
+    if (Number(oled.resetPin ?? -1) >= 0) {
+      addRole(oled.resetPin, "OLED RESET");
+    }
+  }
+
+  if (sd.enabled) {
+    addRole(sd.csPin, "SD CS");
+    addRole(sd.sckPin, "SD SCK");
+    addRole(sd.mosiPin, "SD MOSI");
+    addRole(sd.misoPin, "SD MISO");
+  }
+
+  if (!roleMap.has(DOCUMENTED_BUZZER_PIN)) {
+    addRole(DOCUMENTED_BUZZER_PIN, "Buzzer Reserved");
+  }
+
+  return roleMap;
+}
+
+function gpioDropdownMarkup(item, roleMap) {
+  const numericPin = Number(item?.pin);
+  const hasNumericPin = Number.isFinite(numericPin) && numericPin >= 0;
+  const activeRoles = hasNumericPin ? (roleMap.get(numericPin) || []) : [];
+  const selectedLabel = hasNumericPin
+    ? (activeRoles.length ? activeRoles.join(" + ") : "Unused")
+    : "Board pad";
+  const options = [selectedLabel, ...GPIO_ROLE_OPTIONS.filter((label) => label !== selectedLabel)];
+  const label = String(item?.label || (hasNumericPin ? `GPIO${numericPin}` : "Pin"));
+  return `
+    <label class="gpio-pin-row">
+      <span class="gpio-pin-label">${escapeHtml(label)}</span>
+      <select disabled aria-label="${escapeHtml(label)} assignment">
+        ${options.map((label, index) => `<option${index === 0 ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}
+      </select>
+    </label>
+  `;
+}
+
+function renderGpioOverview() {
+  if (!elements.gpioLeftPins || !elements.gpioRightPins) {
+    return;
+  }
+  const roleMap = gpioRoleMap(state.settings || {}, state.status || {});
+  const selectedBoard = String(elements.gpioBoardSelector?.value || "esp32-s3-super-mini");
+  const layout = GPIO_BOARD_LAYOUTS[selectedBoard] || GPIO_BOARD_LAYOUTS["esp32-s3-super-mini"];
+  elements.gpioLeftPins.innerHTML = layout.left.map((item) => gpioDropdownMarkup(item, roleMap)).join("");
+  elements.gpioRightPins.innerHTML = layout.right.map((item) => gpioDropdownMarkup(item, roleMap)).join("");
+}
+
+function renderHardwareSummary(status) {
+  const hardware = status?.hardware || {};
+  const system = status?.system || {};
+  const settings = state.settings || {};
+  const audio = settings.audio || {};
+  const battery = settings.battery || {};
+  const oled = settings.oled || {};
+  const sd = settings.sd || {};
+  const sdSystem = system.sd || {};
+  const hardwareReady = Boolean(hardware.chipModel || hardware.flashSizeBytes || hardware.cpuFreqMHz);
+
+  const boardLabel = hardwareReady ? [
+    hardware.chipModel || "ESP32",
+    hardware.chipRevision ? `rev ${hardware.chipRevision}` : "",
+    hardware.cpuCores ? `${hardware.cpuCores} core${hardware.cpuCores === 1 ? "" : "s"}` : "",
+    hardware.cpuFreqMHz ? `${hardware.cpuFreqMHz} MHz` : "",
+  ].filter(Boolean).join(" • ") : "Waiting for live status";
+  const cpuLabel = hardwareReady ? [
+    hardware.cpuCores ? `${hardware.cpuCores} core${hardware.cpuCores === 1 ? "" : "s"}` : "-",
+    hardware.cpuFreqMHz ? `${hardware.cpuFreqMHz} MHz` : "",
+  ].filter(Boolean).join(" • ") : "Waiting for live status";
+  const flashLabel = hardwareReady ? [
+    hardware.flashSizeBytes ? formatBytes(hardware.flashSizeBytes) : "-",
+    hardware.appPartitionSizeBytes ? `OTA slot ${formatBytes(hardware.appPartitionSizeBytes)}` : "",
+    hardware.sketchSizeBytes ? `fw ${formatBytes(hardware.sketchSizeBytes)}` : "",
+  ].filter(Boolean).join(" • ") : "Waiting for live status";
+  const displayType = String(oled.displayType || "oled").toLowerCase();
+  const displayLabel = displayType === "wape"
+    ? `Wape • trigger ${pinSummary(oled.wapeTriggerPin || 0)}`
+    : `${oled.enabled ? "OLED" : "OLED off"} • SDA ${pinSummary(oled.sdaPin)} • SCL ${pinSummary(oled.sclPin)}`;
+  const audioLabel = `WS ${pinSummary(audio.wsPin)} • BCLK ${pinSummary(audio.bclkPin)} • DIN ${pinSummary(audio.doutPin)}`;
+  const batteryLabel = pinSummary(battery.adcPin);
+  const sdLabel = !sd.enabled
+    ? "Disabled"
+    : sdSystem.mounted && Number(sdSystem.totalBytes || 0) > 0
+      ? `${formatBytes(sdSystem.freeBytes || 0)} free • GPIO${sd.csPin}/${sd.sckPin}/${sd.mosiPin}/${sd.misoPin}`
+      : `Configured • GPIO${sd.csPin}/${sd.sckPin}/${sd.mosiPin}/${sd.misoPin}`;
+
+  if (elements.deviceHardwareBoard) {
+    elements.deviceHardwareBoard.textContent = boardLabel || "-";
+  }
+  if (elements.deviceHardwareCpu) {
+    elements.deviceHardwareCpu.textContent = cpuLabel || "-";
+  }
+  if (elements.deviceHardwareFlash) {
+    elements.deviceHardwareFlash.textContent = flashLabel || "-";
+  }
+  if (elements.deviceHardwareAudio) {
+    elements.deviceHardwareAudio.textContent = audioLabel;
+  }
+  if (elements.deviceHardwareDisplay) {
+    elements.deviceHardwareDisplay.textContent = displayLabel;
+  }
+  if (elements.deviceHardwareBattery) {
+    elements.deviceHardwareBattery.textContent = batteryLabel;
+  }
+  if (elements.deviceHardwareSd) {
+    elements.deviceHardwareSd.textContent = sdLabel;
+  }
+}
+
+function renderDeviceResources(status) {
+  const system = status?.system || {};
+  const sram = system.sram || {};
+  const psram = system.psram || {};
+  const spiffs = system.spiffs || {};
+  const sd = system.sd || {};
+  const sdEnabled = Boolean(state.settings?.sd?.enabled);
+  const systemReady = Boolean(system.cpuLoadPercent || system.freeHeap || sram.totalBytes || psram.totalBytes || spiffs.totalBytes || sd.totalBytes || sdEnabled);
+
+  if (!systemReady) {
+    updateResourceCard(
+      elements.deviceCpuLoadValue,
+      elements.deviceCpuLoadBar,
+      elements.deviceCpuLoadMeta,
+      "--",
+      0,
+      "Live metrics appear after the first status refresh."
+    );
+    updateResourceCard(
+      elements.deviceSramValue,
+      elements.deviceSramBar,
+      elements.deviceSramMeta,
+      "--",
+      0,
+      "Waiting for SRAM usage from the device."
+    );
+    updateResourceCard(
+      elements.devicePsramValue,
+      elements.devicePsramBar,
+      elements.devicePsramMeta,
+      "--",
+      0,
+      "Waiting for PSRAM status from the device."
+    );
+    updateResourceCard(
+      elements.deviceSpiffsValue,
+      elements.deviceSpiffsBar,
+      elements.deviceSpiffsMeta,
+      "--",
+      0,
+      "Waiting for filesystem telemetry from the device."
+    );
+    updateResourceCard(
+      elements.deviceSdValue,
+      elements.deviceSdBar,
+      elements.deviceSdMeta,
+      "--",
+      0,
+      "Waiting for SD card telemetry from the device."
+    );
+    return;
+  }
+
+  const cpuLoadPercent = Math.max(0, Math.min(100, Number(system.cpuLoadPercent || 0)));
+
+  updateResourceCard(
+    elements.deviceCpuLoadValue,
+    elements.deviceCpuLoadBar,
+    elements.deviceCpuLoadMeta,
+    `${Math.round(cpuLoadPercent)}%`,
+    cpuLoadPercent,
+    "Approximate load derived from FreeRTOS idle time."
+  );
+
+  const sramUsedPercent = sram.totalBytes > 0 ? (Number(sram.usedBytes || 0) * 100) / Number(sram.totalBytes) : 0;
+  updateResourceCard(
+    elements.deviceSramValue,
+    elements.deviceSramBar,
+    elements.deviceSramMeta,
+    formatBytes(sram.freeBytes || system.freeHeap || 0),
+    sramUsedPercent,
+    `${formatBytes(sram.usedBytes || 0)} used of ${formatBytes(sram.totalBytes || 0)} • min free ${formatBytes(system.minFreeHeapBytes || 0)}`
+  );
+
+  if (psram.available && Number(psram.totalBytes || 0) > 0) {
+    const psramUsedPercent = (Number(psram.usedBytes || 0) * 100) / Number(psram.totalBytes || 0);
+    updateResourceCard(
+      elements.devicePsramValue,
+      elements.devicePsramBar,
+      elements.devicePsramMeta,
+      formatBytes(psram.freeBytes || 0),
+      psramUsedPercent,
+      `${formatBytes(psram.usedBytes || 0)} used of ${formatBytes(psram.totalBytes || 0)}`
+    );
+  } else {
+    updateResourceCard(
+      elements.devicePsramValue,
+      elements.devicePsramBar,
+      elements.devicePsramMeta,
+      "Not available",
+      0,
+      "Firmware will keep using internal SRAM only."
+    );
+  }
+
+  if (spiffs.available && Number(spiffs.totalBytes || 0) > 0) {
+    const spiffsUsedPercent = (Number(spiffs.usedBytes || 0) * 100) / Number(spiffs.totalBytes || 0);
+    const spiffsMeta = spiffs.mounted
+      ? `${formatBytes(spiffs.usedBytes || 0)} used of ${formatBytes(spiffs.totalBytes || 0)}`
+      : `${formatBytes(spiffs.totalBytes || 0)} filesystem partition reserved in flash • not mounted`;
+    updateResourceCard(
+      elements.deviceSpiffsValue,
+      elements.deviceSpiffsBar,
+      elements.deviceSpiffsMeta,
+      spiffs.mounted ? formatBytes(spiffs.freeBytes || 0) : formatBytes(spiffs.totalBytes || 0),
+      spiffs.mounted ? spiffsUsedPercent : 0,
+      spiffs.mounted ? `${spiffsMeta} • click to manage files` : spiffsMeta
+    );
+  } else {
+    updateResourceCard(
+      elements.deviceSpiffsValue,
+      elements.deviceSpiffsBar,
+      elements.deviceSpiffsMeta,
+      "Unavailable",
+      0,
+      "No flash filesystem partition detected."
+    );
+  }
+
+  if (sd.available && Number(sd.totalBytes || 0) > 0 && sd.mounted) {
+    const sdUsedPercent = (Number(sd.usedBytes || 0) * 100) / Number(sd.totalBytes || 0);
+    updateResourceCard(
+      elements.deviceSdValue,
+      elements.deviceSdBar,
+      elements.deviceSdMeta,
+      formatBytes(sd.freeBytes || 0),
+      sdUsedPercent,
+      `${formatBytes(sd.usedBytes || 0)} used of ${formatBytes(sd.totalBytes || 0)} • click to manage files`
+    );
+  } else if (sdEnabled) {
+    const configuredPins = [state.settings?.sd?.csPin, state.settings?.sd?.sckPin, state.settings?.sd?.mosiPin, state.settings?.sd?.misoPin]
+      .map((pin) => `GPIO${pin}`)
+      .join(" / ");
+    updateResourceCard(
+      elements.deviceSdValue,
+      elements.deviceSdBar,
+      elements.deviceSdMeta,
+      "Not mounted",
+      0,
+      `Configured for ${configuredPins} • click to manage files and pins`
+    );
+  } else {
+    updateResourceCard(
+      elements.deviceSdValue,
+      elements.deviceSdBar,
+      elements.deviceSdMeta,
+      "Disabled",
+      0,
+      "SD card support is disabled. Click to configure pins and enable it."
+    );
+  }
+}
+
 async function request(path, options = {}) {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -1432,6 +2527,7 @@ async function request(path, options = {}) {
 function fillForm(data) {
   state.settingsLoading = true;
   populateAudioI2sPinOptions(data);
+  populateSdPinOptions(data);
   populateStatusLedPinOptions(data);
   populateOledPinOptions(data);
   populateWapeTriggerPinOptions(data);
@@ -1473,6 +2569,21 @@ function fillForm(data) {
   if (elements.oledResetPin && data.oled?.resetPin !== undefined && [...elements.oledResetPin.options].some((option) => option.value === String(data.oled.resetPin))) {
     elements.oledResetPin.value = String(data.oled.resetPin);
   }
+  if (elements.sdEnabled && data.sd?.enabled !== undefined) {
+    elements.sdEnabled.checked = Boolean(data.sd.enabled);
+  }
+  if (elements.sdCsPin && data.sd?.csPin !== undefined && [...elements.sdCsPin.options].some((option) => option.value === String(data.sd.csPin))) {
+    elements.sdCsPin.value = String(data.sd.csPin);
+  }
+  if (elements.sdSckPin && data.sd?.sckPin !== undefined && [...elements.sdSckPin.options].some((option) => option.value === String(data.sd.sckPin))) {
+    elements.sdSckPin.value = String(data.sd.sckPin);
+  }
+  if (elements.sdMosiPin && data.sd?.mosiPin !== undefined && [...elements.sdMosiPin.options].some((option) => option.value === String(data.sd.mosiPin))) {
+    elements.sdMosiPin.value = String(data.sd.mosiPin);
+  }
+  if (elements.sdMisoPin && data.sd?.misoPin !== undefined && [...elements.sdMisoPin.options].some((option) => option.value === String(data.sd.misoPin))) {
+    elements.sdMisoPin.value = String(data.sd.misoPin);
+  }
   populateBatteryAdcPinOptions(data);
   if (elements.batteryAdcPin && data.battery?.adcPin !== undefined) {
     elements.batteryAdcPin.value = String(data.battery.adcPin);
@@ -1497,6 +2608,8 @@ function fillForm(data) {
   updateLowBatterySleepUi();
   updateConditionalVisibility();
   updateDisplayModeUi();
+  renderHardwareSummary(state.status || {});
+  renderDeviceResources(state.status || {});
   renderOledPreview();
   state.settingsDirty = false;
   state.settingsLoading = false;
@@ -1578,6 +2691,53 @@ function oledPinsConflictInternally(payload) {
   return false;
 }
 
+function sdPinsConflictInternally(payload) {
+  const enabled = Boolean(payload?.sd?.enabled ?? state.settings?.sd?.enabled ?? false);
+  if (!enabled) {
+    return false;
+  }
+
+  const pins = [
+    Number(payload?.sd?.csPin ?? state.settings?.sd?.csPin ?? DEFAULT_SD_GPIO_PINS.cs),
+    Number(payload?.sd?.sckPin ?? state.settings?.sd?.sckPin ?? DEFAULT_SD_GPIO_PINS.sck),
+    Number(payload?.sd?.mosiPin ?? state.settings?.sd?.mosiPin ?? DEFAULT_SD_GPIO_PINS.mosi),
+    Number(payload?.sd?.misoPin ?? state.settings?.sd?.misoPin ?? DEFAULT_SD_GPIO_PINS.miso),
+  ];
+
+  return new Set(pins).size !== pins.length;
+}
+
+function sdPinsConflictWithReservedFunctions(payload) {
+  const enabled = Boolean(payload?.sd?.enabled ?? state.settings?.sd?.enabled ?? false);
+  if (!enabled) {
+    return false;
+  }
+
+  const sdPins = new Set([
+    Number(payload?.sd?.csPin ?? state.settings?.sd?.csPin ?? DEFAULT_SD_GPIO_PINS.cs),
+    Number(payload?.sd?.sckPin ?? state.settings?.sd?.sckPin ?? DEFAULT_SD_GPIO_PINS.sck),
+    Number(payload?.sd?.mosiPin ?? state.settings?.sd?.mosiPin ?? DEFAULT_SD_GPIO_PINS.mosi),
+    Number(payload?.sd?.misoPin ?? state.settings?.sd?.misoPin ?? DEFAULT_SD_GPIO_PINS.miso),
+  ]);
+
+  const reservedPins = new Set([
+    Number(payload?.audio?.wsPin ?? state.settings?.audio?.wsPin ?? DEFAULT_ESP32S3_AUDIO_PINS.ws),
+    Number(payload?.audio?.bclkPin ?? state.settings?.audio?.bclkPin ?? DEFAULT_ESP32S3_AUDIO_PINS.bclk),
+    Number(payload?.audio?.doutPin ?? state.settings?.audio?.doutPin ?? DEFAULT_ESP32S3_AUDIO_PINS.dout),
+    Number(payload?.battery?.adcPin ?? state.settings?.battery?.adcPin ?? 0),
+    Number(payload?.battery?.chargingSensePin ?? state.settings?.battery?.chargingSensePin ?? 0),
+    Number(payload?.device?.statusLedPin ?? state.settings?.device?.statusLedPin ?? 0),
+  ].filter((pin) => Number.isFinite(pin) && pin >= 0));
+
+  const displayType = String(payload?.oled?.displayType ?? state.settings?.oled?.displayType ?? "oled").toLowerCase();
+  const wapeTriggerPin = Number(payload?.oled?.wapeTriggerPin ?? state.settings?.oled?.wapeTriggerPin ?? 0);
+  if (displayType === "wape" && Number.isFinite(wapeTriggerPin) && wapeTriggerPin > 0) {
+    reservedPins.add(wapeTriggerPin);
+  }
+
+  return [...sdPins].some((pin) => reservedPins.has(pin));
+}
+
 function updateLowBatterySleepUi() {
   const enabled = Boolean(elements.lowBatterySleepToggle?.checked);
   const threshold = Number(elements.lowBatterySleepThreshold?.value || state.settings?.device?.lowBatterySleepThresholdPercent || 20);
@@ -1653,6 +2813,7 @@ function collectForm() {
   payload.mqtt ||= {};
   payload.battery ||= {};
   payload.oled ||= {};
+  payload.sd ||= {};
 
   payload.mqtt.port = Number(payload.mqtt.port || 1883);
   payload.device.savedVolumePercent = Number(elements.volumeSlider?.value || payload.device.savedVolumePercent || 5);
@@ -1678,6 +2839,11 @@ function collectForm() {
   payload.oled.wapeTriggerPin = Number(elements.wapeTriggerPin?.value || payload.oled.wapeTriggerPin || 0);
   payload.oled.displayType = String(elements.displayType?.value || payload.oled.displayType || "oled");
   payload.oled.wapeTriggerEvent = String(elements.wapeTriggerEvent?.value || payload.oled.wapeTriggerEvent || "play_start");
+  payload.sd.enabled = Boolean(elements.sdEnabled?.checked ?? payload.sd.enabled ?? false);
+  payload.sd.csPin = Number(elements.sdCsPin?.value || payload.sd.csPin || DEFAULT_SD_GPIO_PINS.cs);
+  payload.sd.sckPin = Number(elements.sdSckPin?.value || payload.sd.sckPin || DEFAULT_SD_GPIO_PINS.sck);
+  payload.sd.mosiPin = Number(elements.sdMosiPin?.value || payload.sd.mosiPin || DEFAULT_SD_GPIO_PINS.mosi);
+  payload.sd.misoPin = Number(elements.sdMisoPin?.value || payload.sd.misoPin || DEFAULT_SD_GPIO_PINS.miso);
   return payload;
 }
 
@@ -1833,11 +2999,31 @@ function renderBatteryHero(voltage) {
   }
 
   const numericVoltage = Number(voltage || 0);
+  const usbPowered = numericVoltage > 4.5;
   const percent = estimateBatteryPercent(numericVoltage);
   const levelClass = batteryLevelClass(percent);
   const fillWidth = Math.max(8, percent);
 
   elements.batteryHero.className = "stat-value stat-value-battery";
+  if (usbPowered) {
+    elements.batteryHero.innerHTML = `
+      <div class="battery-hero-widget battery-usb" aria-label="USB power connected">
+        <div class="usb-hero-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <path d="M4.7 19.3 19 5"></path>
+            <path d="m21 3-3 1 2 2Z"></path>
+            <path d="M9.26 7.68 5 12l2 5"></path>
+            <path d="m10 14 5 2 3.5-3.5"></path>
+            <path d="m18 12 1-1 1 1-1 1Z"></path>
+          </svg>
+        </div>
+        <div class="wifi-quality">USB Power</div>
+        <div class="battery-meta">${numericVoltage.toFixed(2)} V</div>
+      </div>
+    `;
+    return;
+  }
+
   elements.batteryHero.innerHTML = `
     <div class="battery-hero-widget battery-${levelClass}" aria-label="Battery ${percent}%">
       <div class="battery-shell">
@@ -1883,50 +3069,61 @@ function renderWifiHero(connected, ipAddress, rssi) {
 
 function renderStatus(status) {
   state.status = status;
+  const device = status?.device || {};
+  const network = status?.network || {};
+  const playback = status?.playback || {};
+  const battery = status?.battery || {};
+  const firmware = status?.firmware || {};
+  const settings = status?.settings || {};
   populateStatusLedPinOptions();
+  populateSdPinOptions();
   populateBatteryAdcPinOptions();
   populateWapeTriggerPinOptions();
   maybeRedirectToStationIp(status);
   const ota = status.otaManager || status.ota || {};
-  const wifiConnected = Boolean(status.network.wifiConnected);
-  const mqttConnected = Boolean(status.network.mqttConnected);
-  const playbackActive = status.playback.state === "playing";
-  const savedVolumePercent = Number(state.settings?.device?.savedVolumePercent ?? status.playback.volumePercent ?? 0);
+  const wifiConnected = Boolean(network.wifiConnected);
+  const mqttConnected = Boolean(network.mqttConnected);
+  const playbackActive = playback.state === "playing";
+  const savedVolumePercent = Number(state.settings?.device?.savedVolumePercent ?? playback.volumePercent ?? 0);
 
-  elements.deviceTitle.textContent = status.device.friendlyName || "ESP32 Notifier";
-  elements.deviceNameValue.textContent = status.device.deviceName || "-";
+  elements.deviceTitle.textContent = device.friendlyName || "ESP32 Notifier";
+  elements.deviceNameValue.textContent = device.deviceName || "-";
 
-  elements.ipAddress.textContent = status.network.ip || "-";
-  elements.apInfo.textContent = status.network.apMode ? `${status.network.apSsid || "AP active"}` : "Disabled";
-  elements.wifiRssi.textContent = wifiConnected ? `${status.network.wifiRssi} dBm` : "-";
+  elements.ipAddress.textContent = network.ip || "-";
+  elements.apInfo.textContent = network.apMode ? `${network.apSsid || "AP active"}` : "Disabled";
+  elements.wifiRssi.textContent = wifiConnected ? `${network.wifiRssi} dBm` : "-";
   elements.mqttStatus.textContent = mqttConnected ? "Connected" : "Disconnected";
-  elements.firmwareVersion.textContent = `${status.firmware.version} (${status.firmware.buildDate})`;
-  elements.firmwareVersionCard.textContent = status.firmware.version;
-  elements.batteryVoltage.textContent = `${Number(status.battery.voltage || 0).toFixed(3)} V`;
-  elements.batteryRaw.textContent = `${status.battery.rawAdc ?? "-"} / ${Number(status.battery.rawAdcVoltage || 0).toFixed(3)} V`;
+  elements.firmwareVersion.textContent = `${firmware.version || "-"} (${firmware.buildDate || "-"})`;
+  setCurrentFirmwareVersion(firmware.version);
+  setFirmwareAuthorLink(settings);
+  elements.batteryVoltage.textContent = `${Number(battery.voltage || 0).toFixed(3)} V`;
+  elements.batteryRaw.textContent = `${battery.rawAdc ?? "-"} / ${Number(battery.rawAdcVoltage || 0).toFixed(3)} V`;
   updateDerivedBatteryCalibration();
-  elements.freeHeap.textContent = `${status.system.freeHeap} B`;
-  elements.settingsSource.textContent = status.settings.usingSaved ? "Saved settings" : "Hardwired defaults";
-  elements.playbackState.textContent = status.playback.state || "idle";
-  const currentTitle = normalizePlaybackTitle(status.playback.title, status.playback.url) || "Idle";
+  elements.freeHeap.textContent = formatBytes(status.system.freeHeap || status.system?.sram?.freeBytes || 0);
+  elements.settingsSource.textContent = settings.usingSaved ? "Saved settings" : "Hardwired defaults";
+  elements.playbackState.textContent = playback.state || "idle";
+  const currentTitle = normalizePlaybackTitle(playback.title, playback.url) || "Idle";
   elements.currentTitle.textContent = currentTitle;
   elements.currentTitle.title = currentTitle;
-  elements.currentUrl.value = status.playback.url || "";
-  elements.currentUrl.title = status.playback.url || "";
+  elements.currentUrl.value = playback.url || "";
+  elements.currentUrl.title = playback.url || "";
   if (document.activeElement !== elements.volumeSlider) {
     elements.volumeSlider.value = savedVolumePercent;
   }
   elements.volumeValue.textContent = `${document.activeElement === elements.volumeSlider ? elements.volumeSlider.value : savedVolumePercent}%`;
   const audioMuted = Boolean(elements.audioMutedToggle?.checked);
-  const audioEnabled = Boolean(status.firmware?.audioEnabled);
+  const audioEnabled = Boolean(firmware.audioEnabled);
 
   updatePlaybackActionButton();
   updateAudioUiState();
 
-  renderWifiHero(wifiConnected, status.network.ip || (status.network.apMode ? "192.168.4.1" : "No IP"), status.network.wifiRssi);
+  renderWifiHero(wifiConnected, network.ip || (network.apMode ? "192.168.4.1" : "No IP"), network.wifiRssi);
   setPill(elements.mqttPill, mqttConnected ? "MQTT Connected" : "MQTT Offline", mqttConnected ? "ok" : "warn");
   renderPlaybackHero(status, audioMuted);
-  renderBatteryHero(status.battery.voltage || 0);
+  renderBatteryHero(battery.voltage || 0);
+  renderHardwareSummary(status);
+  renderDeviceResources(status);
+  renderGpioOverview();
 
   elements.otaStatusLabel.textContent = ota.message || ota.lastResult || "Idle";
   elements.latestVersion.textContent = ota.latestVersion || status.ota.latestVersion || "-";
@@ -1964,7 +3161,7 @@ function renderStatus(status) {
         setMqttConnectStatus("Disconnecting from MQTT broker...");
       }
     } else if (mqttConnected) {
-      setMqttConnectStatus(`Connected to ${status.settings?.mqtt?.host || namedField("mqtt.host")?.value || "broker"}`);
+      setMqttConnectStatus(`Connected to ${state.settings?.mqtt?.host || namedField("mqtt.host")?.value || "broker"}`);
     } else if (!wifiConnected) {
       setMqttConnectStatus("Waiting for Wi-Fi before MQTT can connect...");
     } else {
@@ -1974,7 +3171,7 @@ function renderStatus(status) {
 
   if (state.wifiConnectInProgress) {
     if (wifiConnected) {
-      setScanStatus(`Connected to ${status.network.ssid || namedField("wifi.ssid")?.value || "Wi-Fi"}`);
+      setScanStatus(`Connected to ${network.ssid || namedField("wifi.ssid")?.value || "Wi-Fi"}`);
     } else {
       setScanStatus("Connecting to Wi-Fi...");
     }
@@ -2097,7 +3294,28 @@ function setupPasswordToggles() {
 }
 
 async function loadStatus() {
-  renderStatus(await request("/api/status"));
+  if (state.statusRequestInFlight) {
+    return state.status;
+  }
+
+  state.statusRequestInFlight = true;
+  try {
+    const status = await request(`/api/status?ts=${Date.now()}`);
+    renderStatus(status);
+    return status;
+  } finally {
+    state.statusRequestInFlight = false;
+  }
+}
+
+function startStatusPolling(intervalMs = 2000) {
+  if (state.statusPollTimer) {
+    return;
+  }
+
+  state.statusPollTimer = window.setInterval(() => {
+    loadStatus().catch((error) => console.error(error));
+  }, intervalMs);
 }
 
 async function refreshFirmwareInfo(forceRefresh = false) {
@@ -2128,7 +3346,7 @@ async function refreshFirmwareInfo(forceRefresh = false) {
       : state.firmwareSelectedVersion;
     state.firmwareReleasesLoaded = true;
 
-    elements.firmwareVersionCard.textContent = currentVersion;
+    setCurrentFirmwareVersion(currentVersion);
     elements.latestVersion.textContent = latestVersion;
     elements.otaStatusLabel.textContent = info.updateStatus || "Idle";
     elements.otaStatus.textContent = JSON.stringify(info, null, 2);
@@ -2383,6 +3601,8 @@ async function connectMqtt() {
 async function loadSettings() {
   state.settings = await request("/api/settings");
   fillForm(state.settings);
+  setFirmwareAuthorLink(state.settings);
+  renderGpioOverview();
   resetWifiNetworkList();
 }
 
@@ -2406,6 +3626,14 @@ async function saveSettings(options = {}) {
     state.settingsSaving = false;
     throw new Error("OLED SDA, SCL, and RESET cannot reuse the active MAX98357A I2S pins. Change the display pins or disable OLED first.");
   }
+  if (sdPinsConflictInternally(submittedSettings)) {
+    state.settingsSaving = false;
+    throw new Error("SD card CS, SCK, MOSI, and MISO must use four different GPIOs.");
+  }
+  if (sdPinsConflictWithReservedFunctions(submittedSettings)) {
+    state.settingsSaving = false;
+    throw new Error("SD card pins cannot reuse the active audio, battery, status LED, or Wape trigger GPIOs.");
+  }
   if (!silent) {
     setMessage("Saving settings...");
   }
@@ -2425,6 +3653,9 @@ async function saveSettings(options = {}) {
 
     await loadStatus();
     await refreshSettingsAfterSave(submittedSettings);
+    if (elements.storageModal?.open) {
+      await refreshStorageManager(state.activeStorageTarget);
+    }
   } finally {
     state.settingsSaving = false;
   }
@@ -2649,6 +3880,13 @@ async function copyCurrentUrl() {
   toast("Copied current URL");
 }
 
+async function copyStorageUrl(path) {
+  const url = `${window.location.origin}${storageStreamUrl(path)}`;
+  await navigator.clipboard.writeText(url);
+  setStorageStatus(`Copied URL for ${path}`);
+  toast("File URL copied");
+}
+
 async function triggerDisplay() {
   await postSimple("/api/display-trigger", "Display trigger queued");
 }
@@ -2669,6 +3907,8 @@ document.getElementById("applyOtaButton").addEventListener("click", () => instal
 elements.mqttConnectButton?.addEventListener("click", () => connectMqtt().catch(handleError));
 elements.displayTriggerButton?.addEventListener("click", () => triggerDisplay().catch(handleError));
 elements.saveDeviceButton?.addEventListener("click", () => saveSettings({ silent: false }).catch(handleError));
+elements.deviceSpiffsCard?.addEventListener("click", () => openStorageManager("flash").catch(handleError));
+elements.deviceSdCard?.addEventListener("click", () => openStorageManager("sd").catch(handleError));
 document.getElementById("uploadFirmwareButton").addEventListener("click", () => {
   elements.localFirmwareFile.value = "";
   updateLocalFirmwareLabel();
@@ -2687,6 +3927,48 @@ elements.localFirmwareFile?.addEventListener("change", () => {
     uploadLocalFirmware().catch(handleError);
   }
 });
+elements.storageCloseButton?.addEventListener("click", closeStorageManager);
+elements.storageFlashButton?.addEventListener("click", () => openStorageManager("flash").catch(handleError));
+elements.storageSdButton?.addEventListener("click", () => openStorageManager("sd").catch(handleError));
+elements.storageUpButton?.addEventListener("click", () => {
+  const parentPath = storageParentPath(state.currentStoragePathByTarget[state.activeStorageTarget] || "/");
+  if (parentPath) {
+    openStorageManager(state.activeStorageTarget, parentPath).catch(handleError);
+  }
+});
+elements.storageNewFolderButton?.addEventListener("click", () => createStorageFolder().catch(handleError));
+elements.storageUploadButton?.addEventListener("click", () => {
+  elements.storageFileInput.value = "";
+  elements.storageFileInput.click();
+});
+elements.storageFileInput?.addEventListener("change", () => {
+  if (elements.storageFileInput.files && elements.storageFileInput.files[0]) {
+    uploadStorageFile().catch(handleError);
+  }
+});
+elements.storageFileList?.addEventListener("click", (event) => {
+  const openButton = event.target.closest("[data-storage-open]");
+  if (openButton) {
+    openStorageManager(state.activeStorageTarget, openButton.dataset.storageOpen).catch(handleError);
+    return;
+  }
+  const copyButton = event.target.closest("[data-storage-copy]");
+  if (copyButton) {
+    copyStorageUrl(copyButton.dataset.storageCopy).catch(handleError);
+    return;
+  }
+  const deleteButton = event.target.closest("[data-storage-delete]");
+  if (deleteButton) {
+    deleteStorageFile(deleteButton.dataset.storageDelete).catch(handleError);
+  }
+});
+elements.storageBreadcrumbs?.addEventListener("click", (event) => {
+  const crumbButton = event.target.closest("[data-storage-nav]");
+  if (!crumbButton) {
+    return;
+  }
+  openStorageManager(state.activeStorageTarget, crumbButton.dataset.storageNav).catch(handleError);
+});
 
 elements.playForm.addEventListener("submit", (event) => handlePlaybackAction(event).catch(handleError));
 elements.radioCountrySelect?.addEventListener("change", (event) => {
@@ -2695,6 +3977,7 @@ elements.radioCountrySelect?.addEventListener("change", (event) => {
 elements.radioStationSelect?.addEventListener("change", () => {
   applySelectedRadioStation({ autoPlay: true }).catch(handleError);
 });
+elements.gpioBoardSelector?.addEventListener("change", updateGpioBoardImage);
 elements.wifiNetworkList.addEventListener("change", (event) => {
   if (!event.target.value) {
     state.wifiSelectionPending = false;
@@ -2714,6 +3997,7 @@ elements.volumeSlider.addEventListener("input", (event) => {
   elements.volumeValue.textContent = `${event.target.value}%`;
 });
 elements.batteryAdcPin?.addEventListener("change", () => {
+  populateSdPinOptions();
   populateOledPinOptions();
   populateWapeTriggerPinOptions();
   updateBatteryUi();
@@ -2723,11 +4007,23 @@ for (const field of [elements.audioWsPin, elements.audioBclkPin, elements.audioD
   field?.addEventListener("change", () => {
     updateAudioI2sUi();
     updateAudioUiState();
+    populateSdPinOptions();
     populateBatteryAdcPinOptions();
     populateOledPinOptions();
     populateWapeTriggerPinOptions();
     updateBatteryUi();
     state.settingsDirty = true;
+  });
+}
+for (const field of [elements.sdEnabled, elements.sdCsPin, elements.sdSckPin, elements.sdMosiPin, elements.sdMisoPin]) {
+  field?.addEventListener("change", () => {
+    populateSdPinOptions();
+    populateStatusLedPinOptions();
+    populateBatteryAdcPinOptions();
+    populateOledPinOptions();
+    populateWapeTriggerPinOptions();
+    updateBatteryUi();
+    renderDeviceResources(state.status || {});
   });
 }
 elements.displayType?.addEventListener("change", () => {
@@ -2782,6 +4078,7 @@ for (const field of elements.settingsForm.elements) {
 
   if (field.name === "device.statusLedPin") {
     field.addEventListener("change", () => {
+      populateSdPinOptions();
       populateOledPinOptions();
       populateBatteryAdcPinOptions();
       populateWapeTriggerPinOptions();
@@ -2861,10 +4158,8 @@ renderRecentPlayback();
 updateWifiActionButton();
 populateButtonActionSelects();
 renderOledPreview();
+updateGpioBoardImage();
 loadRadioCountries().catch(handleError);
 
 Promise.all([loadStatus(), loadSettings()]).catch(handleError);
-
-window.setInterval(() => {
-  loadStatus().catch((error) => console.error(error));
-}, 5000);
+startStatusPolling();

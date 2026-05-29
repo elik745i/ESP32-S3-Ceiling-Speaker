@@ -6,11 +6,13 @@
 
 #ifndef APP_DISABLE_WEB_UI
 #include <ESPAsyncWebServer.h>
+#include <FS.h>
 #endif
 
 #include "app_state.h"
 #include "ota_manager.h"
 #include "settings_manager.h"
+#include "storage_backend.h"
 #include "wifi_manager.h"
 
 class WebServerManager {
@@ -58,8 +60,17 @@ class WebServerManager {
     SimpleHandler displayTriggerHandler_;
     SimpleHandler rebootHandler_;
     SimpleHandler factoryResetHandler_;
+    File storageUploadFile_;
+    StorageTarget storageUploadTarget_ = StorageTarget::Flash;
+    String storageUploadPath_;
+    String storageUploadError_;
+    size_t storageUploadBytesWritten_ = 0;
+    size_t storageUploadLimitBytes_ = 0;
+    uint8_t* storageTransferBuffer_ = nullptr;
+    size_t storageTransferBufferCapacity_ = 0;
 
     bool ensureAuthorized(AsyncWebServerRequest* request);
+    bool ensureStorageTransferBuffer(size_t minimumSize);
     bool redirectCaptivePortalIfNeeded(AsyncWebServerRequest* request);
     void sendJson(AsyncWebServerRequest* request, const JsonDocument& doc, int statusCode = 200);
     void registerApiRoutes();

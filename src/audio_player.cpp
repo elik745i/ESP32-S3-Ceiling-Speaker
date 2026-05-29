@@ -5,6 +5,7 @@
 
 #include "default_config.h"
 #include "playback_text.h"
+#include "psram_allocator.h"
 
 namespace {
 AudioPlayer::Impl* g_impl = nullptr;
@@ -160,7 +161,11 @@ void audio_eof_speech(const char* info) {
 
 void AudioPlayer::begin(uint8_t bclkPin, uint8_t wsPin, uint8_t doutPin, uint8_t initialVolumePercent, AppState& appState) {
     if (impl_ == nullptr) {
-        impl_ = new Impl();
+        impl_ = allocatePreferPsram<Impl>();
+    }
+    if (impl_ == nullptr) {
+        Serial.println("[audio] failed to allocate player implementation");
+        return;
     }
     impl_->appState = &appState;
     g_impl = impl_;

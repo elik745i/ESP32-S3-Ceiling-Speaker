@@ -93,6 +93,14 @@ struct OledSettings {
     String wapeTriggerEvent = "play_start";
 };
 
+struct SdSettings {
+    bool enabled = false;
+    uint8_t csPin = 4;
+    uint8_t sckPin = 5;
+    uint8_t mosiPin = 6;
+    uint8_t misoPin = 7;
+};
+
 struct DeviceSettings {
     String deviceName;
     String friendlyName;
@@ -118,6 +126,7 @@ struct SettingsBundle {
     WebAuthSettings webAuth;
     AudioSettings audio;
     OledSettings oled;
+    SdSettings sd;
     DeviceSettings device;
     bool usingSavedSettings = false;
 };

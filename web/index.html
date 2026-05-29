@@ -11,6 +11,16 @@
     <section class="hero">
       <div class="hero-header">
         <h1 id="deviceTitle">ESP32 Notifier</h1>
+        <div class="hero-firmware" aria-label="Current firmware version">
+          <div class="hero-firmware-line">
+            <span class="hero-firmware-label">FW</span>
+            <span id="heroFirmwareVersion">-</span>
+          </div>
+          <div class="hero-firmware-meta">
+            <span id="heroFirmwareChannel">(release)</span>
+            <a id="heroFirmwareAuthorLink" href="https://github.com/elik745i/ESP32-S3-Ceiling-Speaker" target="_blank" rel="noopener noreferrer">by Elnur Mehdiyev</a>
+          </div>
+        </div>
       </div>
 
       <div class="stats">
@@ -46,14 +56,42 @@
     <div class="grid">
       <section class="panel panel-wide">
         <div class="tabs" role="tablist" aria-label="Notifier tabs">
-          <button class="tab-button" type="button" role="tab" aria-selected="true" aria-controls="tab-info" data-tab="info">Info</button>
-          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-playback" data-tab="playback">Audio</button>
-          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-wifi" data-tab="wifi">Wi-Fi</button>
-          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-mqtt" data-tab="mqtt">MQTT</button>
-          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-battery" data-tab="battery">Battery</button>
-          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-device" data-tab="device">Device</button>
-          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-oled" data-tab="oled">OLED</button>
-          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="tab-firmware" data-tab="firmware">Firmware</button>
+          <button class="tab-button tab-button-icon tab-info" type="button" role="tab" aria-label="Info" data-tooltip="Info" title="Info" aria-selected="true" aria-controls="tab-info" data-tab="info">
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 10v6"></path><path d="M12 7h.01"></path></svg>
+          </button>
+          <button class="tab-button tab-button-icon tab-audio" type="button" role="tab" aria-label="Audio" data-tooltip="Audio" title="Audio" aria-selected="false" aria-controls="tab-playback" data-tab="playback">
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15h4l5 4V5l-5 4H5z"></path><path d="M18 9a4 4 0 0 1 0 6"></path><path d="M20.5 6.5a7.5 7.5 0 0 1 0 11"></path></svg>
+          </button>
+          <button class="tab-button tab-button-icon tab-wifi" type="button" role="tab" aria-label="Wi-Fi" data-tooltip="Wi-Fi" title="Wi-Fi" aria-selected="false" aria-controls="tab-wifi" data-tab="wifi">
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 8.5C7.5 4.2 16.5 4.2 22 8.5"></path><path d="M5 12c4-3 10-3 14 0"></path><path d="M8.5 15.5c2-1.5 5-1.5 7 0"></path><path d="M12 19h.01"></path></svg>
+          </button>
+          <button class="tab-button tab-button-icon tab-mqtt" type="button" role="tab" aria-label="MQTT" data-tooltip="MQTT" title="MQTT" aria-selected="false" aria-controls="tab-mqtt" data-tab="mqtt">
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8h12l3 3v7H3v-7z"></path><path d="M9 8V5h6v3"></path><path d="M9 13h.01"></path><path d="M12 13h.01"></path><path d="M15 13h.01"></path></svg>
+          </button>
+          <button class="tab-button tab-button-icon tab-battery" type="button" role="tab" aria-label="Battery" data-tooltip="Battery" title="Battery" aria-selected="false" aria-controls="tab-battery" data-tab="battery">
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="16" height="10" rx="2"></rect><path d="M21 10v4"></path><path d="M6 10h7"></path></svg>
+          </button>
+          <button class="tab-button tab-button-icon tab-device" type="button" role="tab" aria-label="Device" data-tooltip="Device" title="Device" aria-selected="false" aria-controls="tab-device" data-tab="device">
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2"></rect><path d="M10 6h4"></path><path d="M11 18h2"></path></svg>
+          </button>
+          <button class="tab-button tab-button-icon tab-display" type="button" role="tab" aria-label="DISPLAY" data-tooltip="DISPLAY" title="DISPLAY" aria-selected="false" aria-controls="tab-oled" data-tab="oled">
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2"></rect><path d="M9 20h6"></path><path d="M12 17v3"></path></svg>
+          </button>
+          <button class="tab-button tab-button-icon tab-hardware" type="button" role="tab" aria-label="Hardware" data-tooltip="Hardware" title="Hardware" aria-selected="false" aria-controls="tab-hardware" data-tab="hardware">
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"></rect><path d="M9 1v3"></path><path d="M15 1v3"></path><path d="M9 20v3"></path><path d="M15 20v3"></path><path d="M1 9h3"></path><path d="M1 15h3"></path><path d="M20 9h3"></path><path d="M20 15h3"></path></svg>
+          </button>
+          <button class="tab-button tab-button-icon tab-gpio" type="button" role="tab" aria-label="GPIO Info" data-tooltip="GPIO Info" title="GPIO Info" aria-selected="false" aria-controls="tab-gpio" data-tab="gpio">
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h4v4H6z"></path><path d="M14 6h4v4h-4z"></path><path d="M6 14h4v4H6z"></path><path d="M14 14h4v4h-4z"></path><path d="M10 8h4"></path><path d="M8 10v4"></path><path d="M16 10v4"></path><path d="M10 16h4"></path></svg>
+          </button>
+          <button class="tab-button tab-button-icon tab-storage-internal" type="button" role="tab" aria-label="Internal Storage" data-tooltip="Internal Storage" title="Internal Storage" aria-selected="false" aria-controls="tab-storage-internal" data-tab="storage-internal">
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14v10H5z"></path><path d="M8 10h8"></path><path d="M8 14h5"></path></svg>
+          </button>
+          <button class="tab-button tab-button-icon tab-storage-external" type="button" role="tab" aria-label="External Storage" data-tooltip="External Storage" title="External Storage" aria-selected="false" aria-controls="tab-storage-external" data-tab="storage-external">
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h10l3 3v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"></path><path d="M9 13h6"></path><path d="M12 10v6"></path></svg>
+          </button>
+          <button class="tab-button tab-button-icon tab-firmware" type="button" role="tab" aria-label="Firmware" data-tooltip="Firmware" title="Firmware" aria-selected="false" aria-controls="tab-firmware" data-tab="firmware">
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10"></path><path d="m8 9 4 4 4-4"></path><path d="M5 17v2h14v-2"></path></svg>
+          </button>
         </div>
 
         <div id="tab-info" class="tab-panel active" role="tabpanel">
@@ -287,6 +325,14 @@
 
         <div id="tab-device" class="tab-panel" role="tabpanel">
           <h2>Device</h2>
+          <div class="firmware-summary compact-summary device-summary-grid">
+            <div class="firmware-card"><span>Board / CPU</span><strong id="deviceHardwareBoard">-</strong></div>
+            <div class="firmware-card"><span>Flash</span><strong id="deviceHardwareFlash">-</strong></div>
+            <div class="firmware-card"><span>Audio I/O</span><strong id="deviceHardwareAudio">-</strong></div>
+            <div class="firmware-card"><span>Display</span><strong id="deviceHardwareDisplay">-</strong></div>
+            <div class="firmware-card"><span>Voltage Read GPIO</span><strong id="deviceHardwareBattery">-</strong></div>
+            <div class="firmware-card"><span>SD Card</span><strong id="deviceHardwareSd">-</strong></div>
+          </div>
           <form>
             <div class="row">
               <label>Device Name
@@ -333,8 +379,40 @@
           </form>
         </div>
 
+        <div id="tab-hardware" class="tab-panel" role="tabpanel">
+          <h2>Hardware</h2>
+          <div class="device-health-grid">
+            <div class="resource-card">
+              <div class="resource-head"><span>CPU Load</span><strong id="deviceCpuLoadValue">-</strong></div>
+              <div class="progress-bar"><div id="deviceCpuLoadBar" class="progress-fill"></div></div>
+              <div id="deviceCpuLoadMeta" class="resource-meta">Approximate idle-derived load</div>
+            </div>
+            <div class="resource-card">
+              <div class="resource-head"><span>SRAM</span><strong id="deviceSramValue">-</strong></div>
+              <div class="progress-bar"><div id="deviceSramBar" class="progress-fill"></div></div>
+              <div id="deviceSramMeta" class="resource-meta">-</div>
+            </div>
+            <div class="resource-card">
+              <div class="resource-head"><span>PSRAM</span><strong id="devicePsramValue">-</strong></div>
+              <div class="progress-bar"><div id="devicePsramBar" class="progress-fill"></div></div>
+              <div id="devicePsramMeta" class="resource-meta">-</div>
+            </div>
+            <div id="deviceSpiffsCard" class="resource-card resource-card-interactive">
+              <div class="resource-head"><span>Flash FS</span><strong id="deviceSpiffsValue">-</strong></div>
+              <div class="progress-bar"><div id="deviceSpiffsBar" class="progress-fill"></div></div>
+              <div id="deviceSpiffsMeta" class="resource-meta">-</div>
+            </div>
+            <div id="deviceSdCard" class="resource-card resource-card-interactive">
+              <div class="resource-head"><span>SD Card</span><strong id="deviceSdValue">-</strong></div>
+              <div class="progress-bar"><div id="deviceSdBar" class="progress-fill"></div></div>
+              <div id="deviceSdMeta" class="resource-meta">-</div>
+            </div>
+          </div>
+          <p class="note">Tell me what additional hardware details you want included here and I will wire them in.</p>
+        </div>
+
         <div id="tab-oled" class="tab-panel" role="tabpanel">
-          <h2>OLED</h2>
+          <h2>DISPLAY</h2>
           <form>
             <div class="row">
               <label>Display Type
@@ -449,6 +527,45 @@
           </form>
         </div>
 
+        <div id="tab-gpio" class="tab-panel" role="tabpanel">
+          <h2>GPIO Info</h2>
+          <div class="gpio-layout-card">
+            <div id="gpioLeftPins" class="gpio-pin-column"></div>
+            <div class="gpio-board-stack">
+              <label class="gpio-board-selector">
+                <span>Board Profile</span>
+                <select id="gpioBoardSelector" aria-label="ESP32 board profile">
+                  <option value="esp32-s3-super-mini" selected>ESP32-S3 Super Mini (this board)</option>
+                  <option value="esp32-s3-zero">ESP32-S3 Zero</option>
+                  <option value="esp32-s3-psram">ESP32-S3 with PSRAM</option>
+                  <option value="esp32-wrover">ESP32-WROVER</option>
+                  <option value="esp32-wroom">Classic ESP32-WROOM</option>
+                  <option value="esp32-mini">ESP32 Mini</option>
+                  <option value="esp32-s2-psram">ESP32-S2 with PSRAM</option>
+                  <option value="esp32-c6">ESP32-C6</option>
+                  <option value="esp32-c3">ESP32-C3</option>
+                </select>
+              </label>
+              <div class="gpio-board-wrap">
+                <img id="gpioBoardImage" class="gpio-board-svg gpio-board-svg-rotated" src="/esp32-s3-supermini-breadboard.svg" alt="ESP32-S3 Super Mini board" />
+              </div>
+              <div id="gpioBoardRecommendations" class="gpio-board-recommendations" aria-label="ESP32 board recommendations"></div>
+            </div>
+            <div id="gpioRightPins" class="gpio-pin-column"></div>
+          </div>
+          <p class="note">This layout follows the common ESP32-S3 Super Mini header arrangement. Verify against your board silkscreen before wiring. The dropdowns currently show live detected assignments and reserved uses.</p>
+        </div>
+
+        <div id="tab-storage-internal" class="tab-panel" role="tabpanel">
+          <h2>Internal Storage</h2>
+          <p class="note">Internal storage tab is ready. Tell me what you want included here and I will wire it in.</p>
+        </div>
+
+        <div id="tab-storage-external" class="tab-panel" role="tabpanel">
+          <h2>External Storage</h2>
+          <p class="note">External storage tab is ready. Tell me what you want included here and I will wire it in.</p>
+        </div>
+
         <div id="tab-firmware" class="tab-panel" role="tabpanel">
           <h2>Firmware</h2>
           <div class="firmware-summary">
@@ -491,6 +608,60 @@
       </section>
     </div>
   </div>
+
+  <dialog id="storageModal" class="storage-modal">
+    <div class="storage-modal-shell">
+      <div class="storage-modal-head">
+        <div>
+          <h2 id="storageTitle">Flash File Manager</h2>
+          <div id="storageSummary" class="scan-status">Loading storage info...</div>
+        </div>
+        <button id="storageCloseButton" type="button" class="secondary">Close</button>
+      </div>
+      <div class="storage-target-switch" role="tablist" aria-label="Storage target">
+        <button id="storageFlashButton" type="button" class="storage-target-button" aria-selected="true">Flash FS</button>
+        <button id="storageSdButton" type="button" class="storage-target-button" aria-selected="false">SD Card</button>
+      </div>
+      <div id="storageSdConfig" class="storage-sd-config" hidden>
+        <label class="check"><input id="sdEnabled" form="settingsForm" name="sd.enabled" type="checkbox"> Enable SD card storage</label>
+        <div class="row storage-sd-pin-grid">
+          <label>CS
+            <select id="sdCsPin" form="settingsForm" name="sd.csPin"></select>
+          </label>
+          <label>SCK
+            <select id="sdSckPin" form="settingsForm" name="sd.sckPin"></select>
+          </label>
+        </div>
+        <div class="row storage-sd-pin-grid">
+          <label>MOSI
+            <select id="sdMosiPin" form="settingsForm" name="sd.mosiPin"></select>
+          </label>
+          <label>MISO
+            <select id="sdMisoPin" form="settingsForm" name="sd.misoPin"></select>
+          </label>
+        </div>
+        <p class="note">Default SD SPI mapping is CS GPIO4, SCK GPIO5, MOSI GPIO6, and MISO GPIO7. When SD storage is enabled, OLED, fixed touch-button inputs, and the documented buzzer GPIO reservation are gated away from those same pins.</p>
+      </div>
+      <div class="storage-path-bar">
+        <button id="storageUpButton" type="button" class="secondary">Up</button>
+        <div id="storageBreadcrumbs" class="storage-breadcrumbs" aria-label="Current folder"></div>
+      </div>
+      <div class="actions actions-inline-text storage-toolbar">
+        <span id="storageStatus" class="scan-status">Ready</span>
+        <span id="storageLimit" class="scan-status">-</span>
+      </div>
+      <div class="actions storage-toolbar">
+        <button id="storageNewFolderButton" type="button" class="secondary">New Folder</button>
+        <button id="storageUploadButton" type="button">Upload Melody</button>
+      </div>
+      <input id="storageFileInput" type="file" accept=".mp3,.wav,.aac,.m4a,.ogg,.opus,.flac,audio/*" hidden>
+      <div class="progress-wrap storage-progress-wrap">
+        <div class="progress-bar"><div id="storageProgressFill" class="progress-fill"></div></div>
+        <div id="storageProgressLabel" class="progress-label">Idle</div>
+      </div>
+      <div id="storageFileList" class="storage-file-list"></div>
+    </div>
+  </dialog>
 
   <template id="toastTemplate">
     <div class="toast"></div>
