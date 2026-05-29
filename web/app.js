@@ -703,6 +703,79 @@ function storageTargetLabel(target = state.activeStorageTarget) {
   return target === "sd" ? "SD Card" : "Flash FS";
 }
 
+function flashStorageAvailable(status = state.status) {
+  return Boolean(status?.system?.spiffs?.available);
+}
+
+function resolveStorageTarget(target = state.activeStorageTarget || "flash") {
+  return target === "flash" && !flashStorageAvailable() ? "sd" : target;
+}
+
+function activateTabByName(tabName) {
+  const button = document.querySelector(`.tab-button[data-tab="${tabName}"]`);
+  if (!button || button.hidden || button.disabled) {
+    return false;
+  }
+  button.click();
+  return true;
+}
+
+function activeTabName() {
+  return document.querySelector('.tab-button[aria-selected="true"]')?.dataset.tab || "";
+}
+
+async function refreshExternalStorageTab(directoryPath = state.currentStoragePathByTarget.sd || "/") {
+  state.activeStorageTarget = "sd";
+  state.currentStoragePathByTarget.sd = normalizeStorageDirectoryPath(directoryPath);
+  setStorageStatus("Loading files...");
+  const payload = await refreshStorageManager("sd", directoryPath);
+  if (elements.storageProgressFill) {
+    elements.storageProgressFill.style.width = "0%";
+  }
+  if (elements.storageProgressLabel) {
+    elements.storageProgressLabel.textContent = "Idle";
+  }
+  setStorageStatus("Ready");
+  return payload;
+}
+
+function updateStorageAvailabilityUi(status = state.status) {
+  const flashAvailable = flashStorageAvailable(status);
+  const internalStorageTabButton = document.querySelector('.tab-button[data-tab="storage-internal"]');
+  const internalStoragePanel = document.getElementById("tab-storage-internal");
+
+  if (internalStorageTabButton) {
+    internalStorageTabButton.hidden = !flashAvailable;
+    internalStorageTabButton.disabled = !flashAvailable;
+    if (!flashAvailable) {
+      internalStorageTabButton.setAttribute("aria-selected", "false");
+    }
+  }
+
+  if (internalStoragePanel) {
+    internalStoragePanel.hidden = !flashAvailable;
+    if (!flashAvailable) {
+      internalStoragePanel.classList.remove("active");
+    }
+  }
+
+  if (elements.storageFlashButton) {
+    elements.storageFlashButton.hidden = !flashAvailable;
+    elements.storageFlashButton.disabled = !flashAvailable;
+  }
+
+  if (!flashAvailable && state.activeStorageTarget === "flash") {
+    state.activeStorageTarget = "sd";
+  }
+
+  const activeTabButton = document.querySelector('.tab-button[aria-selected="true"]');
+  if (activeTabButton && (activeTabButton.hidden || activeTabButton.disabled)) {
+    const fallbackTabButton = [...document.querySelectorAll(".tab-button")]
+      .find((button) => !button.hidden && !button.disabled);
+    fallbackTabButton?.click();
+  }
+}
+
 function currentSdPins(settings = state.settings, options = {}) {
   const { respectEnabled = true } = options;
   const enabled = Boolean(elements.sdEnabled?.checked ?? settings?.sd?.enabled ?? false);
@@ -1641,7 +1714,7 @@ function renderStorageBreadcrumbs(currentPath) {
 }
 
 function renderStorageManager(payload) {
-  const target = String(payload?.target || state.activeStorageTarget || "flash");
+  const target = resolveStorageTarget(String(payload?.target || state.activeStorageTarget || "flash"));
   const label = storageTargetLabel(target);
   const storage = payload?.storage || state.storageInfoByTarget[target] || {};
   const currentPath = normalizeStorageDirectoryPath(payload?.currentPath || state.currentStoragePathByTarget[target] || "/");
@@ -1652,12 +1725,6 @@ function renderStorageManager(payload) {
 
   if (elements.storageTitle) {
     elements.storageTitle.textContent = `${label} File Manager`;
-  }
-  if (elements.storageFlashButton) {
-    elements.storageFlashButton.setAttribute("aria-selected", String(target === "flash"));
-  }
-  if (elements.storageSdButton) {
-    elements.storageSdButton.setAttribute("aria-selected", String(target === "sd"));
   }
   if (elements.storageSdConfig) {
     elements.storageSdConfig.hidden = target !== "sd";
@@ -1726,23 +1793,16 @@ async function refreshStorageManager(target = state.activeStorageTarget, directo
 }
 
 async function openStorageManager(target = "flash", directoryPath = state.currentStoragePathByTarget[target] || "/") {
-  if (!elements.storageModal) {
+  if (!elements.storageFileList) {
     return;
   }
-  state.activeStorageTarget = target;
-  state.currentStoragePathByTarget[target] = normalizeStorageDirectoryPath(directoryPath);
-  setStorageStatus("Loading files...");
-  await refreshStorageManager(target, directoryPath);
-  elements.storageProgressFill.style.width = "0%";
-  elements.storageProgressLabel.textContent = "Idle";
-  if (!elements.storageModal.open) {
-    elements.storageModal.showModal();
+  const resolvedTarget = resolveStorageTarget(target);
+  if (resolvedTarget !== "sd") {
+    activateTabByName(resolvedTarget === "flash" ? "storage-internal" : "storage-external");
+    return;
   }
-  setStorageStatus("Ready");
-}
-
-function closeStorageManager() {
-  elements.storageModal?.close();
+  activateTabByName("storage-external");
+  await refreshExternalStorageTab(directoryPath);
 }
 
 async function deleteStorageFile(path) {
@@ -2485,7 +2545,7 @@ function renderDeviceResources(status) {
       elements.deviceSdMeta,
       formatBytes(sd.freeBytes || 0),
       sdUsedPercent,
-      `${formatBytes(sd.usedBytes || 0)} used of ${formatBytes(sd.totalBytes || 0)} • click to manage files`
+      `${formatBytes(sd.usedBytes || 0)} used of ${formatBytes(sd.totalBytes || 0)}`
     );
   } else if (sdEnabled) {
     const configuredPins = [state.settings?.sd?.csPin, state.settings?.sd?.sckPin, state.settings?.sd?.mosiPin, state.settings?.sd?.misoPin]
@@ -2497,7 +2557,7 @@ function renderDeviceResources(status) {
       elements.deviceSdMeta,
       "Not mounted",
       0,
-      `Configured for ${configuredPins} • click to manage files and pins`
+      `Configured for ${configuredPins} • use External Storage tab`
     );
   } else {
     updateResourceCard(
@@ -2506,7 +2566,7 @@ function renderDeviceResources(status) {
       elements.deviceSdMeta,
       "Disabled",
       0,
-      "SD card support is disabled. Click to configure pins and enable it."
+      "SD card support is disabled. Use External Storage tab to configure pins and enable it."
     );
   }
 }
@@ -3069,6 +3129,7 @@ function renderWifiHero(connected, ipAddress, rssi) {
 
 function renderStatus(status) {
   state.status = status;
+  updateStorageAvailabilityUi(status);
   const device = status?.device || {};
   const network = status?.network || {};
   const playback = status?.playback || {};
@@ -3245,20 +3306,27 @@ function setupTabs() {
   const buttons = [...document.querySelectorAll(".tab-button")];
   const panels = [...document.querySelectorAll(".tab-panel")];
   const activateTab = (tabName) => {
+    const resolvedTabName = buttons.some((button) => button.dataset.tab === tabName && !button.hidden && !button.disabled)
+      ? tabName
+      : (buttons.find((button) => !button.hidden && !button.disabled)?.dataset.tab || "info");
     for (const button of buttons) {
-      const isActive = button.dataset.tab === tabName;
+      const isActive = button.dataset.tab === resolvedTabName;
       button.setAttribute("aria-selected", String(isActive));
     }
     for (const panel of panels) {
-      panel.classList.toggle("active", panel.id === `tab-${tabName}`);
+      panel.classList.toggle("active", panel.id === `tab-${resolvedTabName}` && !panel.hidden);
     }
     try {
-      window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, tabName);
+      window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, resolvedTabName);
     } catch {
     }
 
-    if (tabName === "firmware") {
+    if (resolvedTabName === "firmware") {
       refreshFirmwareInfo(true).catch(handleError);
+    }
+
+    if (resolvedTabName === "storage-external") {
+      refreshExternalStorageTab().catch(handleError);
     }
   };
 
@@ -3653,7 +3721,7 @@ async function saveSettings(options = {}) {
 
     await loadStatus();
     await refreshSettingsAfterSave(submittedSettings);
-    if (elements.storageModal?.open) {
+    if (activeTabName() === "storage-external") {
       await refreshStorageManager(state.activeStorageTarget);
     }
   } finally {
@@ -3907,8 +3975,12 @@ document.getElementById("applyOtaButton").addEventListener("click", () => instal
 elements.mqttConnectButton?.addEventListener("click", () => connectMqtt().catch(handleError));
 elements.displayTriggerButton?.addEventListener("click", () => triggerDisplay().catch(handleError));
 elements.saveDeviceButton?.addEventListener("click", () => saveSettings({ silent: false }).catch(handleError));
-elements.deviceSpiffsCard?.addEventListener("click", () => openStorageManager("flash").catch(handleError));
-elements.deviceSdCard?.addEventListener("click", () => openStorageManager("sd").catch(handleError));
+elements.deviceSpiffsCard?.addEventListener("click", () => {
+  if (!flashStorageAvailable()) {
+    return;
+  }
+  activateTabByName("storage-internal");
+});
 document.getElementById("uploadFirmwareButton").addEventListener("click", () => {
   elements.localFirmwareFile.value = "";
   updateLocalFirmwareLabel();
@@ -3927,9 +3999,6 @@ elements.localFirmwareFile?.addEventListener("change", () => {
     uploadLocalFirmware().catch(handleError);
   }
 });
-elements.storageCloseButton?.addEventListener("click", closeStorageManager);
-elements.storageFlashButton?.addEventListener("click", () => openStorageManager("flash").catch(handleError));
-elements.storageSdButton?.addEventListener("click", () => openStorageManager("sd").catch(handleError));
 elements.storageUpButton?.addEventListener("click", () => {
   const parentPath = storageParentPath(state.currentStoragePathByTarget[state.activeStorageTarget] || "/");
   if (parentPath) {

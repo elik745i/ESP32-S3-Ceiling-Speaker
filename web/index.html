@@ -402,7 +402,7 @@
               <div class="progress-bar"><div id="deviceSpiffsBar" class="progress-fill"></div></div>
               <div id="deviceSpiffsMeta" class="resource-meta">-</div>
             </div>
-            <div id="deviceSdCard" class="resource-card resource-card-interactive">
+            <div id="deviceSdCard" class="resource-card">
               <div class="resource-head"><span>SD Card</span><strong id="deviceSdValue">-</strong></div>
               <div class="progress-bar"><div id="deviceSdBar" class="progress-fill"></div></div>
               <div id="deviceSdMeta" class="resource-meta">-</div>
@@ -563,7 +563,53 @@
 
         <div id="tab-storage-external" class="tab-panel" role="tabpanel">
           <h2>External Storage</h2>
-          <p class="note">External storage tab is ready. Tell me what you want included here and I will wire it in.</p>
+          <p class="note">Manage SD card melodies and folders here. The Hardware tab now reports storage status only.</p>
+          <div class="storage-modal-shell storage-embedded-shell">
+            <div class="storage-modal-head storage-embedded-head">
+              <div>
+                <h3 id="storageTitle">SD Card File Manager</h3>
+                <div id="storageSummary" class="scan-status">Loading storage info...</div>
+              </div>
+            </div>
+            <div id="storageSdConfig" class="storage-sd-config">
+              <label class="check"><input id="sdEnabled" form="settingsForm" name="sd.enabled" type="checkbox"> Enable SD card storage</label>
+              <div class="row storage-sd-pin-grid">
+                <label>CS
+                  <select id="sdCsPin" form="settingsForm" name="sd.csPin"></select>
+                </label>
+                <label>SCK
+                  <select id="sdSckPin" form="settingsForm" name="sd.sckPin"></select>
+                </label>
+              </div>
+              <div class="row storage-sd-pin-grid">
+                <label>MOSI
+                  <select id="sdMosiPin" form="settingsForm" name="sd.mosiPin"></select>
+                </label>
+                <label>MISO
+                  <select id="sdMisoPin" form="settingsForm" name="sd.misoPin"></select>
+                </label>
+              </div>
+              <p class="note">Default SD SPI mapping is CS GPIO4, SCK GPIO5, MOSI GPIO6, and MISO GPIO7. When SD storage is enabled, OLED, fixed touch-button inputs, and the documented buzzer GPIO reservation are gated away from those same pins.</p>
+            </div>
+            <div class="storage-path-bar">
+              <button id="storageUpButton" type="button" class="secondary">Up</button>
+              <div id="storageBreadcrumbs" class="storage-breadcrumbs" aria-label="Current folder"></div>
+            </div>
+            <div class="actions actions-inline-text storage-toolbar">
+              <span id="storageStatus" class="scan-status">Ready</span>
+              <span id="storageLimit" class="scan-status">-</span>
+            </div>
+            <div class="actions storage-toolbar">
+              <button id="storageNewFolderButton" type="button" class="secondary">New Folder</button>
+              <button id="storageUploadButton" type="button">Upload Melody</button>
+            </div>
+            <input id="storageFileInput" type="file" accept=".mp3,.wav,.aac,.m4a,.ogg,.opus,.flac,audio/*" hidden>
+            <div class="progress-wrap storage-progress-wrap">
+              <div class="progress-bar"><div id="storageProgressFill" class="progress-fill"></div></div>
+              <div id="storageProgressLabel" class="progress-label">Idle</div>
+            </div>
+            <div id="storageFileList" class="storage-file-list"></div>
+          </div>
         </div>
 
         <div id="tab-firmware" class="tab-panel" role="tabpanel">
@@ -608,60 +654,6 @@
       </section>
     </div>
   </div>
-
-  <dialog id="storageModal" class="storage-modal">
-    <div class="storage-modal-shell">
-      <div class="storage-modal-head">
-        <div>
-          <h2 id="storageTitle">Flash File Manager</h2>
-          <div id="storageSummary" class="scan-status">Loading storage info...</div>
-        </div>
-        <button id="storageCloseButton" type="button" class="secondary">Close</button>
-      </div>
-      <div class="storage-target-switch" role="tablist" aria-label="Storage target">
-        <button id="storageFlashButton" type="button" class="storage-target-button" aria-selected="true">Flash FS</button>
-        <button id="storageSdButton" type="button" class="storage-target-button" aria-selected="false">SD Card</button>
-      </div>
-      <div id="storageSdConfig" class="storage-sd-config" hidden>
-        <label class="check"><input id="sdEnabled" form="settingsForm" name="sd.enabled" type="checkbox"> Enable SD card storage</label>
-        <div class="row storage-sd-pin-grid">
-          <label>CS
-            <select id="sdCsPin" form="settingsForm" name="sd.csPin"></select>
-          </label>
-          <label>SCK
-            <select id="sdSckPin" form="settingsForm" name="sd.sckPin"></select>
-          </label>
-        </div>
-        <div class="row storage-sd-pin-grid">
-          <label>MOSI
-            <select id="sdMosiPin" form="settingsForm" name="sd.mosiPin"></select>
-          </label>
-          <label>MISO
-            <select id="sdMisoPin" form="settingsForm" name="sd.misoPin"></select>
-          </label>
-        </div>
-        <p class="note">Default SD SPI mapping is CS GPIO4, SCK GPIO5, MOSI GPIO6, and MISO GPIO7. When SD storage is enabled, OLED, fixed touch-button inputs, and the documented buzzer GPIO reservation are gated away from those same pins.</p>
-      </div>
-      <div class="storage-path-bar">
-        <button id="storageUpButton" type="button" class="secondary">Up</button>
-        <div id="storageBreadcrumbs" class="storage-breadcrumbs" aria-label="Current folder"></div>
-      </div>
-      <div class="actions actions-inline-text storage-toolbar">
-        <span id="storageStatus" class="scan-status">Ready</span>
-        <span id="storageLimit" class="scan-status">-</span>
-      </div>
-      <div class="actions storage-toolbar">
-        <button id="storageNewFolderButton" type="button" class="secondary">New Folder</button>
-        <button id="storageUploadButton" type="button">Upload Melody</button>
-      </div>
-      <input id="storageFileInput" type="file" accept=".mp3,.wav,.aac,.m4a,.ogg,.opus,.flac,audio/*" hidden>
-      <div class="progress-wrap storage-progress-wrap">
-        <div class="progress-bar"><div id="storageProgressFill" class="progress-fill"></div></div>
-        <div id="storageProgressLabel" class="progress-label">Idle</div>
-      </div>
-      <div id="storageFileList" class="storage-file-list"></div>
-    </div>
-  </dialog>
 
   <template id="toastTemplate">
     <div class="toast"></div>

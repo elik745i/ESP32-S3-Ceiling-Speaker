@@ -52,7 +52,17 @@ bool sdFilesystemHealthy() {
     return healthy;
 }
 
+const esp_partition_t* flashFilesystemPartition() {
+    return esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, nullptr);
+}
+
 void mountFlashStorage() {
+    if (flashFilesystemPartition() == nullptr) {
+        flashMounted = false;
+        Serial.println("[storage] Flash filesystem disabled by partition table");
+        return;
+    }
+
     flashMounted = LittleFS.begin(false);
     if (!flashMounted) {
         Serial.println("[storage] LittleFS mount failed, attempting format");
@@ -198,8 +208,7 @@ StorageBackendSummary getStorageSummary(StorageTarget target) {
     StorageBackendSummary summary;
 
     if (target == StorageTarget::Flash) {
-        const esp_partition_t* partition =
-            esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, nullptr);
+        const esp_partition_t* partition = flashFilesystemPartition();
         summary.available = partition != nullptr;
         summary.totalBytes = partition != nullptr ? static_cast<uint32_t>(partition->size) : 0;
         summary.freeBytes = summary.totalBytes;
@@ -238,7 +247,7 @@ bool storageMounted(StorageTarget target) {
 }
 
 bool storageConfigured(StorageTarget target) {
-    return target == StorageTarget::Sd ? activeSdSettings.enabled : true;
+    return target == StorageTarget::Sd ? activeSdSettings.enabled : flashFilesystemPartition() != nullptr;
 }
 
 bool storageExists(StorageTarget target, const String& path) {

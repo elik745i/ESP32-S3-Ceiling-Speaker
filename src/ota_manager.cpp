@@ -4,6 +4,7 @@
 #include <Update.h>
 #include <WiFiClientSecure.h>
 #include <esp_app_format.h>
+#include <esp_ota_ops.h>
 #include <mbedtls/sha256.h>
 
 #include "version.h"
@@ -229,6 +230,20 @@ void configureTlsClient(WiFiClientSecure& client, bool allowInsecureTls) {
     }
 }
 
+bool hasWritableOtaTargetPartition(String& error) {
+    const esp_partition_t* runningPartition = esp_ota_get_running_partition();
+    const esp_partition_t* targetPartition = esp_ota_get_next_update_partition(nullptr);
+    if (runningPartition == nullptr || targetPartition == nullptr) {
+        error = "No writable OTA target partition is available on this flash layout. Use USB flashing for firmware updates.";
+        return false;
+    }
+    if (runningPartition->address == targetPartition->address && runningPartition->size == targetPartition->size) {
+        error = "This firmware uses a single-app flash layout, so in-browser OTA updates are disabled. Use USB flashing for firmware updates.";
+        return false;
+    }
+    return true;
+}
+
 String httpErrorWithDetail(HTTPClient& http, const char* prefix, int code) {
     String message = prefix;
     message += code;
@@ -413,6 +428,9 @@ bool OtaManager::triggerCheck(bool applyAfterCheck) {
 bool OtaManager::beginLocalUpload(const String& filename, size_t totalSize, String& error) {
     if (busy_) {
         error = "Another update is already in progress.";
+        return false;
+    }
+    if (!hasWritableOtaTargetPartition(error)) {
         return false;
     }
     if (!hasBinExtension(filename)) {
@@ -603,6 +621,13 @@ void OtaManager::ensureSelectedReleaseStillValid() {
 
     selectedVersion_ = "";
     selectedAssetName_ = "";
+    for (const ReleaseInfo& release : releaseCache_) {
+        if (release.isInstalled) {
+            selectedVersion_ = release.tag;
+            selectedAssetName_ = release.assetName;
+            return;
+        }
+    }
     for (const ReleaseInfo& release : releaseCache_) {
         if (release.isLatest) {
             selectedVersion_ = release.tag;
@@ -1276,6 +1301,9 @@ OtaManager::CheckResult OtaManager::checkNow() {
 }
 
 bool OtaManager::installNow(const CheckResult& result, String& message) {
+    if (!hasWritableOtaTargetPartition(message)) {
+        return false;
+    }
     selectedVersion_ = result.latestVersion;
     selectedAssetName_ = result.assetName;
     updatePhase_ = "Connecting";
@@ -1316,6 +1344,14 @@ bool OtaManager::installNow(const CheckResult& result, String& message) {
     const int contentLength = http.getSize();
     if (contentLength <= 0) {
         message = "Invalid content length";
+        http.end();
+        return false;
+    }
+    const esp_partition_t* runningPartition = esp_ota_get_running_partition();
+    const size_t runningPartitionSize = runningPartition != nullptr ? runningPartition->size : 0;
+    if (runningPartitionSize > 0 && static_cast<size_t>(contentLength) > runningPartitionSize) {
+        message = String("Firmware image (") + contentLength + " bytes) is larger than the current app slot (" +
+            runningPartitionSize + " bytes). This update requires a partition layout change, so install it once using local USB flashing.";
         http.end();
         return false;
     }

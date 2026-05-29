@@ -1482,6 +1482,19 @@ body {
     gap: 12px;
   }
 
+  .storage-embedded-shell {
+    margin-top: 12px;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: #ffffff;
+    box-shadow: var(--shadow);
+  }
+
+  .storage-embedded-head h3 {
+    margin: 0;
+  }
+
   .storage-modal-head {
     display: flex;
     justify-content: space-between;

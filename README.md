@@ -129,11 +129,12 @@ The current full-web release profiles are configured around 4MB hardware.
 
 Current release behavior:
 
-- ESP32 and ESP32-S3 release builds now use [partitions/single_4m.csv](partitions/single_4m.csv) so the current embedded web UI still fits on common 4MB boards.
+- ESP32 and ESP32-S3 release builds now use [partitions/ota_4m.csv](partitions/ota_4m.csv) with two OTA app slots so failed updates and bootloops can roll back to the previous firmware.
 - [platformio.ini](platformio.ini) also sets `board_upload.flash_size = 4MB` for the ESP32-S3 environments to avoid generating an invalid 8MB image header.
-- This avoids the ESP32-S3 boot failure caused by flashing an 8MB-image header onto 4MB hardware and prevents the full-web ESP32 HACS variants from overflowing the old dual-OTA app slot.
+- To make both OTA slots large enough for the current full-web images on 4MB hardware, the internal flash filesystem partition is removed from this layout.
+- This preserves true OTA redundancy on 4MB boards while still avoiding the ESP32-S3 boot failure caused by flashing an 8MB-image header onto 4MB hardware.
 
-If your board reports only `4096k` flash, use the current configuration as-is and prefer USB flashing for recovery and major updates.
+If your board reports only `4096k` flash, use the current configuration as-is. OTA redundancy is available again, but internal flash storage is not.
 
 ## Build And Flash
 
@@ -284,7 +285,7 @@ Storage management covers both internal flash and optional SD media.
 
 Current behavior:
 
-- Internal flash storage is browsable from the web UI.
+- Internal flash storage is available only when the selected partition table includes a flash filesystem partition.
 - SD storage can be enabled and pinned through the UI.
 - The web UI supports browsing, folder creation, and file upload actions for available storage targets.
 - SD pin choices are checked against active audio, battery, and status pin assignments.
@@ -294,6 +295,7 @@ Current behavior:
 Key files and directories:
 
 - [platformio.ini](platformio.ini)
+- [partitions/ota_4m.csv](partitions/ota_4m.csv)
 - [partitions/single_4m.csv](partitions/single_4m.csv)
 - [include/default_config.h](include/default_config.h)
 - [include/settings_schema.h](include/settings_schema.h)
