@@ -13,6 +13,7 @@ struct ResourceMetricSnapshot {
 
 struct HardwareInfoSnapshot {
     String chipModel;
+    String boardProfile;
     uint16_t chipRevision = 0;
     uint8_t cpuCores = 0;
     uint32_t cpuFreqMHz = 0;

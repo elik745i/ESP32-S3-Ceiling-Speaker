@@ -879,6 +879,8 @@ void WebServerManager::registerApiRoutes() {
                     storageUploadError_ = "Unable to open destination file.";
                     return;
                 }
+
+                beginStorageWrite(storageUploadTarget_);
             }
 
             if (!storageUploadError_.isEmpty()) {
@@ -888,12 +890,14 @@ void WebServerManager::registerApiRoutes() {
                 if ((storageUploadBytesWritten_ + len) > storageUploadLimitBytes_) {
                     storageUploadError_ = "File is larger than remaining filesystem space.";
                     storageUploadFile_.close();
+                    endStorageWrite(storageUploadTarget_);
                     storageRemove(storageUploadTarget_, storageUploadPath_);
                     return;
                 }
                 if (!ensureStorageTransferBuffer(len)) {
                     storageUploadError_ = psramFound() ? "Unable to allocate PSRAM-backed transfer buffer." : "Unable to allocate transfer buffer.";
                     storageUploadFile_.close();
+                    endStorageWrite(storageUploadTarget_);
                     storageRemove(storageUploadTarget_, storageUploadPath_);
                     return;
                 }
@@ -902,13 +906,16 @@ void WebServerManager::registerApiRoutes() {
                 if (written != len) {
                     storageUploadError_ = "Failed while writing uploaded file.";
                     storageUploadFile_.close();
+                    endStorageWrite(storageUploadTarget_);
                     storageRemove(storageUploadTarget_, storageUploadPath_);
                     return;
                 }
                 storageUploadBytesWritten_ += written;
             }
             if (final && storageUploadFile_) {
+                storageUploadFile_.flush();
                 storageUploadFile_.close();
+                endStorageWrite(storageUploadTarget_);
             }
         });
 

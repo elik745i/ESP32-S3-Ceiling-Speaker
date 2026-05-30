@@ -2,12 +2,13 @@
 
 Custom PlatformIO firmware for ESP32 and ESP32-S3 Wi-Fi speaker/notifier hardware with a MAX98357A I2S amplifier path, browser-based configuration UI, MQTT and Home Assistant integration, local storage management, GitHub-release-based update discovery, and configurable pin mapping for audio, OLED, battery, SD, and status hardware.
 
+
 ## Current Release
 
-- Firmware version: `v0.1.13`
+- Firmware version: `v0.1.14`
 - Primary release repository: `elik745i/ESP32-S3-Ceiling-Speaker`
 - GitHub Releases feed: `https://api.github.com/repos/elik745i/ESP32-S3-Ceiling-Speaker/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.13.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.14.bin`
 
 ## What This Firmware Does
 
@@ -245,14 +246,15 @@ For Home Assistant media-player style control, use the HACS-oriented build with 
 
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
-Release asset names for `v0.1.13`:
 
-- `esp32-notifier-v0.1.13.bin`
-- `esp32-notifier-hacs-v0.1.13.bin`
-- `esp32-notifier-hacs-slim-v0.1.13.bin`
-- `esp32s3-notifier-v0.1.13.bin`
-- `esp32s3-notifier-hacs-v0.1.13.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.13.bin`
+Release asset names for `v0.1.14`:
+
+- `esp32-notifier-v0.1.14.bin`
+- `esp32-notifier-hacs-v0.1.14.bin`
+- `esp32-notifier-hacs-slim-v0.1.14.bin`
+- `esp32s3-notifier-v0.1.14.bin`
+- `esp32s3-notifier-hacs-v0.1.14.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.14.bin`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard release variants and upload the matching OTA assets back to that release.
 
@@ -324,4 +326,4 @@ Key files and directories:
 
 Current release notes live here:
 
-- [release-assets/v0.1.13/release-notes.md](release-assets/v0.1.13/release-notes.md)
+- [release-assets/v0.1.14/release-notes.md](release-assets/v0.1.14/release-notes.md)

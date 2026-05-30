@@ -2,8 +2,17 @@ const state = {
   status: null,
   settings: null,
   storageInfoByTarget: {},
+  currentStorageEntriesByTarget: { flash: [], sd: [] },
   currentStoragePathByTarget: { flash: "/", sd: "/" },
   activeStorageTarget: "flash",
+  storageSelectionMode: false,
+  storageSelectedPathsByTarget: { flash: [], sd: [] },
+  storagePreviewItem: null,
+  storagePreviewAudio: null,
+  storagePreviewObjectUrl: "",
+  storagePreviewArtworkUrl: "",
+  storagePreviewRequestId: 0,
+  storageClickTimer: null,
   recentPlayback: loadRecentPlayback(),
   radioCountries: [],
   radioStations: [],
@@ -41,6 +50,7 @@ const state = {
 const SETTINGS_AUTOSAVE_DELAY_MS = 900;
 const ACTIVE_TAB_STORAGE_KEY = "notifierActiveTab";
 const RADIO_SELECTION_STORAGE_KEY = "notifierRadioSelection";
+const STORAGE_AUDIO_EXTENSIONS = new Set(["mp3", "wav", "aac", "m4a", "ogg", "opus", "flac"]);
 const DEFAULT_RADIO_SELECTION = {
   country: "Azerbaijan",
   stationName: "AvtoFM",
@@ -51,46 +61,79 @@ const GPIO_BOARD_PRESENTATION = {
     rotation: "rotate(90deg)",
     rank: "Current board",
     recommendation: "Compact ESP32-S3 board. Good for speaker builds, but with tighter pin breakout than larger S3 boards.",
+    tone: "featured",
   },
   "esp32-s3-zero": {
     rotation: "rotate(90deg)",
     rank: "Compact S3 option",
     recommendation: "Very small ESP32-S3 board. Good when you need S3 features in a minimal footprint.",
+    tone: "good",
   },
   "esp32-s3-psram": {
-    rotation: "rotate(90deg)",
-    rank: "1. Best",
-    recommendation: "Best for I2S speaker + I2S mic. Extra PSRAM gives the most headroom for audio buffers and UI tasks.",
+    rotation: "none",
+    rank: "S3 PSRAM variant",
+    recommendation: "ESP32-S3-N16R8 layout with PSRAM and larger breakout coverage.",
+    tone: "good",
+  },
+  "esp32-spk-n16r8": {
+    rotation: "none",
+    rank: "Speaker board variant",
+    recommendation: "ESP32-S3 speaker/camera board with wide breakout access, onboard peripherals, and several already-committed pins.",
+    tone: "warn",
+  },
+  "esp32-s3-devkit-c1": {
+    rotation: "none",
+    rank: "S3 DevKit variant",
+    recommendation: "ESP32-S3 DevKit C-1 breakout with the N8R8-style pin arrangement.",
+    tone: "good",
+  },
+  "esp32-s3-cam-module": {
+    rotation: "none",
+    rank: "S3 camera module",
+    recommendation: "ESP32-S3-CAM module layout with the compact N16R8 module pin breakout.",
+    tone: "warn",
   },
   "esp32-wrover": {
-    rotation: "rotate(90deg)",
+    rotation: "none",
     rank: "2. Very good",
     recommendation: "Strong classic ESP32 choice with PSRAM. A solid fallback when S3 boards are not available.",
+    tone: "good",
   },
   "esp32-wroom": {
     rotation: "rotate(90deg)",
     rank: "3. Good",
     recommendation: "Good for speaker projects, but with less memory headroom than PSRAM-equipped boards.",
+    tone: "good",
   },
   "esp32-mini": {
-    rotation: "rotate(90deg)",
+    rotation: "none",
     rank: "4. Compact fallback",
     recommendation: "Compact board for lighter builds. Works, but GPIO and memory headroom are tighter.",
+    tone: "neutral",
+  },
+  "wemos-lolin32-mini": {
+    rotation: "rotate(90deg)",
+    rank: "ESP32 compact variant",
+    recommendation: "Wemos Lolin32 Mini layout with the board-specific narrow pinout and VP/VN analog inputs.",
+    tone: "neutral",
   },
   "esp32-s2-psram": {
-    rotation: "rotate(90deg)",
+    rotation: "none",
     rank: "5. Acceptable",
     recommendation: "Acceptable for simpler audio use, but it is not as strong as S3 or WROVER boards for this project.",
+    tone: "neutral",
   },
   "esp32-c6": {
-    rotation: "rotate(90deg)",
+    rotation: "none",
     rank: "6. Works",
     recommendation: "Works, but it is not audio-focused. Choose it only if you specifically need the C6 platform.",
+    tone: "neutral",
   },
   "esp32-c3": {
-    rotation: "rotate(90deg)",
+    rotation: "none",
     rank: "7. Basic only",
-    recommendation: "Basic option only. Lowest recommendation for this speaker-oriented use case.",
+    recommendation: "ESP32-C3 Super Mini layout. Usable for simple builds, but still the most limited option here for speaker-oriented use.",
+    tone: "basic",
   },
 };
 const GPIO_BOARD_ASSETS = {
@@ -104,7 +147,19 @@ const GPIO_BOARD_ASSETS = {
   },
   "esp32-s3-psram": {
     src: "/esp32-s3-psram-breadboard.svg",
-    alt: "ESP32-S3 with PSRAM board",
+    alt: "ESP32-S3-N16R8 board",
+  },
+  "esp32-spk-n16r8": {
+    src: "/esp32-spk-n16r8-breadboard.svg",
+    alt: "ESP32-SPK-N16R8 board",
+  },
+  "esp32-s3-devkit-c1": {
+    src: "/esp32-s3-devkit-c1-n8r8-v1-breadboard.svg",
+    alt: "ESP32-S3 DevKit C-1 board",
+  },
+  "esp32-s3-cam-module": {
+    src: "/esp32-s3-cam-module-breadboard.svg",
+    alt: "ESP32-S3-CAM module board",
   },
   "esp32-wrover": {
     src: "/esp32-wrover-breadboard.svg",
@@ -118,6 +173,10 @@ const GPIO_BOARD_ASSETS = {
     src: "/esp32-mini-breadboard.svg",
     alt: "ESP32 Mini board",
   },
+  "wemos-lolin32-mini": {
+    src: "/wemos-lolin32-mini-breadboard.svg",
+    alt: "Wemos Lolin32 Mini board",
+  },
   "esp32-s2-psram": {
     src: "/esp32-s2-mini-breadboard.svg",
     alt: "ESP32-S2 with PSRAM board",
@@ -128,7 +187,7 @@ const GPIO_BOARD_ASSETS = {
   },
   "esp32-c3": {
     src: "/esp32-c3-breadboard.svg",
-    alt: "ESP32-C3 board",
+    alt: "ESP32-C3 Super Mini board",
   },
 };
 const OLED_PREVIEW_SCROLL_INTERVAL_MS = 300;
@@ -154,44 +213,109 @@ const GPIO_BOARD_LAYOUTS = {
     left: [
       { pin: 43, label: "TX / GPIO43" },
       { pin: 44, label: "RX / GPIO44" },
-      ...[1, 2, 3, 4, 5, 6, 7, 8].map((pin) => ({ pin, label: `GPIO${pin}` })),
+      ...[1, 2, 3, 4, 5, 6, 7].map((pin) => ({ pin, label: `GPIO${pin}` })),
     ],
     right: [
-      { pin: 48, label: "GPIO48" },
-      ...[9, 10, 11, 12, 13].map((pin) => ({ pin, label: `GPIO${pin}` })),
-      { pin: null, label: "3V3" },
-      { pin: null, label: "GND" },
       { pin: null, label: "5V" },
+      { pin: null, label: "GND" },
+      { pin: null, label: "3V3" },
+      ...[13, 12, 11, 10, 9, 8].map((pin) => ({ pin, label: `GPIO${pin}` })),
     ],
   },
   "esp32-s3-zero": {
     left: [
+      { pin: null, label: "5V" },
       { pin: null, label: "GND" },
       { pin: null, label: "3V3" },
-      ...[1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13].map((pin) => ({ pin, label: `GPIO${pin}` })),
-      { pin: 44, label: "RX / GPIO44" },
+      ...[1, 2, 3, 4, 5, 6].map((pin) => ({ pin, label: `GPIO${pin}` })),
     ],
-    right: [8, 14, 15, 16].map((pin) => ({ pin, label: `GPIO${pin}` })).concat([
-      { pin: null, label: "5V" },
+    right: [
       { pin: 43, label: "TX / GPIO43" },
-    ]),
+      { pin: 44, label: "RX / GPIO44" },
+      ...[13, 12, 11, 10, 9, 8, 7, 16, 15, 14].map((pin) => ({ pin, label: `GPIO${pin}` })),
+    ],
   },
   "esp32-s3-psram": {
     left: [
-      { pin: null, label: "RST" },
-      { pin: 48, label: "GPIO48" },
-      ...[35, 36, 37, 38, 39, 41].map((pin) => ({ pin, label: `GPIO${pin}` })),
-      { pin: 43, label: "TX / GPIO43" },
-      ...[2, 1, 13, 14, 21, 47].map((pin) => ({ pin, label: `GPIO${pin}` })),
-    ],
-    right: [
       { pin: null, label: "GND" },
-      { pin: 44, label: "RX / GPIO44" },
-      ...[42, 40, 0, 45].map((pin) => ({ pin, label: `GPIO${pin}` })),
       { pin: null, label: "3V3" },
       { pin: null, label: "EN" },
       ...[4, 5, 6, 7, 15, 16, 17, 18, 8, 19, 20, 3, 46, 9, 10, 11, 12].map((pin) => ({ pin, label: `GPIO${pin}` })),
       { pin: null, label: "3V3" },
+    ],
+    right: [
+      { pin: null, label: "GND" },
+      { pin: 1, label: "GPIO1" },
+      { pin: 2, label: "GPIO2" },
+      { pin: 43, label: "TX0 / GPIO43" },
+      { pin: 44, label: "RX0 / GPIO44" },
+      ...[42, 41, 40, 38, 37, 36, 35, 0, 45, 48, 47, 21, 14, 13].map((pin) => ({ pin, label: `GPIO${pin}` })),
+      { pin: null, label: "5V IN" },
+    ],
+  },
+  "esp32-spk-n16r8": {
+    left: [
+      { pin: null, label: "5V" },
+      { pin: null, label: "GND" },
+      { pin: null, label: "3.3V" },
+      { pin: null, label: "GND" },
+      ...[20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6].map((pin) => ({ pin, label: `GPIO${pin}` })),
+    ],
+    right: [
+      { pin: null, label: "5V" },
+      { pin: null, label: "GND" },
+      { pin: null, label: "3.3V" },
+      { pin: null, label: "GND" },
+      { pin: null, label: "NC" },
+      { pin: null, label: "NC" },
+      { pin: 21, label: "GPIO21" },
+      { pin: 38, label: "GPIO38" },
+      { pin: 39, label: "GPIO39" },
+      { pin: 40, label: "GPIO40" },
+      { pin: 43, label: "GPIO43" },
+      { pin: 44, label: "GPIO44" },
+      { pin: 46, label: "GPIO46" },
+      { pin: 0, label: "GPIO0" },
+      { pin: 2, label: "GPIO2" },
+      { pin: null, label: "EN" },
+      { pin: 1, label: "GPIO1" },
+      { pin: 3, label: "GPIO3" },
+    ],
+  },
+  "esp32-s3-devkit-c1": {
+    left: [
+      { pin: null, label: "3V3" },
+      { pin: null, label: "3V3" },
+      { pin: null, label: "RST" },
+      ...[4, 5, 6, 7, 15, 16, 17, 18, 8, 3, 46, 9, 10, 11, 12, 13, 14].map((pin) => ({ pin, label: `GPIO${pin}` })),
+      { pin: null, label: "5V" },
+      { pin: null, label: "GND" },
+    ],
+    right: [
+      { pin: null, label: "GND" },
+      { pin: 43, label: "TX / GPIO43" },
+      { pin: 44, label: "RX / GPIO44" },
+      { pin: 1, label: "GPIO1" },
+      { pin: 2, label: "GPIO2" },
+      ...[42, 41, 40, 39, 38, 37, 36, 35, 0, 45, 48, 47, 21, 20, 19].map((pin) => ({ pin, label: `GPIO${pin}` })),
+      { pin: null, label: "GND" },
+      { pin: null, label: "GND" },
+    ],
+  },
+  "esp32-s3-cam-module": {
+    left: [
+      { pin: null, label: "3V3" },
+      { pin: null, label: "RST" },
+      ...[4, 5, 6, 7, 15, 16, 17, 18, 8, 3, 46, 9, 10, 11, 12, 13, 14].map((pin) => ({ pin, label: `GPIO${pin}` })),
+      { pin: null, label: "5V" },
+    ],
+    right: [
+      { pin: 43, label: "TX / GPIO43" },
+      { pin: 44, label: "RX / GPIO44" },
+      { pin: 1, label: "GPIO1" },
+      { pin: 2, label: "GPIO2" },
+      ...[42, 41, 40, 39, 38, 37, 36, 35, 0, 45, 48, 47, 21, 20, 19].map((pin) => ({ pin, label: `GPIO${pin}` })),
+      { pin: null, label: "GND" },
     ],
   },
   "esp32-wrover": {
@@ -217,59 +341,176 @@ const GPIO_BOARD_LAYOUTS = {
       { pin: 12, label: "D6 / GPIO12" },
       { pin: 13, label: "D7 / GPIO13" },
       { pin: 15, label: "D8 / GPIO15" },
+      { pin: null, label: "3V3" },
     ],
     right: [
-      { pin: null, label: "5V" },
-      { pin: null, label: "GND" },
-      { pin: 2, label: "D4 / GPIO2" },
-      { pin: 0, label: "D3 / GPIO0" },
-      { pin: 4, label: "D2 / GPIO4" },
-      { pin: 5, label: "D1 / GPIO5" },
-      { pin: 3, label: "RX / GPIO3" },
       { pin: 1, label: "TX / GPIO1" },
+      { pin: 3, label: "RX / GPIO3" },
+      { pin: 5, label: "D1 / GPIO5" },
+      { pin: 4, label: "D2 / GPIO4" },
+      { pin: 0, label: "D3 / GPIO0" },
+      { pin: 2, label: "D4 / GPIO2" },
+      { pin: null, label: "GND" },
+      { pin: null, label: "5V" },
+    ],
+  },
+  "wemos-lolin32-mini": {
+    left: [
+      { pin: 36, label: "VP / GPIO36" },
+      { pin: 39, label: "VN / GPIO39" },
+      { pin: null, label: "EN" },
+      ...[34, 35, 32, 33, 25, 26, 27, 14, 12].map((pin) => ({ pin, label: `GPIO${pin}` })),
+      { pin: null, label: "GND" },
+    ],
+    right: [
+      { pin: null, label: "3V3" },
+      ...[22, 19, 23, 18, 5, 7, 6, 4, 0, 2, 15, 13].map((pin) => ({ pin, label: `GPIO${pin}` })),
     ],
   },
   "esp32-s2-psram": {
     left: [
-      { pin: null, label: "RST" },
-      { pin: null, label: "A0" },
-      { pin: null, label: "D0" },
-      { pin: null, label: "D5" },
-      { pin: null, label: "D6" },
-      { pin: null, label: "D7" },
-      { pin: null, label: "D8" },
-      { pin: null, label: "3V3" },
+      { pin: 1, label: "GPIO1" },
+      { pin: null, label: "EN" },
+      { pin: 2, label: "GPIO2" },
+      { pin: 3, label: "GPIO3" },
+      { pin: 4, label: "GPIO4" },
+      { pin: 5, label: "GPIO5" },
+      { pin: 6, label: "GPIO6" },
+      { pin: 7, label: "GPIO7" },
+      { pin: 8, label: "GPIO8" },
+      { pin: 9, label: "GPIO9" },
+      { pin: 10, label: "GPIO10" },
+      { pin: 11, label: "GPIO11" },
+      { pin: 13, label: "GPIO13" },
+      { pin: 12, label: "GPIO12" },
+      { pin: 14, label: "GPIO14" },
+      { pin: null, label: "3.3V" },
     ],
     right: [
-      { pin: null, label: "5V" },
-      { pin: null, label: "G" },
-      { pin: null, label: "D4" },
-      { pin: null, label: "D3" },
-      { pin: null, label: "D2" },
-      { pin: null, label: "D1" },
-      { pin: null, label: "RX" },
-      { pin: null, label: "TX" },
+      { pin: 39, label: "GPIO39" },
+      { pin: 40, label: "GPIO40" },
+      { pin: 37, label: "GPIO37" },
+      { pin: 38, label: "GPIO38" },
+      { pin: 35, label: "GPIO35" },
+      { pin: 36, label: "GPIO36" },
+      { pin: 33, label: "GPIO33" },
+      { pin: 34, label: "GPIO34" },
+      { pin: 18, label: "GPIO18" },
+      { pin: 21, label: "GPIO21" },
+      { pin: 16, label: "GPIO16" },
+      { pin: 17, label: "GPIO17" },
+      { pin: null, label: "GND" },
+      { pin: null, label: "GND" },
+      { pin: null, label: "VBUS" },
+      { pin: 15, label: "GPIO15" },
     ],
   },
   "esp32-c6": {
     left: [
-      { pin: 17, label: "RX / GPIO17" },
       { pin: 16, label: "TX / GPIO16" },
-      ...[0, 1, 2, 3, 4, 5, 6].map((pin) => ({ pin, label: `GPIO${pin}` })),
+      { pin: 17, label: "RX / GPIO17" },
+      ...[0, 1, 2, 3, 4, 5, 6, 7].map((pin) => ({ pin, label: `GPIO${pin}` })),
     ],
     right: [
       { pin: null, label: "5V" },
       { pin: null, label: "GND" },
-      { pin: null, label: "3V3" },
-      ...[20, 19, 18, 15, 14, 9, 8, 13, 12, 22, 21].map((pin) => ({ pin, label: `GPIO${pin}` })),
+      { pin: null, label: "3.3V" },
+      ...[20, 19, 18, 15, 14, 9, 8].map((pin) => ({ pin, label: `GPIO${pin}` })),
     ],
   },
   "esp32-c3": {
-    left: [0, 1, 2, 3, 4, 5].map((pin) => ({
+    left: [21, 20, 10, 9, 8, 7, 6, 5].map((pin) => ({
       pin,
-      label: pin === 1 ? "TX / GPIO1" : (pin === 3 ? "RX / GPIO3" : `GPIO${pin}`),
+      label: `GPIO${pin}`,
     })),
-    right: [6, 7, 8, 9, 10, 20, 21].map((pin) => ({ pin, label: `GPIO${pin}` })),
+    right: [
+      { pin: 0, label: "GPIO0" },
+      { pin: 1, label: "GPIO1" },
+      { pin: 2, label: "GPIO2" },
+      { pin: 3, label: "GPIO3" },
+      { pin: 4, label: "GPIO4" },
+      { pin: null, label: "3.3V" },
+      { pin: null, label: "GND" },
+      { pin: null, label: "5V" },
+    ],
+  },
+};
+const GPIO_BOARD_EXTRA_LAYOUTS = {
+  "esp32-s3-super-mini": {
+    left: [48, 47, 46, 45, 42, 41, 40, 39].map((pin) => ({ pin, label: `GPIO${pin}` })),
+    right: [34, 33, 21, 18, 17, 16, 15, 14].map((pin) => ({ pin, label: `GPIO${pin}` })),
+  },
+  "esp32-s3-zero": {
+    left: [39, 40, 41, 42, 43, 44, 45, 46, 47, 48].map((pin) => ({ pin, label: `GPIO${pin}` })),
+    right: [38, 37, 36, 35, 34, 33, 18, 17].map((pin) => ({ pin, label: `GPIO${pin}` })),
+  },
+  "esp32-c6": {
+    left: [15, 8, 23].map((pin) => ({ pin, label: `GPIO${pin}` })),
+    right: [12, 13, 21, 22].map((pin) => ({ pin, label: `GPIO${pin}` })),
+  },
+};
+const GPIO_BOARD_RESERVED_PINS = {
+  "esp32-c6": {
+    8: { label: "WS2812", warning: "Reserved onboard LED pin: GPIO8 drives the built-in WS2812 RGB LED (DIN).", kind: "onboard" },
+    9: { label: "BOOT", warning: "Reserved strap pin: GPIO9 is tied to the BOOT function on this ESP32-C6 board.", kind: "strap" },
+    15: { label: "LED", warning: "Board-tied LED pin: GPIO15 drives the onboard LED on this ESP32-C6 board.", kind: "onboard" },
+  },
+  "esp32-s2-psram": {
+    15: { label: "LED", warning: "Board-tied LED pin: GPIO15 drives the onboard LED on this ESP32-S2 PSRAM board.", kind: "onboard" },
+    34: { label: "SPI CS", warning: "Reserved SPI/PSRAM pin: GPIO34 is tied to the onboard CS signal on this board.", kind: "psram" },
+    35: { label: "SPI MOSI", warning: "Reserved SPI/PSRAM pin: GPIO35 is tied to the onboard MOSI signal on this board.", kind: "psram" },
+    36: { label: "SPI SCK", warning: "Reserved SPI/PSRAM pin: GPIO36 is tied to the onboard clock signal on this board.", kind: "psram" },
+    37: { label: "SPI MISO", warning: "Reserved SPI/PSRAM pin: GPIO37 is tied to the onboard MISO signal on this board.", kind: "psram" },
+    39: { label: "JTAG MTCK", warning: "Board-tied JTAG pin: GPIO39 is routed to MTCK on this ESP32-S2 board.", kind: "jtag" },
+    40: { label: "JTAG MTDO", warning: "Board-tied JTAG pin: GPIO40 is routed to MTDO on this ESP32-S2 board.", kind: "jtag" },
+  },
+  "esp32-s3-cam-module": {
+    0: { label: "BOOT", warning: "Reserved strap pin: GPIO0 is used for BOOT mode.", kind: "strap" },
+    2: { label: "LED ON", warning: "Board-tied LED pin: GPIO2 drives the onboard LED.", kind: "onboard" },
+    3: { label: "JTAG EN", warning: "Reserved strap pin: GPIO3 is used for JTAG enable/strap behavior on this module.", kind: "strap" },
+    4: { label: "CAM SIOD", warning: "Reserved camera pin: GPIO4 is used for camera SIOD.", kind: "camera" },
+    5: { label: "CAM SIOC", warning: "Reserved camera pin: GPIO5 is used for camera SIOC.", kind: "camera" },
+    6: { label: "CAM VSYNC", warning: "Reserved camera pin: GPIO6 is used for camera VSYNC.", kind: "camera" },
+    7: { label: "CAM HREF", warning: "Reserved camera pin: GPIO7 is used for camera HREF.", kind: "camera" },
+    8: { label: "CAM Y4", warning: "Reserved camera pin: GPIO8 is used for camera Y4.", kind: "camera" },
+    9: { label: "CAM Y3", warning: "Reserved camera pin: GPIO9 is used for camera Y3.", kind: "camera" },
+    10: { label: "CAM Y5", warning: "Reserved camera pin: GPIO10 is used for camera Y5.", kind: "camera" },
+    11: { label: "CAM Y2", warning: "Reserved camera pin: GPIO11 is used for camera Y2.", kind: "camera" },
+    12: { label: "CAM Y6", warning: "Reserved camera pin: GPIO12 is used for camera Y6.", kind: "camera" },
+    13: { label: "CAM PCLK", warning: "Reserved camera pin: GPIO13 is used for camera PCLK.", kind: "camera" },
+    15: { label: "CAM XCLK", warning: "Reserved camera pin: GPIO15 is used for camera XCLK.", kind: "camera" },
+    16: { label: "CAM Y9", warning: "Reserved camera pin: GPIO16 is used for camera Y9.", kind: "camera" },
+    17: { label: "CAM Y8", warning: "Reserved camera pin: GPIO17 is used for camera Y8.", kind: "camera" },
+    18: { label: "CAM Y7", warning: "Reserved camera pin: GPIO18 is used for camera Y7.", kind: "camera" },
+    19: { label: "USB D+", warning: "Board-tied USB pin: GPIO19 is used for USB D+ and auxiliary serial functions.", kind: "usb" },
+    20: { label: "USB D-", warning: "Board-tied USB pin: GPIO20 is used for USB D- and auxiliary serial functions.", kind: "usb" },
+    35: { label: "PSRAM", warning: "Reserved PSRAM pin: GPIO35 is used for onboard PSRAM.", kind: "psram" },
+    36: { label: "PSRAM", warning: "Reserved PSRAM pin: GPIO36 is used for onboard PSRAM.", kind: "psram" },
+    37: { label: "PSRAM", warning: "Reserved PSRAM pin: GPIO37 is used for onboard PSRAM.", kind: "psram" },
+    38: { label: "SD CMD", warning: "Reserved SD pin: GPIO38 is used for the built-in SD CMD line.", kind: "sd" },
+    39: { label: "SD CLK", warning: "Reserved SD pin: GPIO39 is used for the built-in SD clock line.", kind: "sd" },
+    40: { label: "SD DATA", warning: "Reserved SD pin: GPIO40 is used for built-in SD data.", kind: "sd" },
+    41: { label: "MTDI", warning: "Board-tied JTAG pin: GPIO41 is routed to MTDI.", kind: "jtag" },
+    42: { label: "MTMS", warning: "Board-tied JTAG pin: GPIO42 is routed to MTMS.", kind: "jtag" },
+    43: { label: "U0TXD / LED TX", warning: "Board-tied serial pin: GPIO43 is used for U0TXD and the onboard TX LED.", kind: "serial" },
+    44: { label: "U0RXD / LED RX", warning: "Board-tied serial pin: GPIO44 is used for U0RXD and the onboard RX LED.", kind: "serial" },
+    45: { label: "VSPI", warning: "Reserved strap pin: GPIO45 is used for VSPI/boot strap behavior.", kind: "strap" },
+    46: { label: "LOG", warning: "Reserved strap pin: GPIO46 is used for LOG/strap behavior.", kind: "strap" },
+    48: { label: "WS2812", warning: "Reserved onboard LED pin: GPIO48 drives the built-in WS2812 status LED.", kind: "onboard" },
+  },
+  "esp32-spk-n16r8": {
+    0: { label: "BOOT", warning: "Reserved strap pin: GPIO0 is tied to BOOT mode behavior on this speaker board.", kind: "strap" },
+    1: { label: "U0TXD", warning: "Board-tied serial pin: GPIO1 is routed to the primary UART on this board.", kind: "serial" },
+    2: { label: "STRAP", warning: "Reserved strap pin: GPIO2 participates in boot strapping on this speaker board.", kind: "strap" },
+    3: { label: "U0RXD", warning: "Board-tied serial pin: GPIO3 is routed to the primary UART on this board.", kind: "serial" },
+    19: { label: "USB D+", warning: "Board-tied USB pin: GPIO19 is used for USB D+ on this ESP32-SPK-N16R8 board.", kind: "usb" },
+    20: { label: "USB D-", warning: "Board-tied USB pin: GPIO20 is used for USB D- on this ESP32-SPK-N16R8 board.", kind: "usb" },
+    38: { label: "CAM/SD", warning: "Reserved board pin: GPIO38 is committed to onboard camera or storage routing on this board.", kind: "camera" },
+    39: { label: "CAM/SD", warning: "Reserved board pin: GPIO39 is committed to onboard camera or storage routing on this board.", kind: "camera" },
+    40: { label: "CAM/SD", warning: "Reserved board pin: GPIO40 is committed to onboard camera or storage routing on this board.", kind: "camera" },
+    43: { label: "U0TXD / LED TX", warning: "Board-tied serial pin: GPIO43 is routed to U0TXD and board serial activity.", kind: "serial" },
+    44: { label: "U0RXD / LED RX", warning: "Board-tied serial pin: GPIO44 is routed to U0RXD and board serial activity.", kind: "serial" },
+    46: { label: "LOG", warning: "Reserved strap pin: GPIO46 is tied to strap/log behavior on this board.", kind: "strap" },
   },
 };
 const GPIO_ROLE_OPTIONS = [
@@ -293,6 +534,7 @@ const GPIO_ROLE_OPTIONS = [
   "Builtin RGB",
   "Buzzer Reserved",
 ];
+const WS_STATUS_LED_BOARD_PROFILES = new Set(["esp32-s3-super-mini", "esp32-s3-zero"]);
 
 const elements = {
   deviceTitle: document.getElementById("deviceTitle"),
@@ -351,6 +593,12 @@ const elements = {
   deviceSdCard: document.getElementById("deviceSdCard"),
   gpioLeftPins: document.getElementById("gpioLeftPins"),
   gpioRightPins: document.getElementById("gpioRightPins"),
+  gpioExtraSection: document.getElementById("gpioExtraSection"),
+  gpioExtraToggle: document.getElementById("gpioExtraToggle"),
+  gpioExtraPanel: document.getElementById("gpioExtraPanel"),
+  gpioExtraLeftPins: document.getElementById("gpioExtraLeftPins"),
+  gpioExtraRightPins: document.getElementById("gpioExtraRightPins"),
+  gpioBoardAutodetect: document.getElementById("gpioBoardAutodetect"),
   settingsSource: document.getElementById("settingsSource"),
   playbackState: document.getElementById("playbackState"),
   currentTitle: document.getElementById("currentTitle"),
@@ -430,11 +678,25 @@ const elements = {
   storageUpButton: document.getElementById("storageUpButton"),
   storageBreadcrumbs: document.getElementById("storageBreadcrumbs"),
   storageNewFolderButton: document.getElementById("storageNewFolderButton"),
+  storageSelectModeButton: document.getElementById("storageSelectModeButton"),
+  storageSelectAllButton: document.getElementById("storageSelectAllButton"),
+  storageDeleteButton: document.getElementById("storageDeleteButton"),
   storageUploadButton: document.getElementById("storageUploadButton"),
   storageFileInput: document.getElementById("storageFileInput"),
   storageProgressFill: document.getElementById("storageProgressFill"),
   storageProgressLabel: document.getElementById("storageProgressLabel"),
   storageFileList: document.getElementById("storageFileList"),
+  storagePreviewModal: document.getElementById("storagePreviewModal"),
+  storagePreviewCloseButton: document.getElementById("storagePreviewCloseButton"),
+  storagePreviewTitle: document.getElementById("storagePreviewTitle"),
+  storagePreviewMeta: document.getElementById("storagePreviewMeta"),
+  storagePreviewAlbum: document.getElementById("storagePreviewAlbum"),
+  storagePreviewArtwork: document.getElementById("storagePreviewArtwork"),
+  storagePreviewArtworkFallback: document.getElementById("storagePreviewArtworkFallback"),
+  storagePreviewProgressFill: document.getElementById("storagePreviewProgressFill"),
+  storagePreviewProgressLabel: document.getElementById("storagePreviewProgressLabel"),
+  storagePreviewPlayButton: document.getElementById("storagePreviewPlayButton"),
+  storagePreviewStopButton: document.getElementById("storagePreviewStopButton"),
   sdEnabled: document.getElementById("sdEnabled"),
   sdCsPin: document.getElementById("sdCsPin"),
   sdSckPin: document.getElementById("sdSckPin"),
@@ -649,14 +911,34 @@ function availableStatusLedPins() {
   return Array.from({ length: maxPin + 1 }, (_, index) => index);
 }
 
+function activeGpioBoardProfile(status = state.status) {
+  const selectedBoard = String(elements.gpioBoardSelector?.value || "");
+  if (selectedBoard && GPIO_BOARD_LAYOUTS[selectedBoard]) {
+    return selectedBoard;
+  }
+  return detectGpioBoardProfile(status);
+}
+
+function statusLedRoleLabel(settings = state.settings, status = state.status) {
+  const statusLedPin = Number(elements.statusLedPin?.value || settings?.device?.statusLedPin || 0);
+  if (statusLedPin === 21) {
+    return "Builtin RGB";
+  }
+  const boardProfile = activeGpioBoardProfile(status);
+  if (statusLedPin === 10 && WS_STATUS_LED_BOARD_PROFILES.has(boardProfile)) {
+    return "WS Status LED";
+  }
+  return "Status LED";
+}
+
 function statusLedPinLabel(pin) {
   const chipFamily = String(state.status?.firmware?.chipFamily || "esp32s3").toLowerCase();
   if (chipFamily === "esp32s3") {
     if (pin === 21) {
       return "GPIO21 (built-in WS2812)";
     }
-    if (pin === 10) {
-      return "GPIO10 (external RGB default)";
+    if (pin === 10 && WS_STATUS_LED_BOARD_PROFILES.has(activeGpioBoardProfile())) {
+      return "GPIO10 (WS status LED default)";
     }
   }
   return `GPIO${pin}`;
@@ -1684,6 +1966,259 @@ function storageParentPath(path) {
   return parts.length ? `/${parts.join("/")}` : "/";
 }
 
+function storageFileExtension(path) {
+  const cleanPath = String(path || "");
+  const dotIndex = cleanPath.lastIndexOf(".");
+  return dotIndex >= 0 ? cleanPath.substring(dotIndex + 1).toLowerCase() : "";
+}
+
+function isAudioStoragePath(path) {
+  return STORAGE_AUDIO_EXTENSIONS.has(storageFileExtension(path));
+}
+
+function activeStorageEntries(target = state.activeStorageTarget) {
+  return Array.isArray(state.currentStorageEntriesByTarget[target]) ? state.currentStorageEntriesByTarget[target] : [];
+}
+
+function activeStorageSelection(target = state.activeStorageTarget) {
+  return Array.isArray(state.storageSelectedPathsByTarget[target]) ? state.storageSelectedPathsByTarget[target] : [];
+}
+
+function setStorageSelection(paths, target = state.activeStorageTarget) {
+  const uniquePaths = [...new Set((paths || []).filter(Boolean))];
+  state.storageSelectedPathsByTarget[target] = uniquePaths;
+}
+
+function clearStorageSelection(target = state.activeStorageTarget) {
+  setStorageSelection([], target);
+}
+
+function rerenderStorageManager(target = state.activeStorageTarget) {
+  renderStorageManager({
+    target,
+    storage: state.storageInfoByTarget[target] || {},
+    currentPath: state.currentStoragePathByTarget[target] || "/",
+    entries: activeStorageEntries(target),
+  });
+}
+
+function formatPlaybackClock(seconds) {
+  const totalSeconds = Math.max(0, Math.floor(Number(seconds) || 0));
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainder = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+
+function storageEntryIconSvg(entry) {
+  if (entry?.isDirectory) {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h6l2 2h10v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>';
+  }
+  if (isAudioStoragePath(entry?.path || "")) {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10"></path><path d="M12 14a3 3 0 1 1-2 2.83V8h8"></path></svg>';
+  }
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h6l5 5v13H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"></path><path d="M14 3v5h5"></path></svg>';
+}
+
+function storageBadgeLabel(entry) {
+  if (entry?.isDirectory) {
+    return "Folder";
+  }
+  return storageFileExtension(entry?.path || "")?.toUpperCase() || "FILE";
+}
+
+function storageItemSubtitle(entry) {
+  if (entry?.isDirectory) {
+    return `Folder • ${entry.path || ""}`;
+  }
+  return `${formatBytes(entry?.sizeBytes || 0)} • ${entry?.path || ""}`;
+}
+
+function updateStorageToolbar(storage = state.storageInfoByTarget[state.activeStorageTarget] || {}) {
+  const entries = activeStorageEntries();
+  const selectedPaths = activeStorageSelection();
+  const allVisibleSelected = entries.length > 0 && entries.every((entry) => selectedPaths.includes(entry.path));
+
+  if (elements.storageSelectModeButton) {
+    elements.storageSelectModeButton.classList.toggle("active", state.storageSelectionMode);
+    elements.storageSelectModeButton.querySelector("span").textContent = state.storageSelectionMode ? "Done" : "Select";
+  }
+  if (elements.storageSelectAllButton) {
+    elements.storageSelectAllButton.disabled = !storage.mounted || entries.length === 0;
+    elements.storageSelectAllButton.querySelector("span").textContent = allVisibleSelected ? "Clear" : "All";
+  }
+  if (elements.storageDeleteButton) {
+    elements.storageDeleteButton.disabled = selectedPaths.length === 0;
+    elements.storageDeleteButton.querySelector("span").textContent = selectedPaths.length > 1 ? `Delete (${selectedPaths.length})` : "Delete";
+  }
+  if (elements.storageUploadButton) {
+    elements.storageUploadButton.disabled = !storage.mounted || state.storageUploadInProgress;
+  }
+  if (elements.storageNewFolderButton) {
+    elements.storageNewFolderButton.disabled = !storage.mounted;
+  }
+}
+
+function releaseStoragePreviewUrls() {
+  if (state.storagePreviewObjectUrl) {
+    URL.revokeObjectURL(state.storagePreviewObjectUrl);
+    state.storagePreviewObjectUrl = "";
+  }
+  if (state.storagePreviewArtworkUrl) {
+    URL.revokeObjectURL(state.storagePreviewArtworkUrl);
+    state.storagePreviewArtworkUrl = "";
+  }
+}
+
+function ensureStoragePreviewAudio() {
+  if (state.storagePreviewAudio) {
+    return state.storagePreviewAudio;
+  }
+
+  const audio = new Audio();
+  audio.preload = "metadata";
+  const syncProgress = () => {
+    const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+    const currentTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    const percent = duration > 0 ? Math.max(0, Math.min(100, (currentTime / duration) * 100)) : 0;
+    if (elements.storagePreviewProgressFill) {
+      elements.storagePreviewProgressFill.style.width = `${percent}%`;
+    }
+    if (elements.storagePreviewProgressLabel) {
+      elements.storagePreviewProgressLabel.textContent = `${formatPlaybackClock(currentTime)} / ${formatPlaybackClock(duration)}`;
+    }
+  };
+
+  audio.addEventListener("loadedmetadata", syncProgress);
+  audio.addEventListener("timeupdate", syncProgress);
+  audio.addEventListener("ended", syncProgress);
+  audio.addEventListener("pause", syncProgress);
+  state.storagePreviewAudio = audio;
+  return audio;
+}
+
+function parseSynchsafeInt(bytes) {
+  return ((bytes[0] & 0x7f) << 21) | ((bytes[1] & 0x7f) << 14) | ((bytes[2] & 0x7f) << 7) | (bytes[3] & 0x7f);
+}
+
+function decodeId3Text(frameBytes) {
+  if (!frameBytes?.length) {
+    return "";
+  }
+
+  const encoding = frameBytes[0];
+  const body = frameBytes.slice(1);
+  if (!body.length) {
+    return "";
+  }
+
+  try {
+    if (encoding === 0) {
+      return new TextDecoder("latin1").decode(body).replace(/\u0000/g, " ").trim();
+    }
+    if (encoding === 1) {
+      if (body[0] === 0xfe && body[1] === 0xff) {
+        return new TextDecoder("utf-16be").decode(body.slice(2)).replace(/\u0000/g, " ").trim();
+      }
+      if (body[0] === 0xff && body[1] === 0xfe) {
+        return new TextDecoder("utf-16le").decode(body.slice(2)).replace(/\u0000/g, " ").trim();
+      }
+      return new TextDecoder("utf-16le").decode(body).replace(/\u0000/g, " ").trim();
+    }
+    if (encoding === 2) {
+      return new TextDecoder("utf-16be").decode(body).replace(/\u0000/g, " ").trim();
+    }
+    if (encoding === 3) {
+      return new TextDecoder("utf-8").decode(body).replace(/\u0000/g, " ").trim();
+    }
+  } catch {
+  }
+
+  return "";
+}
+
+function findId3Delimiter(bytes, start, encoding) {
+  if (encoding === 0 || encoding === 3) {
+    const end = bytes.indexOf(0, start);
+    return end >= 0 ? end : bytes.length;
+  }
+
+  for (let index = start; index + 1 < bytes.length; index += 1) {
+    if (bytes[index] === 0 && bytes[index + 1] === 0) {
+      return index;
+    }
+  }
+  return bytes.length;
+}
+
+function parseId3Metadata(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer);
+  if (bytes.length < 10 || String.fromCharCode(...bytes.slice(0, 3)) !== "ID3") {
+    return {};
+  }
+
+  const version = bytes[3];
+  const tagSize = parseSynchsafeInt(bytes.slice(6, 10));
+  const limit = Math.min(bytes.length, 10 + tagSize);
+  let cursor = 10;
+  const metadata = {};
+
+  while (cursor + 10 <= limit) {
+    const frameId = String.fromCharCode(...bytes.slice(cursor, cursor + 4));
+    if (!frameId.trim()) {
+      break;
+    }
+
+    const frameSizeBytes = bytes.slice(cursor + 4, cursor + 8);
+    const frameSize = version === 4
+      ? parseSynchsafeInt(frameSizeBytes)
+      : ((frameSizeBytes[0] << 24) | (frameSizeBytes[1] << 16) | (frameSizeBytes[2] << 8) | frameSizeBytes[3]);
+    if (!frameSize || cursor + 10 + frameSize > limit) {
+      break;
+    }
+
+    const frame = bytes.slice(cursor + 10, cursor + 10 + frameSize);
+    if (frameId === "TIT2") {
+      metadata.title = decodeId3Text(frame) || metadata.title;
+    } else if (frameId === "TPE1") {
+      metadata.artist = decodeId3Text(frame) || metadata.artist;
+    } else if (frameId === "TALB") {
+      metadata.album = decodeId3Text(frame) || metadata.album;
+    } else if (frameId === "APIC" && frame.length > 4) {
+      const encoding = frame[0];
+      const mimeEnd = frame.indexOf(0, 1);
+      if (mimeEnd > 1) {
+        const mimeType = new TextDecoder("latin1").decode(frame.slice(1, mimeEnd));
+        const descriptionEnd = findId3Delimiter(frame, mimeEnd + 2, encoding);
+        const imageStart = descriptionEnd + ((encoding === 0 || encoding === 3) ? 1 : 2);
+        if (imageStart < frame.length) {
+          metadata.artworkBytes = frame.slice(imageStart);
+          metadata.artworkType = mimeType || "image/jpeg";
+        }
+      }
+    }
+
+    cursor += 10 + frameSize;
+  }
+
+  return metadata;
+}
+
+function resetStoragePreviewUi() {
+  if (elements.storagePreviewArtwork) {
+    elements.storagePreviewArtwork.hidden = true;
+    elements.storagePreviewArtwork.removeAttribute("src");
+  }
+  if (elements.storagePreviewArtworkFallback) {
+    elements.storagePreviewArtworkFallback.hidden = false;
+  }
+  if (elements.storagePreviewProgressFill) {
+    elements.storagePreviewProgressFill.style.width = "0%";
+  }
+  if (elements.storagePreviewProgressLabel) {
+    elements.storagePreviewProgressLabel.textContent = "00:00 / 00:00";
+  }
+}
+
 function storageJoinPath(directoryPath, name) {
   const leaf = String(name || "").trim().replaceAll("\\", "/").replace(/^\/+/, "").replace(/\/+$/, "");
   if (!leaf) {
@@ -1713,6 +2248,229 @@ function renderStorageBreadcrumbs(currentPath) {
   elements.storageUpButton.disabled = normalized === "/";
 }
 
+function renderStorageRow(entry, selectionMode, selectedPaths) {
+  const path = String(entry?.path || "");
+  const isSelected = selectedPaths.includes(path);
+  const typeClass = entry?.isDirectory ? "folder" : "file";
+  return `
+    <div class="storage-file-row ${entry?.isDirectory ? "storage-folder-row" : ""} ${isSelected ? "selected" : ""}" data-storage-path="${escapeHtml(path)}" data-storage-kind="${entry?.isDirectory ? "folder" : "file"}" tabindex="0" aria-selected="${isSelected ? "true" : "false"}">
+      <label class="storage-entry-check" ${selectionMode ? "" : "hidden"}>
+        <input type="checkbox" data-storage-checkbox="${escapeHtml(path)}" ${isSelected ? "checked" : ""} aria-label="Select ${escapeHtml(entry?.name || path || "item")}">
+      </label>
+      <span class="storage-entry-icon ${typeClass}" aria-hidden="true">${storageEntryIconSvg(entry)}</span>
+      <div class="storage-file-meta">
+        <div class="storage-file-name">${escapeHtml(entry?.name || path || (entry?.isDirectory ? "Folder" : "File"))}</div>
+        <div class="storage-file-subtitle">${escapeHtml(storageItemSubtitle(entry))}</div>
+      </div>
+      <div class="storage-file-trailing">
+        <div class="storage-file-badge">${escapeHtml(storageBadgeLabel(entry))}</div>
+        <span class="storage-file-chevron" aria-hidden="true">&#8250;</span>
+      </div>
+    </div>
+  `;
+}
+
+function setStorageSelectionMode(enabled) {
+  state.storageSelectionMode = Boolean(enabled);
+  if (!state.storageSelectionMode && activeStorageSelection().length > 1) {
+    setStorageSelection(activeStorageSelection().slice(0, 1));
+  }
+  rerenderStorageManager();
+}
+
+function toggleStorageSelection(path, { additive = false } = {}) {
+  if (!path) {
+    return;
+  }
+
+  const current = activeStorageSelection();
+  if (!state.storageSelectionMode) {
+    setStorageSelection([path]);
+    rerenderStorageManager();
+    return;
+  }
+
+  if (!additive) {
+    setStorageSelection(current.includes(path) && current.length === 1 ? [] : [path]);
+  } else if (current.includes(path)) {
+    setStorageSelection(current.filter((item) => item !== path));
+  } else {
+    setStorageSelection([...current, path]);
+  }
+  rerenderStorageManager();
+}
+
+function selectAllStorageEntries() {
+  const entries = activeStorageEntries();
+  if (!entries.length) {
+    return;
+  }
+
+  const allPaths = entries.map((entry) => entry.path).filter(Boolean);
+  const selectedPaths = activeStorageSelection();
+  const allSelected = allPaths.every((path) => selectedPaths.includes(path));
+  setStorageSelection(allSelected ? [] : allPaths);
+  rerenderStorageManager();
+}
+
+async function deleteSelectedStorageItems() {
+  const selectedPaths = activeStorageSelection();
+  if (!selectedPaths.length) {
+    setStorageStatus("Select a file or folder first.", true);
+    return;
+  }
+
+  const prompt = selectedPaths.length === 1
+    ? `Delete ${selectedPaths[0]}?`
+    : `Delete ${selectedPaths.length} selected items?`;
+  if (!window.confirm(prompt)) {
+    return;
+  }
+
+  setStorageStatus(`Deleting ${selectedPaths.length === 1 ? selectedPaths[0] : `${selectedPaths.length} items`}...`);
+  for (const path of selectedPaths) {
+    await request(`/api/storage/delete?target=${encodeURIComponent(state.activeStorageTarget)}&dir=${encodeURIComponent(state.currentStoragePathByTarget[state.activeStorageTarget] || "/")}`, {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    });
+  }
+
+  clearStorageSelection();
+  if (state.storageSelectionMode) {
+    state.storageSelectionMode = false;
+  }
+  const payload = await refreshStorageManager(state.activeStorageTarget);
+  await loadStatus();
+  setStorageStatus(payload?.message || (selectedPaths.length === 1 ? `Deleted ${selectedPaths[0]}` : `Deleted ${selectedPaths.length} items`));
+  toast(selectedPaths.length === 1 ? `Deleted ${selectedPaths[0]}` : `Deleted ${selectedPaths.length} items`);
+}
+
+function closeStoragePreview() {
+  const audio = ensureStoragePreviewAudio();
+  audio.pause();
+  audio.currentTime = 0;
+  releaseStoragePreviewUrls();
+  state.storagePreviewItem = null;
+  resetStoragePreviewUi();
+  if (elements.storagePreviewMeta) {
+    elements.storagePreviewMeta.textContent = "Select a track to preview it.";
+  }
+  if (elements.storagePreviewAlbum) {
+    elements.storagePreviewAlbum.textContent = "Album art unavailable";
+  }
+  if (elements.storagePreviewModal?.open) {
+    elements.storagePreviewModal.close();
+  }
+}
+
+async function playStoragePreviewOnDevice() {
+  const entry = state.storagePreviewItem;
+  if (!entry) {
+    return;
+  }
+
+  const audio = ensureStoragePreviewAudio();
+  const payload = {
+    url: `${window.location.origin}${storageStreamUrl(entry.path, state.activeStorageTarget, false)}`,
+    label: normalizePlaybackTitle(entry.name || entry.path, entry.path),
+    type: "media",
+  };
+
+  await request("/api/play", { method: "POST", body: JSON.stringify(payload) });
+  state.recentPlayback.unshift(payload);
+  state.recentPlayback = state.recentPlayback.filter((item, index, array) => index === array.findIndex((candidate) => candidate.url === item.url && candidate.type === item.type));
+  saveRecentPlayback();
+  renderRecentPlayback();
+
+  if (state.storagePreviewObjectUrl) {
+    audio.src = state.storagePreviewObjectUrl;
+  }
+  try {
+    await audio.play();
+  } catch {
+  }
+
+  setMessage(`Playing ${payload.label}`);
+  setStorageStatus(`Playing ${payload.label}`);
+  await loadStatus();
+}
+
+async function stopStoragePreviewPlayback() {
+  const audio = ensureStoragePreviewAudio();
+  audio.pause();
+  audio.currentTime = 0;
+  await request("/api/stop", { method: "POST", body: JSON.stringify({}) });
+  await loadStatus();
+  setStorageStatus("Playback stopped");
+}
+
+async function openStoragePreview(entry) {
+  if (!entry || entry.isDirectory || !isAudioStoragePath(entry.path)) {
+    return;
+  }
+
+  state.storagePreviewRequestId += 1;
+  const requestId = state.storagePreviewRequestId;
+  state.storagePreviewItem = entry;
+  releaseStoragePreviewUrls();
+  resetStoragePreviewUi();
+
+  if (elements.storagePreviewTitle) {
+    elements.storagePreviewTitle.textContent = entry.name || "Track Preview";
+  }
+  if (elements.storagePreviewMeta) {
+    elements.storagePreviewMeta.textContent = `${formatBytes(entry.sizeBytes || 0)} • ${storageBadgeLabel(entry)} • ${entry.path}`;
+  }
+  if (elements.storagePreviewAlbum) {
+    elements.storagePreviewAlbum.textContent = "Reading metadata and album art...";
+  }
+  elements.storagePreviewModal?.showModal();
+
+  const response = await fetch(storageStreamUrl(entry.path, state.activeStorageTarget), { cache: "no-store" });
+  const blob = await response.blob();
+  if (requestId !== state.storagePreviewRequestId) {
+    return;
+  }
+
+  state.storagePreviewObjectUrl = URL.createObjectURL(blob);
+  const audio = ensureStoragePreviewAudio();
+  audio.pause();
+  audio.currentTime = 0;
+  audio.src = state.storagePreviewObjectUrl;
+  audio.load();
+
+  let albumSummary = `File: ${entry.name || entry.path}`;
+  if (blob.type.includes("mpeg") || storageFileExtension(entry.path) === "mp3") {
+    const metadata = parseId3Metadata(await blob.arrayBuffer());
+    const title = metadata.title || entry.name || entry.path;
+    const artist = metadata.artist || "Unknown artist";
+    const album = metadata.album || "Unknown album";
+    albumSummary = `${title}\n${artist}\n${album}`;
+
+    if (metadata.artworkBytes?.length) {
+      state.storagePreviewArtworkUrl = URL.createObjectURL(new Blob([metadata.artworkBytes], { type: metadata.artworkType || "image/jpeg" }));
+      if (elements.storagePreviewArtwork) {
+        elements.storagePreviewArtwork.src = state.storagePreviewArtworkUrl;
+        elements.storagePreviewArtwork.hidden = false;
+      }
+      if (elements.storagePreviewArtworkFallback) {
+        elements.storagePreviewArtworkFallback.hidden = true;
+      }
+    }
+
+    if (elements.storagePreviewTitle) {
+      elements.storagePreviewTitle.textContent = title;
+    }
+    if (elements.storagePreviewMeta) {
+      elements.storagePreviewMeta.textContent = `${artist} • ${album} • ${formatBytes(entry.sizeBytes || blob.size || 0)}`;
+    }
+  }
+
+  if (elements.storagePreviewAlbum) {
+    elements.storagePreviewAlbum.textContent = albumSummary;
+  }
+}
+
 function renderStorageManager(payload) {
   const target = resolveStorageTarget(String(payload?.target || state.activeStorageTarget || "flash"));
   const label = storageTargetLabel(target);
@@ -1721,6 +2479,7 @@ function renderStorageManager(payload) {
   const entries = Array.isArray(payload?.entries) ? payload.entries : (Array.isArray(payload?.files) ? payload.files : []);
   state.activeStorageTarget = target;
   state.storageInfoByTarget[target] = storage;
+  state.currentStorageEntriesByTarget[target] = entries;
   state.currentStoragePathByTarget[target] = currentPath;
 
   if (elements.storageTitle) {
@@ -1746,44 +2505,30 @@ function renderStorageManager(payload) {
   if (elements.storageUploadButton) {
     elements.storageUploadButton.disabled = !storage.mounted || state.storageUploadInProgress;
   }
+  updateStorageToolbar(storage);
   if (!elements.storageFileList) {
     return;
   }
 
   if (!storage.mounted) {
-    elements.storageFileList.innerHTML = `<div class="note">${label} is not mounted, so melody storage is unavailable.</div>`;
+    clearStorageSelection(target);
+    updateStorageToolbar(storage);
+    elements.storageFileList.innerHTML = `<div class="storage-empty-note">${label} is not mounted, so melody storage is unavailable.</div>`;
     return;
   }
 
   if (!entries.length) {
-    elements.storageFileList.innerHTML = `<div class="note">This folder is empty.</div>`;
+    clearStorageSelection(target);
+    updateStorageToolbar(storage);
+    elements.storageFileList.innerHTML = `<div class="storage-empty-note">This folder is empty.</div>`;
     return;
   }
 
-  elements.storageFileList.innerHTML = entries.map((file) => file.isDirectory ? `
-    <div class="storage-file-row storage-folder-row">
-      <div class="storage-file-meta">
-        <div class="storage-file-name">${escapeHtml(file.name || file.path || "Folder")}</div>
-        <div class="storage-file-subtitle">Folder • ${escapeHtml(file.path || "")}</div>
-      </div>
-      <div class="storage-file-actions">
-        <button type="button" data-storage-open="${escapeHtml(file.path || "")}">Open</button>
-        <button type="button" class="danger" data-storage-delete="${escapeHtml(file.path || "")}">Delete</button>
-      </div>
-    </div>
-  ` : `
-    <div class="storage-file-row">
-      <div class="storage-file-meta">
-        <div class="storage-file-name">${escapeHtml(file.name || file.path || "Unnamed file")}</div>
-        <div class="storage-file-subtitle">${formatBytes(file.sizeBytes || 0)} • ${escapeHtml(file.path || "")}</div>
-      </div>
-      <div class="storage-file-actions">
-        <a href="${storageStreamUrl(file.path, target, true)}">Download</a>
-        <button type="button" class="secondary" data-storage-copy="${escapeHtml(file.path || "")}">Copy URL</button>
-        <button type="button" class="danger" data-storage-delete="${escapeHtml(file.path || "")}">Delete</button>
-      </div>
-    </div>
-  `).join("");
+  const visiblePaths = entries.map((entry) => entry.path).filter(Boolean);
+  setStorageSelection(activeStorageSelection(target).filter((path) => visiblePaths.includes(path)), target);
+  const selectedPaths = activeStorageSelection(target);
+  elements.storageFileList.innerHTML = entries.map((entry) => renderStorageRow(entry, state.storageSelectionMode, selectedPaths)).join("");
+  updateStorageToolbar(storage);
 }
 
 async function refreshStorageManager(target = state.activeStorageTarget, directoryPath = state.currentStoragePathByTarget[target] || "/") {
@@ -1805,24 +2550,6 @@ async function openStorageManager(target = "flash", directoryPath = state.curren
   await refreshExternalStorageTab(directoryPath);
 }
 
-async function deleteStorageFile(path) {
-  if (!path) {
-    return;
-  }
-  if (!window.confirm(`Delete ${path}?`)) {
-    return;
-  }
-  setStorageStatus(`Deleting ${path}...`);
-  const result = await request(`/api/storage/delete?target=${encodeURIComponent(state.activeStorageTarget)}&dir=${encodeURIComponent(state.currentStoragePathByTarget[state.activeStorageTarget] || "/")}`, {
-    method: "POST",
-    body: JSON.stringify({ path }),
-  });
-  renderStorageManager(result);
-  await loadStatus();
-  setStorageStatus(result.message || `Deleted ${path}`);
-  toast(result.message || `Deleted ${path}`);
-}
-
 async function createStorageFolder() {
   const name = window.prompt("Folder name");
   if (!name) {
@@ -1838,6 +2565,7 @@ async function createStorageFolder() {
     method: "POST",
     body: JSON.stringify({ name: trimmedName }),
   });
+  clearStorageSelection();
   renderStorageManager(result);
   setStorageStatus(result.message || `Created ${trimmedName}`);
   toast(result.message || `Created ${trimmedName}`);
@@ -1917,6 +2645,7 @@ async function uploadStorageFile() {
     if (state.storageInfoByTarget[state.activeStorageTarget]) {
       elements.storageUploadButton.disabled = !state.storageInfoByTarget[state.activeStorageTarget].mounted;
     }
+    loadStatus().catch((error) => console.error(error));
   });
 }
 
@@ -2234,6 +2963,49 @@ function setCurrentFirmwareVersion(version) {
   }
 }
 
+function detectGpioBoardProfile(status = state.status) {
+  const explicitBoardProfile = String(status?.hardware?.boardProfile || "").trim();
+  if (explicitBoardProfile && GPIO_BOARD_LAYOUTS[explicitBoardProfile]) {
+    return explicitBoardProfile;
+  }
+  const firmwareChipFamily = String(status?.firmware?.chipFamily || "").toLowerCase();
+  const chipModel = String(status?.hardware?.chipModel || "").toLowerCase();
+  const psramAvailable = Boolean(status?.system?.psram?.available || status?.system?.psram?.mounted || false);
+  const chipToken = firmwareChipFamily || chipModel.replace(/[^a-z0-9]/g, "");
+
+  if (chipToken.includes("esp32c6") || chipToken === "c6") {
+    return "esp32-c6";
+  }
+  if (chipToken.includes("esp32c3") || chipToken === "c3") {
+    return "esp32-c3";
+  }
+  if (chipToken.includes("esp32s2") || chipToken === "s2") {
+    return "esp32-s2-psram";
+  }
+  if (chipToken.includes("esp32s3") || chipToken === "s3") {
+    return "esp32-s3-super-mini";
+  }
+  if (chipToken === "esp32" || chipModel.includes("esp32")) {
+    return psramAvailable ? "esp32-wrover" : "esp32-wroom";
+  }
+  return "esp32-s3-super-mini";
+}
+
+function updateGpioBoardSelectorMode(status = state.status) {
+  if (!elements.gpioBoardSelector) {
+    return;
+  }
+  const autodetectEnabled = Boolean(elements.gpioBoardAutodetect?.checked ?? true);
+  elements.gpioBoardSelector.disabled = autodetectEnabled;
+  if (!autodetectEnabled) {
+    return;
+  }
+  const detectedBoard = detectGpioBoardProfile(status);
+  if ([...elements.gpioBoardSelector.options].some((option) => option.value === detectedBoard)) {
+    elements.gpioBoardSelector.value = detectedBoard;
+  }
+}
+
 function updateGpioBoardImage() {
   if (!elements.gpioBoardSelector || !elements.gpioBoardImage) {
     return;
@@ -2245,6 +3017,7 @@ function updateGpioBoardImage() {
   elements.gpioBoardImage.alt = asset.alt;
   elements.gpioBoardImage.style.transform = presentation.rotation;
   if (elements.gpioBoardRecommendations) {
+    elements.gpioBoardRecommendations.className = `gpio-board-recommendations gpio-board-recommendations-${presentation.tone || "neutral"}`;
     elements.gpioBoardRecommendations.innerHTML = `
       <div><strong>${escapeHtml(presentation.rank)}</strong></div>
       <div>${escapeHtml(presentation.recommendation)}</div>
@@ -2297,7 +3070,7 @@ function gpioRoleMap(settings = state.settings, status = state.status) {
   if (Number(battery.chargingSensePin || 0) > 0) {
     addRole(battery.chargingSensePin, "Charge Sense");
   }
-  addRole(device.statusLedPin, device.statusLedPin === 21 ? "Builtin RGB" : "Status LED");
+  addRole(device.statusLedPin, statusLedRoleLabel(settings, status));
   addRole(5, "Button 1");
   addRole(chipFamily === "esp32" ? 18 : 6, "Button 2");
 
@@ -2327,23 +3100,186 @@ function gpioRoleMap(settings = state.settings, status = state.status) {
   return roleMap;
 }
 
-function gpioDropdownMarkup(item, roleMap) {
-  const numericPin = Number(item?.pin);
-  const hasNumericPin = Number.isFinite(numericPin) && numericPin >= 0;
-  const activeRoles = hasNumericPin ? (roleMap.get(numericPin) || []) : [];
-  const selectedLabel = hasNumericPin
-    ? (activeRoles.length ? activeRoles.join(" + ") : "Unused")
-    : "Board pad";
-  const options = [selectedLabel, ...GPIO_ROLE_OPTIONS.filter((label) => label !== selectedLabel)];
+function gpioRoleValue(path, fallback = undefined) {
+  const segments = String(path || "").split(".");
+  let current = state.settings || {};
+  for (const segment of segments) {
+    current = current?.[segment];
+  }
+  return current ?? fallback;
+}
+
+function gpioConfigRoleDefinitions(settings = state.settings) {
+  const displayType = String(settings?.oled?.displayType || elements.displayType?.value || "oled").toLowerCase();
+  const definitions = [
+    { key: "audio.wsPin", label: "I2S WS", element: elements.audioWsPin, isAssigned: (value) => Number.isFinite(value) },
+    { key: "audio.bclkPin", label: "I2S BCLK", element: elements.audioBclkPin, isAssigned: (value) => Number.isFinite(value) },
+    { key: "audio.doutPin", label: "I2S DIN", element: elements.audioDoutPin, isAssigned: (value) => Number.isFinite(value) },
+    { key: "battery.adcPin", label: "Battery ADC", element: elements.batteryAdcPin, isAssigned: (value) => Number.isFinite(value) },
+    { key: "device.statusLedPin", label: statusLedRoleLabel(settings), element: elements.statusLedPin, isAssigned: (value) => Number.isFinite(value) },
+    { key: "sd.csPin", label: "SD CS", element: elements.sdCsPin, isAssigned: (value) => Number.isFinite(value) },
+    { key: "sd.sckPin", label: "SD SCK", element: elements.sdSckPin, isAssigned: (value) => Number.isFinite(value) },
+    { key: "sd.mosiPin", label: "SD MOSI", element: elements.sdMosiPin, isAssigned: (value) => Number.isFinite(value) },
+    { key: "sd.misoPin", label: "SD MISO", element: elements.sdMisoPin, isAssigned: (value) => Number.isFinite(value) },
+  ];
+
+  if (displayType === "wape") {
+    definitions.push({
+      key: "oled.wapeTriggerPin",
+      label: "Wape Trigger",
+      element: elements.wapeTriggerPin,
+      isAssigned: (value) => Number.isFinite(value) && value > 0,
+    });
+  } else {
+    definitions.push(
+      { key: "oled.sdaPin", label: "OLED SDA", element: elements.oledSdaPin, isAssigned: (value) => Number.isFinite(value) && value >= 0 },
+      { key: "oled.sclPin", label: "OLED SCL", element: elements.oledSclPin, isAssigned: (value) => Number.isFinite(value) && value >= 0 },
+      { key: "oled.resetPin", label: "OLED RESET", element: elements.oledResetPin, isAssigned: (value) => Number.isFinite(value) && value >= 0 },
+    );
+  }
+
+  return definitions;
+}
+
+function currentPinForGpioRole(definition) {
+  const rawValue = definition.element?.value ?? gpioRoleValue(definition.key);
+  const numericValue = Number(rawValue);
+  return definition.isAssigned(numericValue) ? numericValue : null;
+}
+
+function gpioConfigRoleState(settings = state.settings) {
+  const definitions = gpioConfigRoleDefinitions(settings);
+  const byKey = new Map(definitions.map((definition) => [definition.key, definition]));
+  const pinToRole = new Map();
+  const roleToPin = new Map();
+
+  for (const definition of definitions) {
+    const pin = currentPinForGpioRole(definition);
+    roleToPin.set(definition.key, pin);
+    if (pin !== null && !pinToRole.has(pin)) {
+      pinToRole.set(pin, definition.key);
+    }
+  }
+
+  return { definitions, byKey, pinToRole, roleToPin };
+}
+
+function gpioConfigOptions(pin, currentRoleKey, roleState) {
+  return roleState.definitions.filter((definition) => {
+    const assignedPin = roleState.roleToPin.get(definition.key);
+    if (definition.key === currentRoleKey) {
+      return true;
+    }
+    if (currentRoleKey && assignedPin === null) {
+      return false;
+    }
+    return assignedPin !== pin;
+  });
+}
+
+function gpioReservedPinInfo(pin, boardProfile = activeGpioBoardProfile()) {
+  return GPIO_BOARD_RESERVED_PINS[boardProfile]?.[pin] || null;
+}
+
+function gpioReservedRowClass(reservedInfo) {
+  switch (reservedInfo?.kind) {
+    case "camera":
+      return "gpio-pin-row gpio-pin-row-reserved-camera";
+    case "strap":
+      return "gpio-pin-row gpio-pin-row-reserved-strap";
+    case "psram":
+      return "gpio-pin-row gpio-pin-row-reserved-psram";
+    case "sd":
+      return "gpio-pin-row gpio-pin-row-reserved-sd";
+    case "jtag":
+      return "gpio-pin-row gpio-pin-row-reserved-jtag";
+    case "usb":
+      return "gpio-pin-row gpio-pin-row-reserved-usb";
+    case "serial":
+      return "gpio-pin-row gpio-pin-row-reserved-serial";
+    case "onboard":
+      return "gpio-pin-row gpio-pin-row-reserved-onboard";
+    default:
+      return "gpio-pin-row gpio-pin-row-occupied";
+  }
+}
+
+function gpioDropdownMarkup(item, roleMap, roleState) {
+  const rawPin = item?.pin;
+  const hasNumericPin = typeof rawPin === "number" && Number.isFinite(rawPin) && rawPin >= 0;
+  const numericPin = hasNumericPin ? rawPin : NaN;
   const label = String(item?.label || (hasNumericPin ? `GPIO${numericPin}` : "Pin"));
+  if (!hasNumericPin) {
+    const normalizedLabel = label.trim().toUpperCase();
+    const rowClass = normalizedLabel === "5V" || normalizedLabel === "5V IN" || normalizedLabel === "VBUS"
+      ? "gpio-pin-row gpio-pin-row-5v"
+      : (normalizedLabel === "GND"
+        ? "gpio-pin-row gpio-pin-row-gnd"
+        : (normalizedLabel === "3V3" || normalizedLabel === "3.3V"
+          ? "gpio-pin-row gpio-pin-row-3v3"
+          : "gpio-pin-row"));
+    return `
+      <label class="${rowClass}">
+        <span class="gpio-pin-label">${escapeHtml(label)}</span>
+        <span class="gpio-pin-fixed" aria-label="${escapeHtml(label)} assignment">Fixed</span>
+      </label>
+    `;
+  }
+
+  const currentRoleKey = roleState.pinToRole.get(numericPin) || "";
+  const currentDefinition = currentRoleKey ? roleState.byKey.get(currentRoleKey) : null;
+  const activeRoles = roleMap.get(numericPin) || [];
+  const reservedInfo = gpioReservedPinInfo(numericPin);
+  const warningTitle = reservedInfo?.warning ? ` title="${escapeHtml(reservedInfo.warning)}"` : "";
+  if (reservedInfo) {
+    return `
+      <label class="${gpioReservedRowClass(reservedInfo)}"${warningTitle}>
+        <span class="gpio-pin-label">${escapeHtml(label)}</span>
+        <select disabled aria-label="${escapeHtml(label)} assignment"${warningTitle}>
+          <option selected>${escapeHtml(reservedInfo.label)}</option>
+        </select>
+      </label>
+    `;
+  }
+  const selectedLabel = currentDefinition?.label || (activeRoles.length ? activeRoles.join(" + ") : "Unused");
+  if (!currentDefinition && activeRoles.length) {
+    return `
+      <label class="gpio-pin-row">
+        <span class="gpio-pin-label">${escapeHtml(label)}</span>
+        <select disabled aria-label="${escapeHtml(label)} assignment">
+          <option selected>${escapeHtml(selectedLabel)}</option>
+        </select>
+      </label>
+    `;
+  }
+
+  const options = gpioConfigOptions(numericPin, currentRoleKey, roleState);
+  const rowClass = currentRoleKey || activeRoles.length ? "gpio-pin-row gpio-pin-row-occupied" : "gpio-pin-row gpio-pin-row-unused";
   return `
-    <label class="gpio-pin-row">
+    <label class="${rowClass}">
       <span class="gpio-pin-label">${escapeHtml(label)}</span>
-      <select disabled aria-label="${escapeHtml(label)} assignment">
-        ${options.map((label, index) => `<option${index === 0 ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}
+      <select data-gpio-role-select="true" data-pin="${numericPin}" aria-label="${escapeHtml(label)} assignment">
+        ${currentRoleKey ? "" : `<option value="" selected>${escapeHtml(selectedLabel)}</option>`}
+        ${options.map((definition) => `<option value="${escapeHtml(definition.key)}"${definition.key === currentRoleKey ? " selected" : ""}>${escapeHtml(definition.label)}</option>`).join("")}
       </select>
     </label>
   `;
+}
+
+function renderGpioPinColumn(columnElement, items, roleMap, roleState) {
+  if (!columnElement) {
+    return;
+  }
+  columnElement.innerHTML = (items || []).map((item) => gpioDropdownMarkup(item, roleMap, roleState)).join("");
+}
+
+function setGpioExtraExpanded(expanded) {
+  if (!elements.gpioExtraToggle || !elements.gpioExtraPanel) {
+    return;
+  }
+  elements.gpioExtraToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  elements.gpioExtraPanel.classList.toggle("gpio-extra-panel-expanded", expanded);
+  elements.gpioExtraPanel.setAttribute("aria-hidden", expanded ? "false" : "true");
 }
 
 function renderGpioOverview() {
@@ -2351,10 +3287,79 @@ function renderGpioOverview() {
     return;
   }
   const roleMap = gpioRoleMap(state.settings || {}, state.status || {});
+  const roleState = gpioConfigRoleState(state.settings || {});
   const selectedBoard = String(elements.gpioBoardSelector?.value || "esp32-s3-super-mini");
   const layout = GPIO_BOARD_LAYOUTS[selectedBoard] || GPIO_BOARD_LAYOUTS["esp32-s3-super-mini"];
-  elements.gpioLeftPins.innerHTML = layout.left.map((item) => gpioDropdownMarkup(item, roleMap)).join("");
-  elements.gpioRightPins.innerHTML = layout.right.map((item) => gpioDropdownMarkup(item, roleMap)).join("");
+  renderGpioPinColumn(elements.gpioLeftPins, layout.left, roleMap, roleState);
+  renderGpioPinColumn(elements.gpioRightPins, layout.right, roleMap, roleState);
+
+  const extraLayout = GPIO_BOARD_EXTRA_LAYOUTS[selectedBoard];
+  if (elements.gpioExtraSection) {
+    elements.gpioExtraSection.hidden = !extraLayout;
+  }
+  if (extraLayout) {
+    renderGpioPinColumn(elements.gpioExtraLeftPins, extraLayout.left, roleMap, roleState);
+    renderGpioPinColumn(elements.gpioExtraRightPins, extraLayout.right, roleMap, roleState);
+  } else {
+    renderGpioPinColumn(elements.gpioExtraLeftPins, [], roleMap, roleState);
+    renderGpioPinColumn(elements.gpioExtraRightPins, [], roleMap, roleState);
+    setGpioExtraExpanded(false);
+  }
+}
+
+function syncGpioMappingControls() {
+  populateAudioI2sPinOptions(state.settings);
+  populateBatteryAdcPinOptions(state.settings);
+  populateStatusLedPinOptions(state.settings);
+  populateSdPinOptions(state.settings);
+  populateOledPinOptions(state.settings);
+  populateWapeTriggerPinOptions(state.settings);
+  updateAudioI2sUi();
+  updateAudioUiState();
+  updateBatteryUi();
+  updateDisplayModeUi();
+  renderOledPreview();
+  renderDeviceResources(state.status || {});
+  renderGpioOverview();
+}
+
+function applyGpioRoleSelection(pin, selectedRoleKey) {
+  const numericPin = Number(pin);
+  if (!Number.isFinite(numericPin) || !selectedRoleKey) {
+    renderGpioOverview();
+    return;
+  }
+
+  const roleState = gpioConfigRoleState(state.settings || {});
+  const selectedDefinition = roleState.byKey.get(selectedRoleKey);
+  if (!selectedDefinition?.element) {
+    renderGpioOverview();
+    return;
+  }
+
+  const currentRoleKey = roleState.pinToRole.get(numericPin) || "";
+  if (currentRoleKey === selectedRoleKey) {
+    renderGpioOverview();
+    return;
+  }
+
+  const previousPinForSelectedRole = roleState.roleToPin.get(selectedRoleKey);
+  if (currentRoleKey && previousPinForSelectedRole === null) {
+    renderGpioOverview();
+    return;
+  }
+
+  selectedDefinition.element.value = String(numericPin);
+
+  if (currentRoleKey && previousPinForSelectedRole !== null && previousPinForSelectedRole !== numericPin) {
+    const displacedDefinition = roleState.byKey.get(currentRoleKey);
+    if (displacedDefinition?.element) {
+      displacedDefinition.element.value = String(previousPinForSelectedRole);
+    }
+  }
+
+  syncGpioMappingControls();
+  queueSettingsSave(150);
 }
 
 function renderHardwareSummary(status) {
@@ -3129,6 +4134,7 @@ function renderWifiHero(connected, ipAddress, rssi) {
 
 function renderStatus(status) {
   state.status = status;
+  updateGpioBoardSelectorMode(status);
   updateStorageAvailabilityUi(status);
   const device = status?.device || {};
   const network = status?.network || {};
@@ -3362,7 +4368,7 @@ function setupPasswordToggles() {
 }
 
 async function loadStatus() {
-  if (state.statusRequestInFlight) {
+  if (state.storageUploadInProgress || state.statusRequestInFlight) {
     return state.status;
   }
 
@@ -4005,6 +5011,18 @@ elements.storageUpButton?.addEventListener("click", () => {
     openStorageManager(state.activeStorageTarget, parentPath).catch(handleError);
   }
 });
+elements.storageSelectModeButton?.addEventListener("click", () => {
+  setStorageSelectionMode(!state.storageSelectionMode);
+});
+elements.storageSelectAllButton?.addEventListener("click", () => {
+  if (!state.storageSelectionMode) {
+    setStorageSelectionMode(true);
+  }
+  selectAllStorageEntries();
+});
+elements.storageDeleteButton?.addEventListener("click", () => {
+  deleteSelectedStorageItems().catch(handleError);
+});
 elements.storageNewFolderButton?.addEventListener("click", () => createStorageFolder().catch(handleError));
 elements.storageUploadButton?.addEventListener("click", () => {
   elements.storageFileInput.value = "";
@@ -4016,27 +5034,84 @@ elements.storageFileInput?.addEventListener("change", () => {
   }
 });
 elements.storageFileList?.addEventListener("click", (event) => {
-  const openButton = event.target.closest("[data-storage-open]");
-  if (openButton) {
-    openStorageManager(state.activeStorageTarget, openButton.dataset.storageOpen).catch(handleError);
+  const checkbox = event.target.closest("[data-storage-checkbox]");
+  if (checkbox) {
     return;
   }
-  const copyButton = event.target.closest("[data-storage-copy]");
-  if (copyButton) {
-    copyStorageUrl(copyButton.dataset.storageCopy).catch(handleError);
+
+  const row = event.target.closest(".storage-file-row");
+  if (!row) {
     return;
   }
-  const deleteButton = event.target.closest("[data-storage-delete]");
-  if (deleteButton) {
-    deleteStorageFile(deleteButton.dataset.storageDelete).catch(handleError);
+
+  const path = row.dataset.storagePath || "";
+  if (!path) {
+    return;
   }
+
+  if (state.storageClickTimer) {
+    window.clearTimeout(state.storageClickTimer);
+    state.storageClickTimer = null;
+  }
+
+  state.storageClickTimer = window.setTimeout(() => {
+    toggleStorageSelection(path, { additive: state.storageSelectionMode });
+    state.storageClickTimer = null;
+  }, state.storageSelectionMode ? 0 : 380);
+});
+elements.storageFileList?.addEventListener("change", (event) => {
+  const checkbox = event.target.closest("[data-storage-checkbox]");
+  if (!checkbox) {
+    return;
+  }
+  toggleStorageSelection(checkbox.dataset.storageCheckbox, { additive: true });
+});
+elements.storageFileList?.addEventListener("dblclick", (event) => {
+  const row = event.target.closest(".storage-file-row");
+  if (!row) {
+    return;
+  }
+
+  const path = row.dataset.storagePath || "";
+  const kind = row.dataset.storageKind || "file";
+  const entry = activeStorageEntries().find((candidate) => candidate.path === path);
+  if (!entry) {
+    return;
+  }
+
+  if (state.storageClickTimer) {
+    window.clearTimeout(state.storageClickTimer);
+    state.storageClickTimer = null;
+  }
+
+  if (kind === "folder") {
+    clearStorageSelection();
+    openStorageManager(state.activeStorageTarget, path).catch(handleError);
+    return;
+  }
+
+  openStoragePreview(entry).catch(handleError);
 });
 elements.storageBreadcrumbs?.addEventListener("click", (event) => {
   const crumbButton = event.target.closest("[data-storage-nav]");
   if (!crumbButton) {
     return;
   }
+  clearStorageSelection();
   openStorageManager(state.activeStorageTarget, crumbButton.dataset.storageNav).catch(handleError);
+});
+elements.storagePreviewPlayButton?.addEventListener("click", () => {
+  playStoragePreviewOnDevice().catch(handleError);
+});
+elements.storagePreviewStopButton?.addEventListener("click", () => {
+  stopStoragePreviewPlayback().catch(handleError);
+});
+elements.storagePreviewCloseButton?.addEventListener("click", () => {
+  closeStoragePreview();
+});
+elements.storagePreviewModal?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeStoragePreview();
 });
 
 elements.playForm.addEventListener("submit", (event) => handlePlaybackAction(event).catch(handleError));
@@ -4100,7 +5175,35 @@ elements.displayType?.addEventListener("change", () => {
   populateOledPinOptions();
   populateWapeTriggerPinOptions();
   renderOledPreview();
+  renderGpioOverview();
 });
+elements.gpioBoardAutodetect?.addEventListener("change", async () => {
+  if (elements.gpioBoardAutodetect?.checked) {
+    try {
+      const status = await loadStatus();
+      updateGpioBoardSelectorMode(status);
+    } catch (error) {
+      handleError(error);
+      return;
+    }
+  } else {
+    updateGpioBoardSelectorMode(state.status);
+  }
+  updateGpioBoardImage();
+});
+elements.gpioExtraToggle?.addEventListener("click", () => {
+  const expanded = elements.gpioExtraToggle?.getAttribute("aria-expanded") === "true";
+  setGpioExtraExpanded(!expanded);
+});
+for (const gpioColumn of [elements.gpioLeftPins, elements.gpioRightPins, elements.gpioExtraLeftPins, elements.gpioExtraRightPins]) {
+  gpioColumn?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement) || !target.matches("[data-gpio-role-select]")) {
+      return;
+    }
+    applyGpioRoleSelection(target.dataset.pin, target.value);
+  });
+}
 for (const field of [elements.oledSdaPin, elements.oledSclPin, elements.oledResetPin]) {
   field?.addEventListener("change", () => {
     state.settingsDirty = true;
@@ -4227,6 +5330,7 @@ renderRecentPlayback();
 updateWifiActionButton();
 populateButtonActionSelects();
 renderOledPreview();
+updateGpioBoardSelectorMode(state.status);
 updateGpioBoardImage();
 loadRadioCountries().catch(handleError);
 

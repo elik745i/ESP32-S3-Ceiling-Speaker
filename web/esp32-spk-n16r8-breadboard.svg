@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 500" role="img" aria-labelledby="title desc">
+  <title id="title">ESP32-SPK-N16R8</title>
+  <desc id="desc">Stylized ESP32 speaker and camera board illustration for the GPIO profile view.</desc>
+  <defs>
+    <linearGradient id="boardGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4b4b4b"/>
+      <stop offset="100%" stop-color="#3f3f3f"/>
+    </linearGradient>
+    <linearGradient id="darkBoardOverlay" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#111419" stop-opacity=".92"/>
+      <stop offset="100%" stop-color="#080a0d" stop-opacity=".96"/>
+    </linearGradient>
+    <linearGradient id="silver" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f2f2f2"/>
+      <stop offset="30%" stop-color="#c9c9c9"/>
+      <stop offset="70%" stop-color="#f6f6f6"/>
+      <stop offset="100%" stop-color="#9d9d9d"/>
+    </linearGradient>
+    <linearGradient id="connShell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f6f6f6"/>
+      <stop offset="50%" stop-color="#cecece"/>
+      <stop offset="100%" stop-color="#9a9a9a"/>
+    </linearGradient>
+    <linearGradient id="flexGold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#eec45d"/>
+      <stop offset="50%" stop-color="#cd8a22"/>
+      <stop offset="100%" stop-color="#e6b14f"/>
+    </linearGradient>
+    <radialGradient id="lensRim" cx="48%" cy="42%" r="58%">
+      <stop offset="0%" stop-color="#748eac"/>
+      <stop offset="20%" stop-color="#2a3c54"/>
+      <stop offset="55%" stop-color="#0a0e15"/>
+      <stop offset="100%" stop-color="#020304"/>
+    </radialGradient>
+    <radialGradient id="lensCore" cx="40%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#a4bfd6"/>
+      <stop offset="25%" stop-color="#4d6480"/>
+      <stop offset="55%" stop-color="#172433"/>
+      <stop offset="100%" stop-color="#040608"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#000" flood-opacity="0.26"/>
+    </filter>
+  </defs>
+
+  <rect x="0" y="0" width="300" height="500" rx="10" fill="url(#boardGrad)"/>
+  <rect x="0" y="0" width="300" height="500" rx="10" fill="url(#darkBoardOverlay)"/>
+
+  <g fill="#d7d9dc">
+    <circle cx="18" cy="22" r="8.4"/><circle cx="18" cy="48" r="8.4"/><circle cx="18" cy="74" r="8.4"/><circle cx="18" cy="100" r="8.4"/>
+    <circle cx="18" cy="126" r="8.4"/><circle cx="18" cy="152" r="8.4"/><circle cx="18" cy="178" r="8.4"/><circle cx="18" cy="204" r="8.4"/>
+    <circle cx="18" cy="230" r="8.4"/><circle cx="18" cy="256" r="8.4"/><circle cx="18" cy="282" r="8.4"/><circle cx="18" cy="308" r="8.4"/>
+    <circle cx="18" cy="334" r="8.4"/><circle cx="18" cy="360" r="8.4"/><circle cx="18" cy="386" r="8.4"/><circle cx="18" cy="412" r="8.4"/>
+    <circle cx="18" cy="438" r="8.4"/><circle cx="18" cy="464" r="8.4"/>
+    <circle cx="282" cy="22" r="8.4"/><circle cx="282" cy="48" r="8.4"/><circle cx="282" cy="74" r="8.4"/><circle cx="282" cy="100" r="8.4"/>
+    <circle cx="282" cy="126" r="8.4"/><circle cx="282" cy="152" r="8.4"/><circle cx="282" cy="178" r="8.4"/><circle cx="282" cy="204" r="8.4"/>
+    <circle cx="282" cy="230" r="8.4"/><circle cx="282" cy="256" r="8.4"/><circle cx="282" cy="282" r="8.4"/><circle cx="282" cy="308" r="8.4"/>
+    <circle cx="282" cy="334" r="8.4"/><circle cx="282" cy="360" r="8.4"/><circle cx="282" cy="386" r="8.4"/><circle cx="282" cy="412" r="8.4"/>
+    <circle cx="282" cy="438" r="8.4"/><circle cx="282" cy="464" r="8.4"/>
+  </g>
+  <g fill="#7d8187">
+    <circle cx="18" cy="22" r="4.9"/><circle cx="18" cy="48" r="4.9"/><circle cx="18" cy="74" r="4.9"/><circle cx="18" cy="100" r="4.9"/>
+    <circle cx="18" cy="126" r="4.9"/><circle cx="18" cy="152" r="4.9"/><circle cx="18" cy="178" r="4.9"/><circle cx="18" cy="204" r="4.9"/>
+    <circle cx="18" cy="230" r="4.9"/><circle cx="18" cy="256" r="4.9"/><circle cx="18" cy="282" r="4.9"/><circle cx="18" cy="308" r="4.9"/>
+    <circle cx="18" cy="334" r="4.9"/><circle cx="18" cy="360" r="4.9"/><circle cx="18" cy="386" r="4.9"/><circle cx="18" cy="412" r="4.9"/>
+    <circle cx="18" cy="438" r="4.9"/><circle cx="18" cy="464" r="4.9"/>
+    <circle cx="282" cy="22" r="4.9"/><circle cx="282" cy="48" r="4.9"/><circle cx="282" cy="74" r="4.9"/><circle cx="282" cy="100" r="4.9"/>
+    <circle cx="282" cy="126" r="4.9"/><circle cx="282" cy="152" r="4.9"/><circle cx="282" cy="178" r="4.9"/><circle cx="282" cy="204" r="4.9"/>
+    <circle cx="282" cy="230" r="4.9"/><circle cx="282" cy="256" r="4.9"/><circle cx="282" cy="282" r="4.9"/><circle cx="282" cy="308" r="4.9"/>
+    <circle cx="282" cy="334" r="4.9"/><circle cx="282" cy="360" r="4.9"/><circle cx="282" cy="386" r="4.9"/><circle cx="282" cy="412" r="4.9"/>
+    <circle cx="282" cy="438" r="4.9"/><circle cx="282" cy="464" r="4.9"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="70" y="18" width="160" height="98" rx="3" fill="url(#silver)" stroke="#8f908f" stroke-width="1.2"/>
+    <circle cx="150" cy="67" r="40" fill="#060708"/>
+    <circle cx="150" cy="67" r="34" fill="url(#lensRim)" stroke="#1f2430" stroke-width="2"/>
+    <circle cx="150" cy="67" r="21" fill="url(#lensCore)"/>
+    <circle cx="150" cy="67" r="6.4" fill="#0f1216" stroke="#91a8bd" stroke-width="1"/>
+    <circle cx="141" cy="58" r="4" fill="#ffffff" opacity="0.14"/>
+  </g>
+
+  <path d="M136 95 h28 c3.6 0 6 2.4 6 6 v44 h-40 v-44c0-3.6 2.4-6 6-6z" fill="url(#flexGold)"/>
+  <g filter="url(#shadow)">
+    <rect x="61" y="143" width="178" height="27" rx="2.5" fill="#dadfd9"/>
+    <rect x="66" y="148" width="168" height="16" rx="1.4" fill="#f7f7f5" stroke="#a6a8a5" stroke-width="1"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="39" y="194" width="26" height="19" rx="2" fill="url(#silver)"/>
+    <rect x="43" y="198" width="18" height="11" rx="1.4" fill="#c4c8cc"/>
+    <circle cx="47.5" cy="203.5" r="2.1" fill="#4b4f55"/>
+    <rect x="235" y="194" width="26" height="19" rx="2" fill="url(#silver)"/>
+    <rect x="239" y="198" width="18" height="11" rx="1.4" fill="#c4c8cc"/>
+    <circle cx="252.5" cy="203.5" r="2.1" fill="#4b4f55"/>
+  </g>
+
+  <rect x="96" y="278" width="20" height="12" rx="2" fill="#14181d"/>
+  <rect x="140" y="278" width="20" height="12" rx="2" fill="#14181d"/>
+  <rect x="184" y="278" width="20" height="12" rx="2" fill="#14181d"/>
+
+  <g filter="url(#shadow)">
+    <rect x="58" y="324" width="39" height="18" rx="2.5" fill="#dddddd"/>
+    <circle cx="77.5" cy="333" r="5.2" fill="#272c33"/>
+    <rect x="131" y="324" width="39" height="18" rx="2.5" fill="#dddddd"/>
+    <circle cx="150.5" cy="333" r="5.2" fill="#272c33"/>
+    <rect x="204" y="324" width="39" height="18" rx="2.5" fill="#dddddd"/>
+    <circle cx="223.5" cy="333" r="5.2" fill="#272c33"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="186" y="356" width="16" height="16" rx="2" fill="#dbddd9"/>
+    <circle cx="194" cy="364" r="5.5" fill="#cfd3d4"/>
+    <circle cx="194" cy="364" r="1.7" fill="#f3f3f3"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <g transform="translate(150,432)">
+      <path d="M-55 6 C-55 -1 -49 -7 -42 -7 H42 C49 -7 55 -1 55 6 V55 H-55 Z" fill="url(#connShell)" stroke="#8b8b8b" stroke-width="1.2"/>
+      <path d="M-43 7 C-43 1 -38 -4 -32 -4 H32 C38 -4 43 1 43 7 V40 H-43 Z" fill="#b7b7b7" opacity=".9"/>
+      <rect x="-28" y="15" width="56" height="18" rx="8" fill="#6c6c6c"/>
+      <rect x="-23" y="19" width="46" height="10" rx="5" fill="#15181d"/>
+      <rect x="-16" y="22" width="32" height="4" rx="2" fill="#2f343a"/>
+      <path d="M-55 40 H55 V55 H-55 Z" fill="#d0d0d0" opacity=".92"/>
+    </g>
+  </g>
+
+  <text x="150" y="392" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700" fill="#e5e7eb">ESP32-SPK</text>
+  <text x="150" y="414" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="16" fill="#cbd5e1">N16R8</text>
+</svg>

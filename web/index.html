@@ -166,7 +166,7 @@
               <div class="status-item"><span>I2S BCLK</span><strong id="audioBclkSummary">-</strong></div>
               <div class="status-item"><span>I2S DIN</span><strong id="audioDoutSummary">-</strong></div>
             </div>
-            <div class="row">
+            <div class="row gpio-remap-source">
               <label>I2S LRC / WS
                 <select id="audioWsPin" name="audio.wsPin" form="settingsForm"></select>
               </label>
@@ -177,7 +177,7 @@
                 <select id="audioDoutPin" name="audio.doutPin" form="settingsForm"></select>
               </label>
             </div>
-            <div class="inline-actions">
+            <div class="inline-actions gpio-remap-source">
               <button type="button" id="saveAudioButton">Save Audio Mapping</button>
               <span class="scan-status">Saving reapplies the MAX98357A DIN / WS / BCLK mapping.</span>
             </div>
@@ -295,7 +295,7 @@
           <h2>Battery</h2>
           <form>
             <div class="row">
-              <label>ADC GPIO
+              <label class="gpio-remap-source">ADC GPIO
                 <select id="batteryAdcPin" form="settingsForm" name="battery.adcPin"></select>
               </label>
               <label>Measured Battery Voltage
@@ -346,7 +346,7 @@
               <label>Saved Volume (%)
                 <input form="settingsForm" name="device.savedVolumePercent" type="number" min="0" max="100">
               </label>
-              <label>WS2812 GPIO
+              <label class="gpio-remap-source">WS2812 GPIO
                 <select id="statusLedPin" form="settingsForm" name="device.statusLedPin"></select>
               </label>
             </div>
@@ -488,7 +488,7 @@
                 <input form="settingsForm" name="oled.dimTimeoutSeconds" type="number" min="0" max="3600">
               </label>
             </div>
-            <div class="row">
+            <div class="row gpio-remap-source">
               <label>SDA Pin
                 <select id="oledSdaPin" form="settingsForm" name="oled.sdaPin"></select>
               </label>
@@ -496,7 +496,7 @@
                 <select id="oledSclPin" form="settingsForm" name="oled.sclPin"></select>
               </label>
             </div>
-            <div class="row">
+            <div class="row gpio-remap-source">
               <label>Reset Pin
                 <select id="oledResetPin" form="settingsForm" name="oled.resetPin"></select>
               </label>
@@ -506,7 +506,7 @@
             </div>
             <div id="wapeModeSection" hidden>
               <div class="row">
-                <label>Trigger GPIO
+                <label class="gpio-remap-source">Trigger GPIO
                   <select id="wapeTriggerPin" form="settingsForm" name="oled.wapeTriggerPin"></select>
                 </label>
                 <label>Trigger On
@@ -532,20 +532,25 @@
           <div class="gpio-layout-card">
             <div id="gpioLeftPins" class="gpio-pin-column"></div>
             <div class="gpio-board-stack">
-              <label class="gpio-board-selector">
+              <div class="gpio-board-selector">
+                <label class="check gpio-board-autodetect"><input id="gpioBoardAutodetect" type="checkbox" checked> Autodetect</label>
                 <span>Board Profile</span>
                 <select id="gpioBoardSelector" aria-label="ESP32 board profile">
-                  <option value="esp32-s3-super-mini" selected>ESP32-S3 Super Mini (this board)</option>
+                  <option value="esp32-s3-super-mini" selected>ESP32-S3 Super Mini</option>
                   <option value="esp32-s3-zero">ESP32-S3 Zero</option>
-                  <option value="esp32-s3-psram">ESP32-S3 with PSRAM</option>
+                  <option value="esp32-s3-psram">ESP32-S3-N16R8</option>
+                  <option value="esp32-spk-n16r8">ESP32-SPK-N16R8</option>
+                  <option value="esp32-s3-devkit-c1">ESP32-S3 DevKit C-1</option>
+                  <option value="esp32-s3-cam-module">ESP32-S3-CAM Module</option>
                   <option value="esp32-wrover">ESP32-WROVER</option>
                   <option value="esp32-wroom">Classic ESP32-WROOM</option>
                   <option value="esp32-mini">ESP32 Mini</option>
+                  <option value="wemos-lolin32-mini">Wemos Lolin32 Mini</option>
                   <option value="esp32-s2-psram">ESP32-S2 with PSRAM</option>
                   <option value="esp32-c6">ESP32-C6</option>
-                  <option value="esp32-c3">ESP32-C3</option>
+                  <option value="esp32-c3">ESP32-C3 Super Mini</option>
                 </select>
-              </label>
+              </div>
               <div class="gpio-board-wrap">
                 <img id="gpioBoardImage" class="gpio-board-svg gpio-board-svg-rotated" src="/esp32-s3-supermini-breadboard.svg" alt="ESP32-S3 Super Mini board" />
               </div>
@@ -553,7 +558,26 @@
             </div>
             <div id="gpioRightPins" class="gpio-pin-column"></div>
           </div>
-          <p class="note">This layout follows the common ESP32-S3 Super Mini header arrangement. Verify against your board silkscreen before wiring. The dropdowns currently show live detected assignments and reserved uses.</p>
+          <div id="gpioExtraSection" class="gpio-extra-shell" hidden>
+            <button id="gpioExtraToggle" class="gpio-extra-toggle" type="button" aria-expanded="false" aria-controls="gpioExtraPanel">
+              <span>Advanced GPIO config</span>
+              <span class="gpio-extra-toggle-icon" aria-hidden="true">+</span>
+            </button>
+            <div id="gpioExtraPanel" class="gpio-extra-panel" aria-hidden="true">
+              <div class="gpio-extra-layout">
+                <div>
+                  <div class="gpio-extra-side-label">Left side</div>
+                  <div id="gpioExtraLeftPins" class="gpio-pin-column"></div>
+                </div>
+                <div class="gpio-extra-center-note">Hidden pads and secondary breakouts for the Super Mini.</div>
+                <div>
+                  <div class="gpio-extra-side-label">Right side</div>
+                  <div id="gpioExtraRightPins" class="gpio-pin-column"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="note">This layout follows the selected board profile and common breakout arrangement for that variant. Verify against your board silkscreen before wiring. These dropdowns now own the live firmware remap settings, and configurable functions are guarded so the same GPIO cannot be assigned twice.</p>
         </div>
 
         <div id="tab-storage-internal" class="tab-panel" role="tabpanel">
@@ -573,7 +597,7 @@
             </div>
             <div id="storageSdConfig" class="storage-sd-config">
               <label class="check"><input id="sdEnabled" form="settingsForm" name="sd.enabled" type="checkbox"> Enable SD card storage</label>
-              <div class="row storage-sd-pin-grid">
+              <div class="row storage-sd-pin-grid gpio-remap-source">
                 <label>CS
                   <select id="sdCsPin" form="settingsForm" name="sd.csPin"></select>
                 </label>
@@ -581,7 +605,7 @@
                   <select id="sdSckPin" form="settingsForm" name="sd.sckPin"></select>
                 </label>
               </div>
-              <div class="row storage-sd-pin-grid">
+              <div class="row storage-sd-pin-grid gpio-remap-source">
                 <label>MOSI
                   <select id="sdMosiPin" form="settingsForm" name="sd.mosiPin"></select>
                 </label>
@@ -595,13 +619,33 @@
               <button id="storageUpButton" type="button" class="secondary">Up</button>
               <div id="storageBreadcrumbs" class="storage-breadcrumbs" aria-label="Current folder"></div>
             </div>
-            <div class="actions actions-inline-text storage-toolbar">
-              <span id="storageStatus" class="scan-status">Ready</span>
-              <span id="storageLimit" class="scan-status">-</span>
-            </div>
-            <div class="actions storage-toolbar">
-              <button id="storageNewFolderButton" type="button" class="secondary">New Folder</button>
-              <button id="storageUploadButton" type="button">Upload Melody</button>
+            <div class="storage-command-deck" aria-label="Storage instruments">
+              <div class="storage-command-meta">
+                <span id="storageStatus" class="scan-status">Ready</span>
+                <span id="storageLimit" class="scan-status">-</span>
+              </div>
+              <div class="storage-command-actions">
+                <button id="storageSelectModeButton" type="button" class="secondary storage-tool-button" title="Toggle multi-select mode" aria-label="Toggle multi-select mode">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+                  <span>Select</span>
+                </button>
+                <button id="storageSelectAllButton" type="button" class="secondary storage-tool-button" title="Select all visible items" aria-label="Select all visible items">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"></path><path d="M3 7h8"></path><path d="M3 12h5"></path><path d="M3 17h8"></path></svg>
+                  <span>All</span>
+                </button>
+                <button id="storageDeleteButton" type="button" class="secondary storage-tool-button storage-tool-danger" title="Delete selected items" aria-label="Delete selected items">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 14h10l1-14"></path><path d="M10 10v6"></path><path d="M14 10v6"></path></svg>
+                  <span>Delete</span>
+                </button>
+                <button id="storageUploadButton" type="button" class="storage-tool-button" title="Upload audio files" aria-label="Upload audio files">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4"></path><path d="m7 9 5-5 5 5"></path><path d="M5 20h14"></path></svg>
+                  <span>Upload</span>
+                </button>
+                <button id="storageNewFolderButton" type="button" class="secondary storage-tool-button" title="Create folder" aria-label="Create folder">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h6l2 2h10v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="M12 11v6"></path><path d="M9 14h6"></path></svg>
+                  <span>Folder</span>
+                </button>
+              </div>
             </div>
             <input id="storageFileInput" type="file" accept=".mp3,.wav,.aac,.m4a,.ogg,.opus,.flac,audio/*" hidden>
             <div class="progress-wrap storage-progress-wrap">
@@ -611,6 +655,38 @@
             <div id="storageFileList" class="storage-file-list"></div>
           </div>
         </div>
+
+        <dialog id="storagePreviewModal" class="storage-preview-modal">
+          <div class="storage-preview-shell">
+            <div class="storage-preview-head">
+              <div>
+                <h3 id="storagePreviewTitle">Track Preview</h3>
+                <div id="storagePreviewMeta" class="scan-status">Select a track to preview it.</div>
+              </div>
+              <button id="storagePreviewCloseButton" type="button" class="secondary storage-preview-close" aria-label="Close track preview" title="Close preview">Close</button>
+            </div>
+            <div class="storage-preview-body">
+              <div class="storage-preview-artwork-wrap">
+                <img id="storagePreviewArtwork" class="storage-preview-artwork" alt="Album artwork" hidden>
+                <div id="storagePreviewArtworkFallback" class="storage-preview-artwork-fallback" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M12 4v10"></path><path d="M12 14a3 3 0 1 1-2 2.83V8h8"></path></svg>
+                </div>
+              </div>
+              <div class="storage-preview-details">
+                <div id="storagePreviewAlbum" class="storage-preview-album">Album art unavailable</div>
+                <div class="progress-wrap storage-preview-progress-wrap">
+                  <div class="progress-bar"><div id="storagePreviewProgressFill" class="progress-fill"></div></div>
+                  <div id="storagePreviewProgressLabel" class="progress-label">00:00 / 00:00</div>
+                </div>
+                <div class="storage-preview-actions">
+                  <button id="storagePreviewPlayButton" type="button">Play</button>
+                  <button id="storagePreviewStopButton" type="button" class="secondary">Stop</button>
+                </div>
+                <p class="note">Double-click any music file to preview its metadata, listen in the browser for progress tracking, and start or stop that same file on the device.</p>
+              </div>
+            </div>
+          </div>
+        </dialog>
 
         <div id="tab-firmware" class="tab-panel" role="tabpanel">
           <h2>Firmware</h2>

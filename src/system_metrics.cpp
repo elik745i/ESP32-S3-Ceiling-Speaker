@@ -19,6 +19,10 @@ uint32_t lastIdleCounts[portNUM_PROCESSORS] = {0};
 uint32_t peakIdleDeltas[portNUM_PROCESSORS] = {1};
 volatile uint32_t idleCounts[portNUM_PROCESSORS] = {0};
 
+#ifndef APP_BOARD_PROFILE
+#define APP_BOARD_PROFILE ""
+#endif
+
 #if APP_HAS_FREERTOS_IDLE_HOOKS
 bool idleHookCpu0() {
     ++idleCounts[0];
@@ -64,6 +68,7 @@ uint8_t approximateCpuLoadPercent() {
 
 void populateStaticHardwareInfo(HardwareInfoSnapshot& hardware) {
     hardware.chipModel = ESP.getChipModel();
+    hardware.boardProfile = APP_BOARD_PROFILE;
     hardware.chipRevision = ESP.getChipRevision();
     hardware.cpuCores = ESP.getChipCores();
     hardware.cpuFreqMHz = ESP.getCpuFreqMHz();
@@ -145,6 +150,7 @@ void appendSystemMetricsJson(JsonObject root) {
 
     JsonObject hardware = root["hardware"].to<JsonObject>();
     hardware["chipModel"] = snapshot.hardware.chipModel;
+    hardware["boardProfile"] = snapshot.hardware.boardProfile;
     hardware["chipRevision"] = snapshot.hardware.chipRevision;
     hardware["cpuCores"] = snapshot.hardware.cpuCores;
     hardware["cpuFreqMHz"] = snapshot.hardware.cpuFreqMHz;

@@ -1,0 +1,248 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="30mm" height="50mm" viewBox="0 0 300 500">
+  <title>ESP32-S3 N16R8 camera board, 30x50 mm</title>
+  <desc>Unlabelled vector SVG of the ESP32-S3 N16R8 camera board, rebuilt using visual language from the attached SVG and adapted with camera and microphone components.</desc>
+  <defs>
+    <linearGradient id="boardGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4b4b4b"/>
+      <stop offset="100%" stop-color="#3f3f3f"/>
+    </linearGradient>
+    <linearGradient id="darkBoardOverlay" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#111419" stop-opacity=".92"/>
+      <stop offset="100%" stop-color="#080a0d" stop-opacity=".96"/>
+    </linearGradient>
+    <linearGradient id="silver" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f2f2f2"/>
+      <stop offset="30%" stop-color="#c9c9c9"/>
+      <stop offset="70%" stop-color="#f6f6f6"/>
+      <stop offset="100%" stop-color="#9d9d9d"/>
+    </linearGradient>
+    <linearGradient id="silver2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#dddddd"/>
+      <stop offset="100%" stop-color="#9f9f9f"/>
+    </linearGradient>
+    <linearGradient id="connShell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f6f6f6"/>
+      <stop offset="50%" stop-color="#cecece"/>
+      <stop offset="100%" stop-color="#9a9a9a"/>
+    </linearGradient>
+    <linearGradient id="innerShell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#a5a5a5"/>
+      <stop offset="100%" stop-color="#828282"/>
+    </linearGradient>
+    <linearGradient id="flexGold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#eec45d"/>
+      <stop offset="50%" stop-color="#cd8a22"/>
+      <stop offset="100%" stop-color="#e6b14f"/>
+    </linearGradient>
+    <radialGradient id="lensRim" cx="48%" cy="42%" r="58%">
+      <stop offset="0%" stop-color="#748eac"/>
+      <stop offset="20%" stop-color="#2a3c54"/>
+      <stop offset="55%" stop-color="#0a0e15"/>
+      <stop offset="100%" stop-color="#020304"/>
+    </radialGradient>
+    <radialGradient id="lensCore" cx="40%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#a4bfd6"/>
+      <stop offset="25%" stop-color="#4d6480"/>
+      <stop offset="55%" stop-color="#172433"/>
+      <stop offset="100%" stop-color="#040608"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#000" flood-opacity="0.26"/>
+    </filter>
+    <g id="pinHole">
+      <circle cx="0" cy="0" r="8.4" fill="#7d8187"/>
+      <circle cx="0" cy="0" r="4.9" fill="#d7d9dc"/>
+    </g>
+    <g id="buttonUnit" filter="url(#shadow)">
+      <rect x="0" y="0" width="39" height="18" rx="2.5" fill="#dddddd"/>
+      <rect x="2" y="1" width="35" height="16" rx="2" fill="#d1d1d1"/>
+      <circle cx="19.5" cy="9" r="6.4" fill="#c6c6c6"/>
+      <circle cx="19.5" cy="9" r="5.2" fill="#8e9398"/>
+      <circle cx="19.5" cy="9" r="4.4" fill="#272c33"/>
+    </g>
+    <style>
+      .trace{ fill:none; stroke:#2a2e35; stroke-width:1.4; opacity:.58; }
+      .chip{ fill:#14181d; stroke:#2c3138; stroke-width:1; }
+      .smd{ fill:#d8dbdf; }
+      .micHole{ fill:#4b4f55; }
+    </style>
+  </defs>
+
+  <!-- base board from attached svg style -->
+  <rect x="0" y="0" width="300" height="500" rx="10" ry="10" fill="url(#boardGrad)"/>
+  <rect x="0" y="0" width="300" height="500" rx="10" ry="10" fill="url(#darkBoardOverlay)"/>
+
+  <!-- side header holes -->
+  <g transform="translate(18,22)">
+    <use href="#pinHole"/>
+    <use href="#pinHole" y="26"/><use href="#pinHole" y="52"/><use href="#pinHole" y="78"/>
+    <use href="#pinHole" y="104"/><use href="#pinHole" y="130"/><use href="#pinHole" y="156"/>
+    <use href="#pinHole" y="182"/><use href="#pinHole" y="208"/><use href="#pinHole" y="234"/>
+    <use href="#pinHole" y="260"/><use href="#pinHole" y="286"/><use href="#pinHole" y="312"/>
+    <use href="#pinHole" y="338"/><use href="#pinHole" y="364"/><use href="#pinHole" y="390"/>
+    <use href="#pinHole" y="416"/><use href="#pinHole" y="442"/>
+  </g>
+  <g transform="translate(282,22)">
+    <use href="#pinHole"/>
+    <use href="#pinHole" y="26"/><use href="#pinHole" y="52"/><use href="#pinHole" y="78"/>
+    <use href="#pinHole" y="104"/><use href="#pinHole" y="130"/><use href="#pinHole" y="156"/>
+    <use href="#pinHole" y="182"/><use href="#pinHole" y="208"/><use href="#pinHole" y="234"/>
+    <use href="#pinHole" y="260"/><use href="#pinHole" y="286"/><use href="#pinHole" y="312"/>
+    <use href="#pinHole" y="338"/><use href="#pinHole" y="364"/><use href="#pinHole" y="390"/>
+    <use href="#pinHole" y="416"/><use href="#pinHole" y="442"/>
+  </g>
+  <rect x="10" y="480" width="10" height="10" rx="1" fill="#d9dde1"/>
+  <rect x="280" y="480" width="10" height="10" rx="1" fill="#d9dde1"/>
+
+  <!-- camera module -->
+  <g filter="url(#shadow)">
+    <rect x="70" y="18" width="160" height="98" rx="3" fill="url(#silver)" stroke="#8f908f" stroke-width="1.2"/>
+    <path d="M82 26 h16 v24 l-15 14 h-1 z" fill="#333840"/>
+    <path d="M218 26 h-16 v24 l15 14 h1 z" fill="#333840"/>
+    <rect x="74" y="52" width="6" height="12" rx="1.2" fill="#f1f1ef"/>
+    <rect x="220" y="52" width="6" height="12" rx="1.2" fill="#f1f1ef"/>
+    <rect x="74" y="88" width="6" height="11" rx="1.2" fill="#f1f1ef"/>
+    <rect x="220" y="88" width="6" height="11" rx="1.2" fill="#f1f1ef"/>
+    <circle cx="150" cy="67" r="40" fill="#060708"/>
+    <circle cx="150" cy="67" r="34" fill="url(#lensRim)" stroke="#1f2430" stroke-width="2"/>
+    <circle cx="150" cy="67" r="21" fill="url(#lensCore)"/>
+    <circle cx="150" cy="67" r="6.4" fill="#0f1216" stroke="#91a8bd" stroke-width="1"/>
+    <circle cx="141" cy="58" r="4" fill="#ffffff" opacity="0.14"/>
+  </g>
+
+  <!-- flex ribbon and connector -->
+  <path d="M136 95 h28 c3.6 0 6 2.4 6 6 v44 h-40 v-44c0-3.6 2.4-6 6-6z" fill="url(#flexGold)"/>
+  <g stroke="#f2dc97" stroke-width="1" opacity=".45">
+    <path d="M132 102 168 138"/><path d="M132 112 168 148"/><path d="M132 122 168 158"/>
+    <path d="M132 132 168 168"/><path d="M168 102 132 138"/><path d="M168 112 132 148"/>
+    <path d="M168 122 132 158"/><path d="M168 132 132 168"/>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="61" y="143" width="178" height="27" rx="2.5" fill="#dadfd9"/>
+    <rect x="66" y="148" width="168" height="16" rx="1.4" fill="#f7f7f5" stroke="#a6a8a5" stroke-width="1"/>
+    <g fill="#a7abb0">
+      <rect x="73" y="165" width="2.8" height="10"/><rect x="82" y="165" width="2.8" height="10"/>
+      <rect x="91" y="165" width="2.8" height="10"/><rect x="100" y="165" width="2.8" height="10"/>
+      <rect x="109" y="165" width="2.8" height="10"/><rect x="118" y="165" width="2.8" height="10"/>
+      <rect x="127" y="165" width="2.8" height="10"/><rect x="136" y="165" width="2.8" height="10"/>
+      <rect x="145" y="165" width="2.8" height="10"/><rect x="154" y="165" width="2.8" height="10"/>
+      <rect x="163" y="165" width="2.8" height="10"/><rect x="172" y="165" width="2.8" height="10"/>
+      <rect x="181" y="165" width="2.8" height="10"/><rect x="190" y="165" width="2.8" height="10"/>
+      <rect x="199" y="165" width="2.8" height="10"/><rect x="208" y="165" width="2.8" height="10"/>
+      <rect x="217" y="165" width="2.8" height="10"/>
+    </g>
+  </g>
+
+  <!-- microphones -->
+  <g filter="url(#shadow)">
+    <g transform="translate(39,194)">
+      <rect x="0" y="0" width="26" height="19" rx="2" fill="url(#silver)"/>
+      <rect x="4" y="4" width="18" height="11" rx="1.4" fill="#c4c8cc"/>
+      <circle cx="8.5" cy="9.5" r="2.1" class="micHole"/>
+    </g>
+    <g transform="translate(235,194)">
+      <rect x="0" y="0" width="26" height="19" rx="2" fill="url(#silver)"/>
+      <rect x="4" y="4" width="18" height="11" rx="1.4" fill="#c4c8cc"/>
+      <circle cx="17.5" cy="9.5" r="2.1" class="micHole"/>
+    </g>
+  </g>
+
+  <!-- onboard LEDs: styled from attached svg but placed for this board -->
+  <g filter="url(#shadow)">
+    <!-- top-right status LED package -->
+    <g transform="translate(247,226)">
+      <rect x="0" y="0" width="20" height="22" rx="1.6" fill="#e8e9e7"/>
+      <rect x="4" y="3" width="12" height="16" rx="5.5" fill="#cfd0cd"/>
+      <circle cx="10" cy="11" r="5.1" fill="#8fd2b8"/>
+    </g>
+    <!-- tiny RGB/status LED package near lower center-right -->
+    <g transform="translate(186,356)">
+      <rect x="0" y="0" width="16" height="16" rx="2" fill="#dbddd9"/>
+      <circle cx="8" cy="8" r="5.5" fill="#cfd3d4"/>
+      <circle cx="8" cy="8" r="1.7" fill="#f3f3f3"/>
+    </g>
+  </g>
+
+  <!-- traces and small components -->
+  <path class="trace" d="M39 112 C63 120, 78 131, 95 149"/>
+  <path class="trace" d="M261 112 C237 120, 222 131, 205 149"/>
+  <path class="trace" d="M46 221 C81 228, 104 243, 121 266"/>
+  <path class="trace" d="M254 221 C219 228, 196 243, 179 266"/>
+  <path class="trace" d="M115 302 C128 311, 138 318, 147 324"/>
+  <path class="trace" d="M185 302 C172 311, 162 318, 153 324"/>
+
+  <g>
+    <rect class="smd" x="67" y="274" width="12" height="8" rx="1"/>
+    <rect class="chip" x="96" y="278" width="20" height="12" rx="2"/>
+    <rect class="chip" x="140" y="278" width="20" height="12" rx="2"/>
+    <rect class="chip" x="184" y="278" width="20" height="12" rx="2"/>
+    <rect class="smd" x="221" y="274" width="12" height="8" rx="1"/>
+    <rect class="smd" x="71" y="296" width="10" height="6" rx="1"/>
+    <rect class="smd" x="218" y="296" width="10" height="6" rx="1"/>
+  </g>
+
+  <!-- 3 buttons from reference style -->
+  <use href="#buttonUnit" x="58" y="324"/>
+  <use href="#buttonUnit" x="131" y="324"/>
+  <use href="#buttonUnit" x="204" y="324"/>
+
+  <!-- lower passive cluster -->
+  <g>
+    <rect class="smd" x="91" y="363" width="18" height="8" rx="1.4"/>
+    <rect class="smd" x="117" y="363" width="18" height="8" rx="1.4"/>
+    <rect class="smd" x="146" y="360" width="20" height="12" rx="1.6"/>
+    <rect class="smd" x="175" y="363" width="14" height="8" rx="1.4"/>
+    <rect class="smd" x="191" y="353" width="24" height="18" rx="1.8" fill="#d0d2ce"/>
+    <rect class="smd" x="90" y="384" width="24" height="12" rx="1.7"/>
+    <rect class="smd" x="120" y="384" width="24" height="12" rx="1.7"/>
+    <rect class="smd" x="153" y="384" width="28" height="12" rx="1.7"/>
+    <rect class="smd" x="188" y="384" width="28" height="12" rx="1.7"/>
+  </g>
+
+  <!-- USB-C connector: corrected top-view receptacle shape -->
+  <g filter="url(#shadow)" id="usb_c_receptacle">
+    <g transform="translate(150,432)">
+      <!-- solder/anchor tabs behind shell -->
+      <rect x="-54" y="24" width="13" height="14" fill="#8f8f8f" opacity=".9"/>
+      <rect x="41" y="24" width="13" height="14" fill="#8f8f8f" opacity=".9"/>
+      <rect x="-37" y="53" width="20" height="8" fill="#7f7f7f" opacity=".75"/>
+      <rect x="17" y="53" width="20" height="8" fill="#7f7f7f" opacity=".75"/>
+
+      <!-- outer metal shell, like a USB-C socket seen from above -->
+      <path d="M-55 6
+               C-55 -1 -49 -7 -42 -7
+               H42
+               C49 -7 55 -1 55 6
+               V55
+               H-55 Z"
+            fill="url(#connShell)" stroke="#8b8b8b" stroke-width="1.2"/>
+
+      <!-- recessed upper face -->
+      <path d="M-43 7
+               C-43 1 -38 -4 -32 -4
+               H32
+               C38 -4 43 1 43 7
+               V40
+               H-43 Z"
+            fill="#b7b7b7" opacity=".9"/>
+
+      <!-- actual USB-C mouth: rounded slot -->
+      <rect x="-28" y="15" width="56" height="18" rx="8" fill="#6c6c6c"/>
+      <rect x="-23" y="19" width="46" height="10" rx="5" fill="#15181d"/>
+
+      <!-- central plastic tongue inside the port -->
+      <rect x="-16" y="22" width="32" height="4" rx="2" fill="#2f343a"/>
+
+      <!-- folded front lip and bottom opening geometry -->
+      <path d="M-55 40 H55 V55 H-55 Z" fill="#d0d0d0" opacity=".92"/>
+      <path d="M-32 55 H-7 L-22 70 H-38 Z" fill="#9b9b9b"/>
+      <path d="M32 55 H7 L22 70 H38 Z" fill="#9b9b9b"/>
+      <path d="M-7 55 H7 L20 70 H-20 Z" fill="#cfcfcf"/>
+
+      <!-- small highlights / seams -->
+      <path d="M-48 4 H-40" stroke="#f4f4f4" stroke-width="2" opacity=".65"/>
+      <path d="M40 4 H48" stroke="#f4f4f4" stroke-width="2" opacity=".65"/>
+      <path d="M-52 52 H52" stroke="#8e8e8e" stroke-width="1"/>
+    </g>
+  </g>
+</svg>

@@ -4,6 +4,7 @@
 #include <SD.h>
 #include <SPI.h>
 #include <esp_partition.h>
+#include <freertos/FreeRTOS.h>
 
 namespace {
 constexpr uint32_t kSdFrequenciesHz[] = {1000000UL, 400000UL, 4000000UL, 10000000UL};
@@ -14,6 +15,9 @@ bool sdMounted = false;
 bool sdSpiStarted = false;
 unsigned long lastSdHotplugPollAt = 0;
 SdSettings activeSdSettings;
+StorageBackendSummary sdSummaryCache;
+portMUX_TYPE storageStateMux = portMUX_INITIALIZER_UNLOCKED;
+uint32_t sdWriteDepth = 0;
 
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
 SPIClass sdSpi(FSPI);
@@ -52,6 +56,64 @@ bool sdFilesystemHealthy() {
     return healthy;
 }
 
+void setSdWriteDepth(uint32_t depth) {
+    portENTER_CRITICAL(&storageStateMux);
+    sdWriteDepth = depth;
+    portEXIT_CRITICAL(&storageStateMux);
+}
+
+void incrementSdWriteDepth() {
+    portENTER_CRITICAL(&storageStateMux);
+    ++sdWriteDepth;
+    portEXIT_CRITICAL(&storageStateMux);
+}
+
+void decrementSdWriteDepth() {
+    portENTER_CRITICAL(&storageStateMux);
+    if (sdWriteDepth > 0) {
+        --sdWriteDepth;
+    }
+    portEXIT_CRITICAL(&storageStateMux);
+}
+
+bool sdWriteInProgress() {
+    portENTER_CRITICAL(&storageStateMux);
+    const bool busy = sdWriteDepth > 0;
+    portEXIT_CRITICAL(&storageStateMux);
+    return busy;
+}
+
+void cacheSdSummary(const StorageBackendSummary& summary) {
+    portENTER_CRITICAL(&storageStateMux);
+    sdSummaryCache = summary;
+    portEXIT_CRITICAL(&storageStateMux);
+}
+
+StorageBackendSummary cachedSdSummary() {
+    portENTER_CRITICAL(&storageStateMux);
+    const StorageBackendSummary summary = sdSummaryCache;
+    portEXIT_CRITICAL(&storageStateMux);
+    return summary;
+}
+
+StorageBackendSummary readLiveSdSummary() {
+    StorageBackendSummary summary;
+    summary.available = activeSdSettings.enabled;
+    summary.mounted = sdMounted;
+    if (!sdMounted) {
+        return summary;
+    }
+
+    summary.totalBytes = static_cast<uint32_t>(SD.totalBytes());
+    summary.usedBytes = static_cast<uint32_t>(SD.usedBytes());
+    summary.freeBytes = summary.totalBytes > summary.usedBytes ? summary.totalBytes - summary.usedBytes : 0;
+    return summary;
+}
+
+void refreshSdSummaryCache() {
+    cacheSdSummary(readLiveSdSummary());
+}
+
 const esp_partition_t* flashFilesystemPartition() {
     return esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, nullptr);
 }
@@ -87,14 +149,23 @@ void unmountSdStorage() {
         sdSpi.end();
         sdSpiStarted = false;
     }
+
+    StorageBackendSummary summary = cachedSdSummary();
+    summary.available = activeSdSettings.enabled;
+    summary.mounted = false;
+    summary.usedBytes = 0;
+    summary.freeBytes = summary.totalBytes;
+    cacheSdSummary(summary);
 }
 
 void mountSdStorage(const SdSettings& settings) {
     unmountSdStorage();
     activeSdSettings = settings;
     lastSdHotplugPollAt = millis();
+    setSdWriteDepth(0);
 
     if (!settings.enabled) {
+        cacheSdSummary(StorageBackendSummary{});
         return;
     }
 
@@ -138,6 +209,7 @@ void mountSdStorage(const SdSettings& settings) {
                       static_cast<unsigned long>(frequencyHz),
                       static_cast<unsigned>(totalBytes),
                       static_cast<unsigned>(SD.usedBytes()));
+        refreshSdSummaryCache();
         break;
     }
 
@@ -147,6 +219,9 @@ void mountSdStorage(const SdSettings& settings) {
                       static_cast<unsigned>(settings.sckPin),
                       static_cast<unsigned>(settings.mosiPin),
                       static_cast<unsigned>(settings.misoPin));
+        StorageBackendSummary summary;
+        summary.available = settings.enabled;
+        cacheSdSummary(summary);
     }
 }
 }  // namespace
@@ -169,6 +244,10 @@ void applyStorageSettings(const SettingsBundle& settings) {
 
 void pollStorageBackends() {
     if (!activeSdSettings.enabled) {
+        return;
+    }
+
+    if (sdWriteInProgress()) {
         return;
     }
 
@@ -225,14 +304,44 @@ StorageBackendSummary getStorageSummary(StorageTarget target) {
 
     summary.available = activeSdSettings.enabled;
     if (!sdMounted) {
+        const StorageBackendSummary cached = cachedSdSummary();
+        summary.totalBytes = cached.totalBytes;
+        summary.usedBytes = 0;
+        summary.freeBytes = cached.totalBytes;
         return summary;
     }
 
-    summary.mounted = true;
-    summary.totalBytes = static_cast<uint32_t>(SD.totalBytes());
-    summary.usedBytes = static_cast<uint32_t>(SD.usedBytes());
-    summary.freeBytes = summary.totalBytes > summary.usedBytes ? summary.totalBytes - summary.usedBytes : 0;
+    if (sdWriteInProgress()) {
+        summary = cachedSdSummary();
+        summary.available = activeSdSettings.enabled;
+        summary.mounted = sdMounted;
+        return summary;
+    }
+
+    summary = readLiveSdSummary();
+    cacheSdSummary(summary);
     return summary;
+}
+
+void beginStorageWrite(StorageTarget target) {
+    if (target == StorageTarget::Sd) {
+        incrementSdWriteDepth();
+    }
+}
+
+void endStorageWrite(StorageTarget target) {
+    if (target != StorageTarget::Sd) {
+        return;
+    }
+
+    decrementSdWriteDepth();
+    if (sdMounted && !sdWriteInProgress()) {
+        refreshSdSummaryCache();
+    }
+}
+
+bool storageBusy(StorageTarget target) {
+    return target == StorageTarget::Sd ? sdWriteInProgress() : false;
 }
 
 fs::FS* getStorageFs(StorageTarget target) {
