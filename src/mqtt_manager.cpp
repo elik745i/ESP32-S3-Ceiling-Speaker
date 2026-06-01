@@ -266,7 +266,9 @@ void MqttManager::handleConnected(bool sessionPresent) {
     client_.subscribe(HaBridge::commandTopic(settings_, "alarm").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "notify").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "web_ui").c_str(), 1);
+    client_.subscribe(HaBridge::commandTopic(settings_, "reboot").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "ota/check").c_str(), 1);
+    client_.subscribe(HaBridge::commandTopic(settings_, "ota/auto_update").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "ota/install").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "ota/select_version").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "ota/install_version").c_str(), 1);
@@ -407,8 +409,22 @@ void MqttManager::handleMessage(char* topic, char* payload, AsyncMqttClientMessa
         return;
     }
 
+    if (topicValue == HaBridge::commandTopic(settings_, "reboot")) {
+        command.action = "reboot";
+        command.payload = payloadValue;
+        commandHandler_(command);
+        return;
+    }
+
     if (topicValue == HaBridge::commandTopic(settings_, "ota/check")) {
         command.action = "ota_check";
+        commandHandler_(command);
+        return;
+    }
+
+    if (topicValue == HaBridge::commandTopic(settings_, "ota/auto_update")) {
+        command.action = "ota_auto_update";
+        command.payload = payloadValue;
         commandHandler_(command);
         return;
     }
@@ -702,6 +718,9 @@ void MqttManager::publishDiscovery() {
         HaBridge::discoveryTopic(settings_, "button", "notify").c_str(), 1, true,
         HaBridge::discoveryPayloadButton(settings_, "notify", "Play Notification Cue", HaBridge::commandTopic(settings_, "notify").c_str(), "notify", "mdi:message-badge", configurationUrl).c_str());
     client_.publish(
+        HaBridge::discoveryTopic(settings_, "button", "reboot").c_str(), 1, true,
+        HaBridge::discoveryPayloadButton(settings_, "reboot", "Reboot Device", HaBridge::commandTopic(settings_, "reboot").c_str(), "reboot", "mdi:restart", configurationUrl).c_str());
+    client_.publish(
         HaBridge::discoveryTopic(settings_, "button", "web_ui_lock").c_str(), 1, true,
         HaBridge::discoveryPayloadButton(settings_, "web_ui_lock", "Lock Web UI", HaBridge::commandTopic(settings_, "web_ui").c_str(), "lock", "mdi:web-off", configurationUrl).c_str());
     client_.publish(
@@ -716,6 +735,9 @@ void MqttManager::publishDiscovery() {
     client_.publish(
         HaBridge::discoveryTopic(settings_, "button", "firmware_check").c_str(), 1, true,
         HaBridge::discoveryPayloadButton(settings_, "firmware_check", "Check Firmware Releases", HaBridge::commandTopic(settings_, "ota/check").c_str(), "check", "mdi:update", configurationUrl).c_str());
+    client_.publish(
+        HaBridge::discoveryTopic(settings_, "switch", "firmware_auto_update").c_str(), 1, true,
+        HaBridge::discoveryPayloadSwitch(settings_, "firmware_auto_update", "Firmware Auto Update", HaBridge::otaStateTopic(settings_).c_str(), HaBridge::commandTopic(settings_, "ota/auto_update").c_str(), "{{ 'ON' if value_json.autoUpdate else 'OFF' }}", "mdi:auto-upload", configurationUrl).c_str());
     client_.publish(
         HaBridge::discoveryTopic(settings_, "button", "firmware_install").c_str(), 1, true,
         HaBridge::discoveryPayloadButton(settings_, "firmware_install", "Install Firmware", HaBridge::commandTopic(settings_, "ota/install").c_str(), "install", "mdi:package-up", configurationUrl).c_str());

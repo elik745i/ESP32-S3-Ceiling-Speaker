@@ -1372,6 +1372,28 @@ void startAlarmPlayback() {
 
 void executePlaybackCommand(const PlaybackCommand& command);
 
+bool payloadEnablesSwitch(const String& value, bool& enabled) {
+    if (value.isEmpty()) {
+        return false;
+    }
+
+    String normalized = value;
+    normalized.trim();
+    normalized.toLowerCase();
+
+    if (normalized == "on" || normalized == "true" || normalized == "1" || normalized == "enable" || normalized == "enabled") {
+        enabled = true;
+        return true;
+    }
+
+    if (normalized == "off" || normalized == "false" || normalized == "0" || normalized == "disable" || normalized == "disabled") {
+        enabled = false;
+        return true;
+    }
+
+    return false;
+}
+
 void handleMqttCommand(const PlaybackCommand& command) {
     if (!command.skipNotificationCue &&
         !settings->effects.notificationFile.isEmpty() &&
@@ -1412,6 +1434,22 @@ void executePlaybackCommand(const PlaybackCommand& command) {
             appState->setLastError(message);
         }
         mqttManager->publishState();
+    } else if (command.action == "ota_auto_update") {
+        bool enabled = false;
+        if (!payloadEnablesSwitch(command.payload, enabled)) {
+            const String message = "OTA auto-update MQTT payload must be ON or OFF.";
+            appState->setLastError(message);
+            mqttManager->publishState();
+            return;
+        }
+
+        deferredActions->pendingSettings = *settings;
+        deferredActions->pendingSettings.ota.autoUpdate = enabled;
+        if (enabled) {
+            deferredActions->pendingSettings.ota.autoCheck = true;
+        }
+        deferredActions->settingsApplyPending = true;
+        appState->setLastError("");
     } else if (command.action == "ota_install_latest") {
         if (otaManager != nullptr && otaManager->triggerCheck(true)) {
             appState->setLastError("");
@@ -1457,6 +1495,10 @@ void executePlaybackCommand(const PlaybackCommand& command) {
         if (!tryOverlayConfiguredEffect(settings->effects.notificationFile, 35, effectVolumeForSource("effect-notification"))) {
             playConfiguredEffectSource("effect-notification", command.payload.isEmpty() ? "MQTT Notification" : command.payload);
         }
+    } else if (command.action == "reboot") {
+        appState->setLastError("");
+        requestRestartSequence("mqtt", false);
+        mqttManager->publishState();
     } else if (command.action == "web_ui_lock") {
         if (webServer != nullptr) {
             webServer->setWebUiLocked(true);
