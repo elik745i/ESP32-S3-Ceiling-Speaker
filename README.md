@@ -321,6 +321,8 @@ Current ESP32-S3 default behavior:
 
 If the reported voltage is off, recalibrate it from the Battery tab using a multimeter measurement.
 
+Important: if the battery voltage is indicated incorrectly and low-battery sleep is enabled, the device can enter deep sleep and stop being reachable from the web interface. While the device is connected to USB, open the Device tab and disable deep sleep until the measured voltage is corrected to match the real level and stay above the configured deep-sleep threshold.
+
 ## OLED Support
 
 OLED support is handled by [src/display_manager.cpp](src/display_manager.cpp).
