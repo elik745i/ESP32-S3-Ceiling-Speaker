@@ -139,6 +139,12 @@ struct DeviceSettings {
     uint16_t lowBatteryWakeIntervalMinutes = 15;
 };
 
+struct UiSettings {
+    bool gpioBoardAutodetect = true;
+    String gpioBoardSelection;
+    String peripheralDiagramLayout = "{}";
+};
+
 struct SettingsBundle {
     WiFiSettings wifi;
     MqttSettings mqtt;
@@ -150,6 +156,7 @@ struct SettingsBundle {
     SdSettings sd;
     EffectSettings effects;
     DeviceSettings device;
+    UiSettings ui;
     bool usingSavedSettings = false;
 };
 

@@ -260,6 +260,15 @@ String defaultFriendlyName() {
     return defaultFriendlyBaseName() + " " + hardwareIdSuffix(true);
 }
 
+String defaultMqttBaseTopic() {
+    String topic = defaultDeviceBaseName();
+    topic.replace('-', '_');
+    topic += "_";
+    topic += hardwareIdSuffix(false);
+    topic.toLowerCase();
+    return topic;
+}
+
 bool matchesAnyNormalized(const String& value, std::initializer_list<const char*> patterns) {
     for (const char* pattern : patterns) {
         if (value == String(pattern)) {
@@ -283,6 +292,15 @@ bool isLegacyDefaultFriendlyName(const String& value) {
     return normalized == defaultFriendlyBaseName() ||
         matchesAnyNormalized(normalized, {"ESP32 Notifier", "ESP32-S3 Notifier", "Ceiling Speaker"}) ||
         isLegacyDefaultDeviceName(normalized);
+}
+
+bool isLegacyDefaultMqttBaseTopic(const String& value) {
+    String normalized = value;
+    normalized.trim();
+    normalized.toLowerCase();
+    normalized.replace('-', '_');
+    return normalized == DefaultConfig::MQTT_BASE_TOPIC ||
+        matchesAnyNormalized(normalized, {"esp32_notifier", "esp32s3_notifier", "ceiling_speaker"});
 }
 
 String normalizeButtonAction(String value, const char* fallback) {
@@ -337,6 +355,23 @@ String normalizeEffectFileRef(String value) {
 
     return target + ":" + path;
 }
+
+String normalizePeripheralDiagramLayout(String value) {
+    value.trim();
+    if (value.isEmpty()) {
+        return "{}";
+    }
+
+    JsonDocument document;
+    DeserializationError error = deserializeJson(document, value);
+    if (error || !document.is<JsonObject>()) {
+        return "{}";
+    }
+
+    String normalized;
+    serializeJson(document.as<JsonObjectConst>(), normalized);
+    return normalized;
+}
 }  // namespace
 
 bool SettingsManager::begin() {
@@ -358,7 +393,7 @@ SettingsBundle SettingsManager::defaults() const {
     settings.mqtt.port = DefaultConfig::MQTT_PORT;
     settings.mqtt.username = DefaultConfig::MQTT_USERNAME;
     settings.mqtt.password = DefaultConfig::MQTT_PASSWORD;
-    settings.mqtt.baseTopic = DefaultConfig::MQTT_BASE_TOPIC;
+    settings.mqtt.baseTopic = defaultMqttBaseTopic();
     settings.mqtt.discoveryEnabled = DefaultConfig::MQTT_DISCOVERY_ENABLED;
 
     settings.ota.owner = DefaultConfig::OTA_OWNER;
@@ -432,6 +467,9 @@ SettingsBundle SettingsManager::defaults() const {
     settings.device.lowBatterySleepEnabled = DefaultConfig::LOW_BATTERY_SLEEP_ENABLED;
     settings.device.lowBatterySleepThresholdPercent = DefaultConfig::LOW_BATTERY_SLEEP_THRESHOLD_PERCENT;
     settings.device.lowBatteryWakeIntervalMinutes = DefaultConfig::LOW_BATTERY_WAKE_INTERVAL_MINUTES;
+    settings.ui.gpioBoardAutodetect = true;
+    settings.ui.gpioBoardSelection = "";
+    settings.ui.peripheralDiagramLayout = "{}";
     settings.usingSavedSettings = false;
     return settings;
 }
@@ -452,6 +490,7 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     settings.ota.assetTemplate.trim();
     settings.ota.manifestUrl.trim();
     settings.webAuth.username.trim();
+    settings.ui.gpioBoardSelection.trim();
 
     if (settings.device.deviceName.isEmpty() || isLegacyDefaultDeviceName(settings.device.deviceName)) {
         settings.device.deviceName = defaultDeviceName();
@@ -459,8 +498,8 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     if (settings.device.friendlyName.isEmpty() || isLegacyDefaultFriendlyName(settings.device.friendlyName)) {
         settings.device.friendlyName = defaultFriendlyName();
     }
-    if (settings.mqtt.baseTopic.isEmpty()) {
-        settings.mqtt.baseTopic = DefaultConfig::MQTT_BASE_TOPIC;
+    if (settings.mqtt.baseTopic.isEmpty() || isLegacyDefaultMqttBaseTopic(settings.mqtt.baseTopic)) {
+        settings.mqtt.baseTopic = defaultMqttBaseTopic();
     }
     if (settings.ota.owner.isEmpty() || usesLegacyOtaRepository(settings.ota.owner, settings.ota.repository)) {
         settings.ota.owner = DefaultConfig::OTA_OWNER;
@@ -576,6 +615,7 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
         settings.oled.wapeTriggerPin = 0;
     }
     settings.oled.wapeTriggerEvent = normalizeWapeTriggerEvent(settings.oled.wapeTriggerEvent);
+    settings.ui.peripheralDiagramLayout = normalizePeripheralDiagramLayout(settings.ui.peripheralDiagramLayout);
     settings.usingSavedSettings = input.usingSavedSettings;
     return settings;
 }
@@ -679,6 +719,9 @@ SettingsBundle SettingsManager::load() {
     settings.device.lowBatterySleepEnabled = readBool("dev_lbs_en", settings.device.lowBatterySleepEnabled);
     settings.device.lowBatterySleepThresholdPercent = readUInt("dev_lbs_pct", settings.device.lowBatterySleepThresholdPercent);
     settings.device.lowBatteryWakeIntervalMinutes = readUInt("dev_lbs_wk", settings.device.lowBatteryWakeIntervalMinutes);
+    settings.ui.gpioBoardAutodetect = readBool("ui_gpio_auto", settings.ui.gpioBoardAutodetect);
+    settings.ui.gpioBoardSelection = readString("ui_gpio_sel", settings.ui.gpioBoardSelection);
+    settings.ui.peripheralDiagramLayout = readString("ui_diag", settings.ui.peripheralDiagramLayout);
 
     settings = sanitize(settings);
     settings.mqtt.clientId = fallbackIfEmpty(settings.mqtt.clientId, settings.device.deviceName);
@@ -780,6 +823,9 @@ bool SettingsManager::save(const SettingsBundle& settings) {
     changed |= writeBoolIfChanged("dev_lbs_en", sanitized.device.lowBatterySleepEnabled);
     changed |= writeUIntIfChanged("dev_lbs_pct", sanitized.device.lowBatterySleepThresholdPercent);
     changed |= writeUIntIfChanged("dev_lbs_wk", sanitized.device.lowBatteryWakeIntervalMinutes);
+    changed |= writeBoolIfChanged("ui_gpio_auto", sanitized.ui.gpioBoardAutodetect);
+    changed |= writeStringIfChanged("ui_gpio_sel", sanitized.ui.gpioBoardSelection);
+    changed |= writeStringIfChanged("ui_diag", sanitized.ui.peripheralDiagramLayout);
     changed |= writeBoolIfChanged(PREF_MARKER, true);
     return changed;
 }
@@ -890,6 +936,21 @@ void SettingsManager::toJson(const SettingsBundle& settings, JsonObject root) co
     device["lowBatterySleepEnabled"] = settings.device.lowBatterySleepEnabled;
     device["lowBatterySleepThresholdPercent"] = settings.device.lowBatterySleepThresholdPercent;
     device["lowBatteryWakeIntervalMinutes"] = settings.device.lowBatteryWakeIntervalMinutes;
+
+    JsonObject ui = root["ui"].to<JsonObject>();
+    ui["gpioBoardAutodetect"] = settings.ui.gpioBoardAutodetect;
+    ui["gpioBoardSelection"] = settings.ui.gpioBoardSelection;
+    JsonDocument peripheralDiagramDocument;
+    DeserializationError peripheralDiagramError = deserializeJson(peripheralDiagramDocument, settings.ui.peripheralDiagramLayout);
+    if (!peripheralDiagramError && peripheralDiagramDocument.is<JsonObjectConst>()) {
+        JsonObject positions = ui["peripheralDiagramPositions"].to<JsonObject>();
+        for (JsonPairConst entry : peripheralDiagramDocument.as<JsonObjectConst>()) {
+            positions[entry.key()] = entry.value();
+        }
+    } else {
+        ui["peripheralDiagramPositions"].to<JsonObject>();
+    }
+
     root["usingSavedSettings"] = settings.usingSavedSettings;
 }
 
@@ -1027,6 +1088,19 @@ bool SettingsManager::updateFromJson(SettingsBundle& settings, JsonVariantConst 
         if (device["lowBatterySleepEnabled"].is<bool>()) settings.device.lowBatterySleepEnabled = device["lowBatterySleepEnabled"].as<bool>();
         if (device["lowBatterySleepThresholdPercent"].is<uint8_t>()) settings.device.lowBatterySleepThresholdPercent = device["lowBatterySleepThresholdPercent"].as<uint8_t>();
         if (device["lowBatteryWakeIntervalMinutes"].is<uint16_t>()) settings.device.lowBatteryWakeIntervalMinutes = device["lowBatteryWakeIntervalMinutes"].as<uint16_t>();
+    }
+
+    JsonObjectConst ui = object["ui"];
+    if (!ui.isNull()) {
+        if (ui["gpioBoardAutodetect"].is<bool>()) settings.ui.gpioBoardAutodetect = ui["gpioBoardAutodetect"].as<bool>();
+        copyString(ui, "gpioBoardSelection", settings.ui.gpioBoardSelection);
+        if (ui["peripheralDiagramLayout"].is<const char*>()) {
+            settings.ui.peripheralDiagramLayout = ui["peripheralDiagramLayout"].as<const char*>();
+        } else if (ui["peripheralDiagramPositions"].is<JsonObjectConst>()) {
+            String serializedLayout;
+            serializeJson(ui["peripheralDiagramPositions"], serializedLayout);
+            settings.ui.peripheralDiagramLayout = serializedLayout;
+        }
     }
 
     settings = sanitize(settings);

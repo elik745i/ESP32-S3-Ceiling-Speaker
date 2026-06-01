@@ -1495,6 +1495,20 @@ void executePlaybackCommand(const PlaybackCommand& command) {
         if (!tryOverlayConfiguredEffect(settings->effects.notificationFile, 35, effectVolumeForSource("effect-notification"))) {
             playConfiguredEffectSource("effect-notification", command.payload.isEmpty() ? "MQTT Notification" : command.payload);
         }
+    } else if (command.action == "sd_remount") {
+        String message;
+        if (storageBusy(StorageTarget::Sd)) {
+            message = "SD card is busy. Stop playback or transfers before remounting.";
+        } else if (remountStorageBackend(StorageTarget::Sd, *settings)) {
+            appState->setLastError("");
+            mqttManager->publishState();
+            return;
+        } else {
+            message = "SD card remount failed.";
+        }
+
+        appState->setLastError(message);
+        mqttManager->publishState();
     } else if (command.action == "reboot") {
         appState->setLastError("");
         requestRestartSequence("mqtt", false);

@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" height="15mm" data-name="Layer 1" gorn="0" id="Layer_1" viewBox="0 0 42.52 42.52"  width="15mm">
+    <desc >
+        <referenceFile >INMP441_breadboard.svg</referenceFile>
+    </desc>
+    <title >INMP441_breadboard</title>
+    <g gorn="0.2" id="breadboard" >
+        <path d="M21.26,0A21.26,21.26,0,1,0,42.52,21.26,21.26,21.26,0,0,0,21.26,0Zm-7.4,34.41a2,2,0,1,1,2-2A2,2,0,0,1,13.86,34.41Zm0-21.45a2,2,0,1,1,2-2A2,2,0,0,1,13.86,13Zm7.19,21.45a2,2,0,1,1,2-2A2,2,0,0,1,21.05,34.41Zm0-21.45a2,2,0,1,1,2-2A2,2,0,0,1,21.05,13Zm7.18,21.45a2,2,0,1,1,2-2A2,2,0,0,1,28.23,34.41Zm0-21.45a2,2,0,1,1,2-2A2,2,0,0,1,28.23,13Z" fill="#28282d" />
+        <ellipse rx="19.36" cx="21.26" cy="21.26" stroke-width="2" fill="none" stroke-miterlimit="3.99"  ry="19.54" stroke="#9a916c"/>
+        <circle r="1.99" cx="21.26" cy="21.26" stroke-width="1.1" fill="#1d1d1b" stroke-miterlimit="3.99"  stroke="#9a916c"/>
+        <g transform="translate(11.54 28.91)" >
+            <g >
+                <g >
+                    <g >
+                        <g >
+                            <g >
+                                <text font-size="3" style="isolation:isolate" fill="#fff" font-family="Droid Sans" >SD</text>
+                            </g>
+                        </g>
+                    </g>
+                </g>
+            </g>
+        </g>
+        <g transform="translate(17.87 28.91)" >
+            <g >
+                <g >
+                    <g >
+                        <g >
+                            <g >
+                                <text font-size="3" style="isolation:isolate" fill="#fff" font-family="Droid Sans" >VDD</text>
+                            </g>
+                        </g>
+                    </g>
+                </g>
+            </g>
+        </g>
+        <g transform="translate(25.39 28.91)" >
+            <g >
+                <g >
+                    <g >
+                        <g >
+                            <g >
+                                <text font-size="3" style="isolation:isolate" fill="#fff" font-family="Droid Sans" >GND</text>
+                            </g>
+                        </g>
+                    </g>
+                </g>
+            </g>
+        </g>
+        <g transform="translate(30.98 14.35) rotate(180)" >
+            <g >
+                <g >
+                    <g >
+                        <g >
+                            <g >
+                                <text font-size="3" style="isolation:isolate" fill="#fff" font-family="Droid Sans" >L/R</text>
+                            </g>
+                        </g>
+                    </g>
+                </g>
+            </g>
+        </g>
+        <g transform="translate(23.49 14.35) rotate(180)" >
+            <g >
+                <g >
+                    <g >
+                        <g >
+                            <g >
+                                <text font-size="3" style="isolation:isolate" fill="#fff" font-family="Droid Sans" >WS</text>
+                            </g>
+                        </g>
+                    </g>
+                </g>
+            </g>
+        </g>
+        <g transform="translate(16.49 14.35) rotate(180)" >
+            <g >
+                <g >
+                    <g >
+                        <g >
+                            <g >
+                                <text font-size="3" style="isolation:isolate" fill="#fff" font-family="Droid Sans" >SCK</text>
+                            </g>
+                        </g>
+                    </g>
+                </g>
+            </g>
+        </g>
+        <path d="M8.84,22.67V19.85a.26.26,0,0,1,.52,0v2.82a.26.26,0,0,1-.52,0Z" fill="#fff" />
+        <path d="M8.84,21.26A.26.26,0,0,1,9.1,21h2.13a.26.26,0,0,1,0,.52H9.1A.26.26,0,0,1,8.84,21.26Z" fill="#fff" />
+        <rect height="2.83" rx="1.4" y="19.85" x="12.16" fill="#fff"  width="5.27"/>
+        <path d="M11.12,21.27v0a2.44,2.44,0,0,1,2.43-2.44.26.26,0,0,1,.26.26.25.25,0,0,1-.26.26,1.91,1.91,0,0,0-1.91,1.92v0a1.91,1.91,0,0,0,1.91,1.92.25.25,0,0,1,.26.26.26.26,0,0,1-.26.26,2.44,2.44,0,0,1-2.43-2.44Z" fill="#fff" />
+        <g gorn="0.2.13" id="copper1" >
+            <circle r="1.99" cx="21.05" cy="32.41" stroke-width="1.1" fill="none" gorn="0.2.13.0" stroke-miterlimit="3.99" id="connector5pin"  stroke="#9a916c"/>
+            <circle r="1.99" cx="28.23" cy="32.41" stroke-width="1.1" fill="none" gorn="0.2.13.1" stroke-miterlimit="3.99" id="connector6pin"  stroke="#9a916c"/>
+            <circle r="1.99" cx="13.86" cy="32.41" stroke-width="1.1" fill="none" gorn="0.2.13.2" stroke-miterlimit="3.99" id="connector4pin"  stroke="#9a916c"/>
+            <circle r="1.99" cx="13.86" cy="10.96" stroke-width="1.1" fill="none" gorn="0.2.13.3" stroke-miterlimit="3.99" id="connector3pin"  stroke="#9a916c"/>
+            <circle r="1.99" cx="21.05" cy="10.96" stroke-width="1.1" fill="none" gorn="0.2.13.4" stroke-miterlimit="3.99" id="connector2pin"  stroke="#9a916c"/>
+            <circle r="1.99" cx="28.23" cy="10.96" stroke-width="1.1" fill="none" gorn="0.2.13.5" stroke-miterlimit="3.99" id="connector1pin"  stroke="#9a916c"/>
+        </g>
+    </g>
+</svg>

@@ -1446,6 +1446,432 @@ body {
     align-items: start;
   }
 
+  .gpio-controls-strip {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    margin-top: 12px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: linear-gradient(180deg, #fdfcf8 0%, #f7f5ef 100%);
+  }
+
+  .gpio-controls-field {
+    display: grid;
+    grid-template-columns: minmax(110px, 150px) minmax(0, 1fr);
+    gap: 14px;
+    align-content: start;
+    align-items: center;
+  }
+
+  .gpio-controls-field-label {
+    font-size: 0.78rem;
+    font-weight: 800;
+    color: #334155;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .gpio-controls-field-main {
+    min-width: 0;
+  }
+
+  .peripheral-field-composite {
+    display: grid;
+    grid-template-columns: minmax(180px, 1.05fr) minmax(220px, 0.95fr);
+    gap: 10px;
+    align-items: end;
+  }
+
+  .peripheral-binding-group {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .peripheral-binding-control {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .peripheral-binding-label {
+    font-size: 0.65rem;
+    font-weight: 800;
+    color: #475569;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .peripheral-binding-control select {
+    width: 100%;
+    min-width: 0;
+    padding: 8px 10px;
+    font-size: 0.76rem;
+  }
+
+  .gpio-controls-field select {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 0.84rem;
+  }
+
+  .gpio-controls-field-main-board {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .gpio-controls-autodetect {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #ffffff;
+    cursor: pointer;
+  }
+
+  .gpio-controls-autodetect input {
+    margin: 0;
+  }
+
+  .gpio-controls-field-sensors {
+    align-items: start;
+  }
+
+  .gpio-controls-field-inputs {
+    align-items: start;
+  }
+
+  .gpio-controls-field-controls {
+    align-items: start;
+  }
+
+  .gpio-controls-field-expansions {
+    align-items: start;
+  }
+
+  .gpio-controls-field-storage {
+    align-items: start;
+  }
+
+  .gpio-controls-field-communication {
+    align-items: start;
+  }
+
+  .peripheral-sensor-list {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .peripheral-input-list {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .peripheral-storage-list {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .peripheral-controls-list {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .peripheral-expansions-list {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .peripheral-communication-list {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .peripheral-profile-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: end;
+    width: 100%;
+  }
+
+  .peripheral-profile-row select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .peripheral-profile-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    min-width: 42px;
+    height: 42px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    font-size: 1.25rem;
+    font-weight: 800;
+    line-height: 1;
+  }
+
+  .peripheral-profile-action-add {
+    background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
+    border-color: #15803d;
+    color: #ffffff;
+  }
+
+  .peripheral-profile-action-remove {
+    background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
+    border-color: #b91c1c;
+    color: #ffffff;
+  }
+
+  .peripheral-profile-action:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .peripheral-diagram-frame {
+    margin-top: 14px;
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    box-shadow: var(--shadow);
+  }
+
+  .peripheral-diagram-title {
+    font-size: 0.82rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #334155;
+  }
+
+  .peripheral-diagram-placeholder {
+    margin-top: 12px;
+    min-height: 140px;
+    display: grid;
+    justify-items: stretch;
+    align-items: start;
+    gap: 12px;
+    padding: 18px;
+    border: 2px dashed #cbd5e1;
+    border-radius: 14px;
+    background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+    text-align: center;
+    font-size: 0.95rem;
+    color: #64748b;
+    position: relative;
+  }
+
+  .peripheral-diagram-stage {
+    position: relative;
+    width: calc(100% + 36px);
+    margin: -18px;
+    min-height: 496px;
+    display: grid;
+    place-items: center;
+  }
+
+  .peripheral-diagram-items {
+    position: absolute;
+    inset: 0;
+    pointer-events: auto;
+  }
+
+  .peripheral-diagram-board-image {
+    position: relative;
+    z-index: 1;
+    width: min(100%, 220px);
+    max-height: 180px;
+    object-fit: contain;
+    filter: drop-shadow(0 10px 20px rgba(15, 23, 42, 0.12));
+  }
+
+  .peripheral-diagram-placeholder-text {
+    max-width: 420px;
+  }
+
+  .peripheral-diagram-node {
+    position: absolute;
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    width: 120px;
+    text-align: center;
+    color: #334155;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+    z-index: 2;
+  }
+
+  .peripheral-diagram-node-visual {
+    width: 100%;
+    display: grid;
+    justify-items: center;
+    transform-origin: center center;
+    transition: transform 160ms ease;
+  }
+
+  .peripheral-diagram-node-rotate {
+    position: absolute;
+    top: -26px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 26px;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(37, 99, 235, 0.22);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.96);
+    color: #1d4ed8;
+    font-size: 0.95rem;
+    font-weight: 800;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.14);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 140ms ease, transform 140ms ease, background-color 140ms ease;
+    z-index: 6;
+  }
+
+  .peripheral-diagram-node:hover .peripheral-diagram-node-rotate,
+  .peripheral-diagram-node:focus-within .peripheral-diagram-node-rotate {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(-50%) translateY(-2px);
+  }
+
+  .peripheral-diagram-node-rotate:hover,
+  .peripheral-diagram-node-rotate:focus-visible {
+    background: #dbeafe;
+    outline: none;
+  }
+
+  .peripheral-diagram-node.is-dragging {
+    cursor: grabbing;
+    z-index: 5;
+  }
+
+  .peripheral-diagram-node-block {
+    width: 100%;
+    min-height: 118px;
+    padding: 10px 10px 8px;
+    display: grid;
+    align-content: start;
+    gap: 8px;
+    border: 1px solid rgba(14, 116, 144, 0.26);
+    border-radius: 14px;
+    background:
+      linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(226, 232, 240, 0.96)),
+      repeating-linear-gradient(90deg, rgba(14, 116, 144, 0.08) 0, rgba(14, 116, 144, 0.08) 1px, transparent 1px, transparent 18px);
+    box-shadow: 0 10px 20px rgba(15, 23, 42, 0.10);
+  }
+
+  .peripheral-diagram-node-block-title {
+    font-size: 0.66rem;
+    font-weight: 800;
+    line-height: 1.2;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #0f172a;
+  }
+
+  .peripheral-diagram-node-block-pins {
+    display: grid;
+    gap: 4px;
+  }
+
+  .peripheral-diagram-node-block-pin {
+    display: block;
+    padding: 3px 6px;
+    border-radius: 999px;
+    background: rgba(14, 116, 144, 0.10);
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: #155e75;
+  }
+
+  .peripheral-diagram-node img {
+    width: 100%;
+    max-height: 92px;
+    object-fit: contain;
+    filter: drop-shadow(0 8px 16px rgba(15, 23, 42, 0.12));
+    pointer-events: none;
+  }
+
+  .peripheral-diagram-node-label {
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    pointer-events: none;
+  }
+
+  .peripheral-diagram-node-block {
+    pointer-events: none;
+  }
+
+  .peripheral-diagram-node-display {
+    top: 8px;
+    right: 24px;
+  }
+
+  .peripheral-diagram-node-audio {
+    top: 18px;
+    left: 18px;
+  }
+
+  .peripheral-diagram-node-audio-in {
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  .peripheral-diagram-node-storage {
+    right: 14px;
+    bottom: 28px;
+  }
+
+  .peripheral-diagram-node-input-0 {
+    left: 14px;
+    bottom: 24px;
+  }
+
+  .peripheral-diagram-node-input-1 {
+    left: 136px;
+    bottom: 10px;
+  }
+
+  .peripheral-diagram-node-input-2 {
+    left: 14px;
+    bottom: 132px;
+  }
+
+  .peripheral-diagram-node-input-3 {
+    left: 136px;
+    bottom: 118px;
+  }
+
   .gpio-pin-column {
     display: grid;
     gap: 8px;
@@ -1573,35 +1999,6 @@ body {
     gap: 12px;
     align-items: start;
     justify-items: center;
-  }
-
-  .gpio-board-selector {
-    width: min(100%, 320px);
-    display: grid;
-    gap: 6px;
-  }
-
-  .gpio-board-autodetect {
-    justify-self: center;
-    margin: 0;
-    color: #475569;
-    font-size: 0.82rem;
-    font-weight: 700;
-  }
-
-  .gpio-board-selector span {
-    font-size: 0.78rem;
-    font-weight: 800;
-    color: #334155;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    text-align: center;
-  }
-
-  .gpio-board-selector select {
-    width: 100%;
-    padding: 10px 12px;
-    font-size: 0.84rem;
   }
 
   .gpio-board-wrap {
@@ -1839,6 +2236,90 @@ body {
 
     .gpio-layout-card {
       grid-template-columns: minmax(0, 1fr);
+    }
+
+    .gpio-controls-strip {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .gpio-controls-field,
+    .peripheral-profile-row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .peripheral-field-composite {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .peripheral-diagram-stage {
+      width: calc(100% + 36px);
+      margin: -18px;
+      min-height: 656px;
+    }
+
+    .peripheral-diagram-node {
+      width: 96px;
+    }
+
+    .peripheral-diagram-node-block {
+      min-height: 106px;
+      padding: 8px 8px 7px;
+    }
+
+    .peripheral-diagram-node-block-title {
+      font-size: 0.58rem;
+    }
+
+    .peripheral-diagram-node-block-pin {
+      font-size: 0.52rem;
+      padding: 2px 5px;
+    }
+
+    .peripheral-diagram-node-display {
+      top: 6px;
+      right: 8px;
+    }
+
+    .peripheral-diagram-node-audio {
+      top: 16px;
+      left: 8px;
+    }
+
+    .peripheral-diagram-node-audio-in {
+      top: 96px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    .peripheral-diagram-node-storage {
+      right: 8px;
+      bottom: 18px;
+    }
+
+    .peripheral-diagram-node-input-0 {
+      left: 8px;
+      bottom: 18px;
+    }
+
+    .peripheral-diagram-node-input-1 {
+      left: auto;
+      right: 8px;
+      bottom: 116px;
+    }
+
+    .peripheral-diagram-node-input-2 {
+      left: 8px;
+      bottom: 116px;
+    }
+
+    .peripheral-diagram-node-input-3 {
+      left: auto;
+      right: 8px;
+      bottom: 212px;
+    }
+
+    .gpio-controls-field-main-board {
+      grid-template-columns: minmax(0, 1fr) auto;
     }
 
     .gpio-extra-layout {

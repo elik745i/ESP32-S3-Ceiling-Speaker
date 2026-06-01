@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="38" height="50.471" version="1.1" viewBox="0 0 38 50.471" xmlns="http://www.w3.org/2000/svg">
+  <desc>
+    <referenceFile>ttp223.svg</referenceFile>
+  </desc>
+  <rect width="38" height="50.471" fill="#ff2a2a" stroke-width="2.5761"/>
+  <rect x=".27956" y="4.0447" width="37.435" height="27.423" fill="#d56f6f" stroke-width=".5249"/>
+  <circle cx="18.944" cy="17.758" r="13.94" fill="#fdf6f6" stroke-width=".72422"/>
+  <circle cx="18.992" cy="17.76" r="13.44" fill="#d56f6f" stroke-width=".69824"/>
+  <g fill="#ffffff" font-family="Droid Sans" stroke-width=".5">
+    <text x="12.870071" y="3.3758087" font-size="4px">TTP223</text>
+    <text x="11.262762" y="19.112133" font-size="4.6667px">TOUCH</text>
+    <g font-size="4px">
+      <text transform="rotate(-90)" x="-41.996048" y="29.14386">GND</text>
+      <text transform="rotate(-90)" x="-42.012558" y="20.204147">I/O</text>
+      <text transform="rotate(-90)" x="-42.007828" y="11.135895">VCC</text>
+    </g>
+  </g>
+  <circle cx="9.2408" cy="46.311" r="3.4" fill="#819366" stroke-width=".51191"/>
+  <circle cx="9.2648" cy="46.346" r="3" fill="#c37550" stroke-width=".45168"/>
+  <circle cx="9.2525" cy="46.358" r="2.5" fill="#d0442f" stroke-width=".3764"/>
+  <circle cx="9.2578" cy="46.352" r="2" fill="#c37550" stroke-width=".30112"/>
+  <circle cx="9.2462" cy="46.374" r="1.825" fill="#3c1d14" stroke-width=".27477"/>
+  <circle cx="18.349" cy="46.311" r="3.4" fill="#819366" stroke-width=".51191"/>
+  <circle cx="18.373" cy="46.346" r="3" fill="#c37550" stroke-width=".45168"/>
+  <circle cx="18.36" cy="46.358" r="2.5" fill="#d0442f" stroke-width=".3764"/>
+  <circle cx="18.366" cy="46.352" r="2" fill="#c37550" stroke-width=".30112"/>
+  <circle cx="18.354" cy="46.374" r="1.825" fill="#3c1d14" stroke-width=".27477"/>
+  <rect x="23.76" y="42.919" width="6.8612" height="6.8341" fill="#819366" stroke-width=".5"/>
+  <circle cx="27.225" cy="46.346" r="3" fill="#c37550" stroke-width=".45168"/>
+  <circle cx="27.213" cy="46.358" r="2.5" fill="#d0442f" stroke-width=".3764"/>
+  <circle cx="27.218" cy="46.352" r="2" fill="#c37550" stroke-width=".30112"/>
+  <circle cx="27.207" cy="46.374" r="1.825" fill="#3c1d14" stroke-width=".27477"/>
+</svg>

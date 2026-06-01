@@ -66,6 +66,17 @@ const state = {
   awaitingFirmwareReboot: false,
   firmwareReloadPending: false,
   wifiSelectionPending: false,
+  gpioUiInteractionDepth: 0,
+  peripheralDiagramNodeMap: {},
+  peripheralDiagramAssetFailures: {},
+  peripheralDiagramPositions: {},
+  peripheralDiagramDrag: null,
+  peripheralSensorProfiles: ["none"],
+  peripheralInputProfiles: ["ttp223-touch-button", "ttp223-touch-button"],
+  peripheralStorageProfiles: ["microsd-spi"],
+  peripheralCommunicationProfiles: ["none"],
+  peripheralControlProfiles: ["none"],
+  peripheralExpansionProfiles: ["none"],
   wifiConnectInProgress: false,
   mqttConnectInProgress: false,
   mqttActionInProgress: "",
@@ -82,6 +93,9 @@ const SETTINGS_AUTOSAVE_DELAY_MS = 900;
 const ACTIVE_TAB_STORAGE_KEY = "notifierActiveTab";
 const RADIO_SELECTION_STORAGE_KEY = "notifierRadioSelection";
 const EFFECT_FILES_CACHE_STORAGE_KEY = "notifierEffectFilesCache";
+const GPIO_BOARD_SELECTION_STORAGE_KEY = "notifierGpioBoardSelection";
+const GPIO_BOARD_AUTODETECT_STORAGE_KEY = "notifierGpioBoardAutodetect";
+const PERIPHERAL_DIAGRAM_POSITIONS_STORAGE_KEY = "notifierPeripheralDiagramPositions";
 const STORAGE_INITIAL_PAGE_SIZE = 20;
 const STORAGE_SCROLL_PAGE_SIZE = 20;
 const STORAGE_AUDIO_EXTENSIONS = new Set(["mp3", "wav", "aac", "m4a", "ogg", "opus", "flac"]);
@@ -95,6 +109,114 @@ const EFFECT_FILE_SOURCES = [
   { target: "flash", dir: "/wav", prefix: "Flash" },
 ];
 const EFFECT_FILE_PAGE_SIZE = 20;
+const MAX_PERIPHERAL_SENSORS = 10;
+const MAX_PERIPHERAL_INPUTS = 10;
+const MAX_PERIPHERAL_STORAGES = 3;
+const MAX_PERIPHERAL_COMMUNICATIONS = 4;
+const MAX_PERIPHERAL_CONTROLS = 16;
+const MAX_PERIPHERAL_EXPANSIONS = 4;
+const PERIPHERAL_SENSOR_PROFILE_OPTIONS = [
+  { value: "none", label: "None" },
+  { value: "bno055", label: "BNO055" },
+  { value: "bno085-bno080", label: "BNO085 / BNO080" },
+  { value: "mpu6050", label: "MPU6050" },
+  { value: "ds18b20", label: "DS18B20" },
+  { value: "custom", label: "Custom" },
+];
+const PERIPHERAL_INPUT_PROFILE_OPTIONS = [
+  { value: "none", label: "None" },
+  { value: "ttp223-touch-button", label: "TTP223 Touch Button" },
+  { value: "physical-button", label: "Physical Button" },
+  { value: "toggle-switch", label: "Toggle Switch" },
+  { value: "rotary-encoder", label: "Rotary Encoder" },
+  { value: "ir-receiver", label: "IR Receiver" },
+  { value: "pir-motion-sensor", label: "PIR Motion Sensor" },
+  { value: "reed-switch", label: "Reed Switch" },
+  { value: "limit-switch", label: "Limit Switch" },
+  { value: "joystick-analog", label: "Joystick Analog" },
+  { value: "analog-potentiometer", label: "Analog Potentiometer" },
+  { value: "esp32-native-touch-pad", label: "ESP32 Native Touch Pad" },
+  { value: "water-leak-rain-sensor", label: "Water Leak / Rain Sensor" },
+  { value: "vibration-shock-sensor", label: "Vibration / Shock Sensor" },
+  { value: "hall-sensor", label: "Hall Sensor" },
+  { value: "flow-meter-pulse-sensor", label: "Flow Meter Pulse Sensor" },
+  { value: "keypad-matrix", label: "Keypad Matrix" },
+  { value: "rf-433mhz-receiver", label: "RF 433MHz Receiver" },
+  { value: "wake-button", label: "Wake Button" },
+  { value: "custom", label: "Custom" },
+];
+const PERIPHERAL_STORAGE_PROFILE_OPTIONS = [
+  { value: "none", label: "None" },
+  { value: "microsd-spi", label: "MicroSD SPI" },
+  { value: "microsd-sdmmc", label: "MicroSD SDMMC" },
+  { value: "custom", label: "Custom" },
+];
+const PERIPHERAL_COMMUNICATION_PROFILE_OPTIONS = [
+  { value: "none", label: "None" },
+  { value: "uart", label: "UART" },
+  { value: "rs485", label: "RS485" },
+  { value: "lora-e22-e220", label: "LoRa E22/E220" },
+  { value: "i2c", label: "I2C" },
+  { value: "spi", label: "SPI" },
+  { value: "custom", label: "Custom" },
+];
+const PERIPHERAL_DIAGRAM_ASSET_MAP = {
+  audio: {
+    "max98357a-i2s-amp": { src: "/max98357a-breadboard.svg", label: "Audio Out" },
+    "pcm5102-i2s-dac": { src: "/pcm5102a-breadboard.svg", label: "Audio Out" },
+  },
+  audioIn: {
+    "inmp441-i2s-mic": { src: "/inmp441-breadboard.svg", label: "Audio In" },
+  },
+  display: {
+    "i2c-oled": { src: "/i2c-oled-breadboard.svg", label: "Display" },
+  },
+  storage: {
+    "microsd-spi": { src: "/microsd-spi-module.svg", label: "Storage" },
+  },
+  input: {
+    "ttp223-touch-button": { src: "/ttp223-touch-module.svg", label: "Input" },
+  },
+};
+const PERIPHERAL_CONTROL_PROFILE_OPTIONS = [
+  { value: "none", label: "None" },
+  { value: "servo", label: "Servo" },
+  { value: "dual-servo", label: "Dual Servo" },
+  { value: "pwm-fan", label: "PWM Fan" },
+  { value: "dc-motor-driver-generic", label: "DC Motor Driver Generic" },
+  { value: "drv8833-dual-motor-driver", label: "DRV8833 Dual Motor Driver" },
+  { value: "tb6612fng-dual-motor-driver", label: "TB6612FNG Dual Motor Driver" },
+  { value: "l298n-dual-motor-driver", label: "L298N Dual Motor Driver" },
+  { value: "bts7960-high-power-motor-driver", label: "BTS7960 High Power Motor Driver" },
+  { value: "stepper-driver-a4988-drv8825", label: "Stepper Driver A4988 / DRV8825" },
+  { value: "stepper-driver-tmc2208-tmc2209", label: "Stepper Driver TMC2208 / TMC2209" },
+  { value: "relay-module", label: "Relay Module" },
+  { value: "mosfet-switch", label: "MOSFET Switch" },
+  { value: "solenoid-valve-driver", label: "Solenoid / Valve Driver" },
+  { value: "led-pwm-dimmer", label: "LED / PWM Dimmer" },
+  { value: "ws2812-neopixel-led-strip", label: "WS2812 / NeoPixel LED Strip" },
+  { value: "buzzer", label: "Buzzer" },
+  { value: "vibration-motor", label: "Vibration Motor" },
+  { value: "pump-driver", label: "Pump Driver" },
+  { value: "custom", label: "Custom" },
+];
+const PERIPHERAL_EXPANSION_PROFILE_OPTIONS = [
+  { value: "none", label: "None" },
+  { value: "i2c-gpio-expander", label: "I2C GPIO Expander" },
+  { value: "mcp23017-16-bit-io-expander", label: "MCP23017 16-bit I/O Expander" },
+  { value: "pcf8574-8-bit-io-expander", label: "PCF8574 8-bit I/O Expander" },
+  { value: "pcf8575-16-bit-io-expander", label: "PCF8575 16-bit I/O Expander" },
+  { value: "74hc595-output-expander", label: "Shift Register 74HC595 Output Expander" },
+  { value: "74hc165-input-expander", label: "Shift Register 74HC165 Input Expander" },
+  { value: "cd4051-74hc4051-8-channel", label: "Analog Multiplexer CD4051 / 74HC4051 8-channel" },
+  { value: "cd74hc4067-16-channel", label: "Analog Multiplexer CD74HC4067 16-channel" },
+  { value: "ads1115-16-bit-i2c", label: "External ADC ADS1115 16-bit I2C" },
+  { value: "ads1015-12-bit-i2c", label: "External ADC ADS1015 12-bit I2C" },
+  { value: "mcp3008-spi", label: "External ADC MCP3008 SPI" },
+  { value: "mcp4725-i2c", label: "External DAC MCP4725 I2C" },
+  { value: "pca9685", label: "PWM Expander PCA9685" },
+  { value: "custom", label: "Custom" },
+];
 const EFFECT_SELECT_CONFIG = [
   { id: "effectStartupFile", field: "startupFile", label: "Startup", source: "effect-startup", volumeId: "effectStartupVolumePercent", volumeField: "startupVolumePercent" },
   { id: "effectAlarmFile", field: "alarmFile", label: "Alarm", source: "effect-alarm", volumeId: "effectAlarmVolumePercent", volumeField: "alarmVolumePercent" },
@@ -492,7 +614,7 @@ const GPIO_BOARD_EXTRA_LAYOUTS = {
   },
   "esp32-s3-zero": {
     left: [39, 40, 41, 42, 43, 44, 45, 46, 47, 48].map((pin) => ({ pin, label: `GPIO${pin}` })),
-    right: [38, 37, 36, 35, 34, 33, 18, 17].map((pin) => ({ pin, label: `GPIO${pin}` })),
+    right: [38, 37, 36, 35, 34, 33, 21, 18, 17].map((pin) => ({ pin, label: `GPIO${pin}` })),
   },
   "esp32-c6": {
     left: [15, 8, 23].map((pin) => ({ pin, label: `GPIO${pin}` })),
@@ -644,6 +766,9 @@ const elements = {
   deviceCpuLoadValue: document.getElementById("deviceCpuLoadValue"),
   deviceCpuLoadBar: document.getElementById("deviceCpuLoadBar"),
   deviceCpuLoadMeta: document.getElementById("deviceCpuLoadMeta"),
+  deviceChipTempValue: document.getElementById("deviceChipTempValue"),
+  deviceChipTempBar: document.getElementById("deviceChipTempBar"),
+  deviceChipTempMeta: document.getElementById("deviceChipTempMeta"),
   deviceSramValue: document.getElementById("deviceSramValue"),
   deviceSramBar: document.getElementById("deviceSramBar"),
   deviceSramMeta: document.getElementById("deviceSramMeta"),
@@ -654,6 +779,9 @@ const elements = {
   deviceSpiffsBar: document.getElementById("deviceSpiffsBar"),
   deviceSpiffsMeta: document.getElementById("deviceSpiffsMeta"),
   deviceSpiffsCard: document.getElementById("deviceSpiffsCard"),
+  deviceFlashHeadroomValue: document.getElementById("deviceFlashHeadroomValue"),
+  deviceFlashHeadroomBar: document.getElementById("deviceFlashHeadroomBar"),
+  deviceFlashHeadroomMeta: document.getElementById("deviceFlashHeadroomMeta"),
   deviceSdValue: document.getElementById("deviceSdValue"),
   deviceSdBar: document.getElementById("deviceSdBar"),
   deviceSdMeta: document.getElementById("deviceSdMeta"),
@@ -666,6 +794,14 @@ const elements = {
   gpioExtraLeftPins: document.getElementById("gpioExtraLeftPins"),
   gpioExtraRightPins: document.getElementById("gpioExtraRightPins"),
   gpioBoardAutodetect: document.getElementById("gpioBoardAutodetect"),
+  peripheralSensorsList: document.getElementById("peripheralSensorsList"),
+  peripheralInputsList: document.getElementById("peripheralInputsList"),
+  peripheralControlsList: document.getElementById("peripheralControlsList"),
+  peripheralExpansionsList: document.getElementById("peripheralExpansionsList"),
+  peripheralStorageList: document.getElementById("peripheralStorageList"),
+  peripheralCommunicationList: document.getElementById("peripheralCommunicationList"),
+  peripheralAudioPins: document.getElementById("peripheralAudioPins"),
+  peripheralDisplayPins: document.getElementById("peripheralDisplayPins"),
   settingsSource: document.getElementById("settingsSource"),
   playbackState: document.getElementById("playbackState"),
   currentTitle: document.getElementById("currentTitle"),
@@ -722,6 +858,13 @@ const elements = {
   radioBrowserStatus: document.getElementById("radioBrowserStatus"),
   gpioBoardSelector: document.getElementById("gpioBoardSelector"),
   gpioBoardImage: document.getElementById("gpioBoardImage"),
+  peripheralDiagramStage: document.getElementById("peripheralDiagramStage"),
+  peripheralDiagramBoardImage: document.getElementById("peripheralDiagramBoardImage"),
+  peripheralDiagramItems: document.getElementById("peripheralDiagramItems"),
+  peripheralDiagramPlaceholderText: document.querySelector(".peripheral-diagram-placeholder-text"),
+  peripheralAudioProfile: document.getElementById("peripheralAudioProfile"),
+  peripheralAudioInProfile: document.getElementById("peripheralAudioInProfile"),
+  peripheralDisplayProfile: document.getElementById("peripheralDisplayProfile"),
   settingsForm: document.getElementById("settingsForm"),
   recentPlaybackList: document.getElementById("recentPlaybackList"),
   useStaticIpToggle: document.getElementById("useStaticIpToggle"),
@@ -730,6 +873,9 @@ const elements = {
   wifiNetworkList: document.getElementById("wifiNetworkList"),
   mqttConnectButton: document.getElementById("mqttConnectButton"),
   mqttRediscoveryButton: document.getElementById("mqttRediscoveryButton"),
+  backupConfigButton: document.getElementById("backupConfigButton"),
+  restoreConfigButton: document.getElementById("restoreConfigButton"),
+  restoreConfigFile: document.getElementById("restoreConfigFile"),
   saveDeviceButton: document.getElementById("saveDeviceButton"),
   mqttConnectStatus: document.getElementById("mqttConnectStatus"),
   displayType: document.getElementById("displayType"),
@@ -760,6 +906,7 @@ const elements = {
   storageUpButton: document.getElementById("storageUpButton"),
   storageBreadcrumbs: document.getElementById("storageBreadcrumbs"),
   storageNewFolderButton: document.getElementById("storageNewFolderButton"),
+  storageRemountButton: document.getElementById("storageRemountButton"),
   storageReindexButton: document.getElementById("storageReindexButton"),
   storageSelectModeButton: document.getElementById("storageSelectModeButton"),
   storageSelectAllButton: document.getElementById("storageSelectAllButton"),
@@ -797,6 +944,933 @@ const elements = {
 
 function namedField(name) {
   return elements.settingsForm.elements.namedItem(name);
+}
+
+function normalizedPeripheralSensorProfiles() {
+  const currentProfiles = Array.isArray(state.peripheralSensorProfiles) ? state.peripheralSensorProfiles : [];
+  const sanitizedProfiles = currentProfiles
+    .map((value) => String(value || "none").trim() || "none")
+    .slice(0, MAX_PERIPHERAL_SENSORS);
+  return sanitizedProfiles.length ? sanitizedProfiles : ["none"];
+}
+
+function normalizedPeripheralInputProfiles() {
+  const currentProfiles = Array.isArray(state.peripheralInputProfiles) ? state.peripheralInputProfiles : [];
+  const sanitizedProfiles = currentProfiles
+    .map((value) => String(value || "none").trim() || "none")
+    .slice(0, MAX_PERIPHERAL_INPUTS);
+  return sanitizedProfiles.length ? sanitizedProfiles : ["none"];
+}
+
+function normalizedPeripheralStorageProfiles() {
+  const currentProfiles = Array.isArray(state.peripheralStorageProfiles) ? state.peripheralStorageProfiles : [];
+  const sanitizedProfiles = currentProfiles
+    .map((value) => String(value || "none").trim() || "none")
+    .slice(0, MAX_PERIPHERAL_STORAGES);
+  return sanitizedProfiles.length ? sanitizedProfiles : ["none"];
+}
+
+function normalizedPeripheralCommunicationProfiles() {
+  const currentProfiles = Array.isArray(state.peripheralCommunicationProfiles) ? state.peripheralCommunicationProfiles : [];
+  const sanitizedProfiles = currentProfiles
+    .map((value) => String(value || "none").trim() || "none")
+    .slice(0, MAX_PERIPHERAL_COMMUNICATIONS);
+  return sanitizedProfiles.length ? sanitizedProfiles : ["none"];
+}
+
+function normalizedPeripheralControlProfiles() {
+  const currentProfiles = Array.isArray(state.peripheralControlProfiles) ? state.peripheralControlProfiles : [];
+  const sanitizedProfiles = currentProfiles
+    .map((value) => String(value || "none").trim() || "none")
+    .slice(0, MAX_PERIPHERAL_CONTROLS);
+  return sanitizedProfiles.length ? sanitizedProfiles : ["none"];
+}
+
+function normalizedPeripheralExpansionProfiles() {
+  const currentProfiles = Array.isArray(state.peripheralExpansionProfiles) ? state.peripheralExpansionProfiles : [];
+  const sanitizedProfiles = currentProfiles
+    .map((value) => String(value || "none").trim() || "none")
+    .slice(0, MAX_PERIPHERAL_EXPANSIONS);
+  return sanitizedProfiles.length ? sanitizedProfiles : ["none"];
+}
+
+function appendPeripheralOptions(select, options, selectedValue) {
+  for (const optionConfig of options) {
+    const option = document.createElement("option");
+    option.value = optionConfig.value;
+    option.textContent = optionConfig.label;
+    option.selected = optionConfig.value === selectedValue;
+    select.appendChild(option);
+  }
+}
+
+function buildPeripheralActionButton({ addDatasetKey, removeDatasetKey, index, total, maxCount, singularLabel }) {
+  const actionButton = document.createElement("button");
+  actionButton.type = "button";
+  actionButton.className = `peripheral-profile-action ${index === 0 ? "peripheral-profile-action-add" : "peripheral-profile-action-remove"}`;
+
+  if (index === 0) {
+    actionButton.textContent = "+";
+    actionButton.dataset[addDatasetKey] = "true";
+    actionButton.title = total >= maxCount ? `Maximum of ${maxCount} ${singularLabel}s reached` : `Add another ${singularLabel}`;
+    actionButton.setAttribute("aria-label", actionButton.title);
+    actionButton.disabled = total >= maxCount;
+  } else {
+    actionButton.textContent = "-";
+    actionButton.dataset[removeDatasetKey] = String(index);
+    actionButton.title = `Remove ${singularLabel} ${index + 1}`;
+    actionButton.setAttribute("aria-label", actionButton.title);
+  }
+
+  return actionButton;
+}
+
+function peripheralBindingDefinitions(groupKey, settings = state.settings) {
+  switch (groupKey) {
+    case "audio":
+      return gpioConfigRoleDefinitions(settings).filter((definition) => ["audio.wsPin", "audio.bclkPin", "audio.doutPin"].includes(definition.key));
+    case "display": {
+      const definitions = gpioConfigRoleDefinitions(settings);
+      return definitions.filter((definition) => ["oled.sdaPin", "oled.sclPin", "oled.resetPin", "oled.wapeTriggerPin"].includes(definition.key));
+    }
+    case "storage":
+      return gpioConfigRoleDefinitions(settings).filter((definition) => ["sd.csPin", "sd.sckPin", "sd.mosiPin", "sd.misoPin"].includes(definition.key));
+    default:
+      return [];
+  }
+}
+
+function buildPeripheralBindingGroup(groupKey) {
+  const container = document.createElement("div");
+  container.className = "peripheral-binding-group";
+  renderPeripheralBindingGroup(container, groupKey);
+  return container;
+}
+
+function renderPeripheralBindingGroup(container, groupKey) {
+  if (!container) {
+    return;
+  }
+
+  if (groupKey === "storage" && [elements.sdCsPin, elements.sdSckPin, elements.sdMosiPin, elements.sdMisoPin].some((field) => field && field.options.length === 0)) {
+    populateSdPinOptions(state.settings, false);
+  }
+
+  const definitions = peripheralBindingDefinitions(groupKey, state.settings || {});
+  container.innerHTML = "";
+  container.hidden = definitions.length === 0;
+  if (!definitions.length) {
+    return;
+  }
+
+  for (const definition of definitions) {
+    const control = document.createElement("label");
+    control.className = "peripheral-binding-control";
+
+    const label = document.createElement("span");
+    label.className = "peripheral-binding-label";
+    label.textContent = definition.label.replace(/^OLED\s+/i, "").replace(/^I2S\s+/i, "");
+    control.appendChild(label);
+
+    const select = document.createElement("select");
+    select.dataset.peripheralBindingKey = definition.key;
+    select.setAttribute("aria-label", `${definition.label} GPIO binding`);
+
+    if (definition.element) {
+      for (const option of definition.element.options) {
+        const cloned = document.createElement("option");
+        cloned.value = option.value;
+        cloned.textContent = option.textContent;
+        cloned.selected = option.selected;
+        select.appendChild(cloned);
+      }
+      select.value = definition.element.value;
+    }
+
+    control.appendChild(select);
+    container.appendChild(control);
+  }
+}
+
+function syncPeripheralBindingGroups() {
+  renderPeripheralBindingGroup(elements.peripheralAudioPins, "audio");
+  renderPeripheralBindingGroup(elements.peripheralDisplayPins, "display");
+  if (elements.peripheralStorageList) {
+    for (const container of elements.peripheralStorageList.querySelectorAll(".peripheral-binding-group")) {
+      renderPeripheralBindingGroup(container, "storage");
+    }
+  }
+}
+
+function loadPeripheralDiagramPositions() {
+  return ensureUiSettings().peripheralDiagramPositions;
+}
+
+function savePeripheralDiagramPositions(options = {}) {
+  const { persist = true } = options;
+  const ui = ensureUiSettings();
+  ui.peripheralDiagramPositions = cloneSettingsObject(state.peripheralDiagramPositions || {}) || {};
+  if (persist && !state.settingsLoading) {
+    queueSettingsSave(0);
+  }
+}
+
+function peripheralDiagramOptionLabel(options, value, fallbackLabel = "Custom") {
+  return options.find((option) => option.value === value)?.label || fallbackLabel;
+}
+
+function peripheralDiagramSelectedLabel(element, fallbackValue) {
+  return String(element?.selectedOptions?.[0]?.textContent || fallbackValue || "Custom").trim();
+}
+
+function peripheralDiagramBindingPins(groupKey) {
+  return peripheralBindingDefinitions(groupKey, state.settings || {}).map((definition) => {
+    const bindingName = String(definition.label || "Pin")
+      .replace(/^OLED\s+/i, "")
+      .replace(/^I2S\s+/i, "")
+      .trim();
+    const gpioLabel = String(definition.element?.selectedOptions?.[0]?.textContent || definition.element?.value || "Auto").trim();
+    return `${bindingName}: ${gpioLabel}`;
+  });
+}
+
+function peripheralDiagramTemplatePins(groupKey, profileValue) {
+  const profile = String(profileValue || "none");
+
+  switch (groupKey) {
+    case "audio":
+      return peripheralDiagramBindingPins("audio").length ? peripheralDiagramBindingPins("audio") : ["WS", "BCLK", "DOUT", "VCC", "GND"];
+    case "audioIn":
+      if (profile.includes("pdm")) {
+        return ["CLK", "DATA", "VCC", "GND"];
+      }
+      if (profile.includes("adc") || profile.includes("line-in") || profile.includes("electret") || profile.includes("max9814") || profile.includes("max4466")) {
+        return ["OUT", "VCC", "GND"];
+      }
+      if (profile.includes("codec") || profile.includes("external-i2s-adc") || profile.includes("es7243") || profile.includes("es7210")) {
+        return ["WS", "BCLK", "DOUT", "SDA", "SCL"];
+      }
+      if (profile.includes("bluetooth")) {
+        return ["BT", "PWR"];
+      }
+      return ["WS", "SCK", "SD", "VCC", "GND"];
+    case "display":
+      return peripheralDiagramBindingPins("display").length ? peripheralDiagramBindingPins("display") : ["SDA", "SCL", "RST", "VCC", "GND"];
+    case "storage":
+      if (profile.includes("sdmmc")) {
+        return ["CLK", "CMD", "D0", "D1", "D2", "D3"];
+      }
+      return peripheralDiagramBindingPins("storage").length ? peripheralDiagramBindingPins("storage") : ["CS", "SCK", "MOSI", "MISO"];
+    case "input":
+      if (profile.includes("rotary-encoder")) {
+        return ["A", "B", "SW", "VCC", "GND"];
+      }
+      if (profile.includes("joystick")) {
+        return ["VRX", "VRY", "SW", "VCC", "GND"];
+      }
+      if (profile.includes("keypad")) {
+        return ["R1", "R2", "C1", "C2"];
+      }
+      if (profile.includes("ir-receiver") || profile.includes("pir") || profile.includes("hall") || profile.includes("flow-meter") || profile.includes("water-leak") || profile.includes("vibration") || profile.includes("rf-433mhz")) {
+        return ["OUT", "VCC", "GND"];
+      }
+      if (profile.includes("button") || profile.includes("switch") || profile.includes("touch")) {
+        return ["SIG", "VCC", "GND"];
+      }
+      return ["SIG", "VCC", "GND"];
+    case "sensor":
+      if (profile.includes("ds18b20")) {
+        return ["DQ", "VCC", "GND"];
+      }
+      if (profile.includes("bno") || profile.includes("mpu")) {
+        return ["SDA", "SCL", "INT", "VCC", "GND"];
+      }
+      return ["SIG", "VCC", "GND"];
+    case "control":
+      if (profile.includes("dual-servo")) {
+        return ["PWM1", "PWM2", "5V", "GND"];
+      }
+      if (profile.includes("servo") || profile.includes("buzzer") || profile.includes("vibration")) {
+        return ["SIG", "VCC", "GND"];
+      }
+      if (profile.includes("fan")) {
+        return ["PWM", "TACH", "VCC", "GND"];
+      }
+      if (profile.includes("stepper")) {
+        return ["STEP", "DIR", "EN", "VIO", "GND"];
+      }
+      if (profile.includes("ws2812")) {
+        return ["DIN", "5V", "GND"];
+      }
+      if (profile.includes("relay") || profile.includes("mosfet") || profile.includes("solenoid") || profile.includes("pump")) {
+        return ["IN", "VCC", "GND"];
+      }
+      return ["IN1", "IN2", "ENA", "VCC", "GND"];
+    case "communication":
+      if (profile.includes("uart")) {
+        return ["TX", "RX", "VCC", "GND"];
+      }
+      if (profile.includes("rs485")) {
+        return ["TX", "RX", "DE", "RE"];
+      }
+      if (profile.includes("lora")) {
+        return ["TX", "RX", "AUX", "M0", "M1"];
+      }
+      if (profile.includes("i2c")) {
+        return ["SDA", "SCL", "VCC", "GND"];
+      }
+      if (profile.includes("spi")) {
+        return ["SCK", "MOSI", "MISO", "CS"];
+      }
+      return ["SIG1", "SIG2", "VCC", "GND"];
+    case "expansion":
+      if (profile.includes("74hc595")) {
+        return ["SER", "SRCLK", "RCLK", "OE"];
+      }
+      if (profile.includes("74hc165")) {
+        return ["PL", "CP", "Q7", "CE"];
+      }
+      if (profile.includes("4051") || profile.includes("4067")) {
+        return ["S0", "S1", "S2", "SIG", "EN"];
+      }
+      if (profile.includes("mcp3008")) {
+        return ["SCK", "MOSI", "MISO", "CS"];
+      }
+      if (profile.includes("i2c") || profile.includes("mcp23017") || profile.includes("pcf857") || profile.includes("ads") || profile.includes("mcp4725") || profile.includes("pca9685")) {
+        return ["SDA", "SCL", "VCC", "GND"];
+      }
+      return ["BUS", "SIG", "VCC", "GND"];
+    default:
+      return ["SIG", "VCC", "GND"];
+  }
+}
+
+function peripheralDiagramSlotStyle(groupKey, index) {
+  const slotMap = {
+    sensor: [
+      "top: 112px; right: 24px;",
+      "top: 208px; right: 24px;",
+      "top: 112px; right: 154px;",
+      "top: 208px; right: 154px;",
+    ],
+    communication: [
+      "top: 112px; left: 18px;",
+      "top: 208px; left: 18px;",
+      "top: 112px; left: 148px;",
+      "top: 208px; left: 148px;",
+    ],
+    expansion: [
+      "bottom: 124px; left: 258px;",
+      "bottom: 124px; left: 388px;",
+      "bottom: 218px; left: 258px;",
+      "bottom: 218px; left: 388px;",
+    ],
+    control: [
+      "bottom: 18px; left: 258px;",
+      "bottom: 18px; left: 388px;",
+      "bottom: 112px; left: 258px;",
+      "bottom: 112px; left: 388px;",
+    ],
+    storage: [
+      "right: 14px; bottom: 28px;",
+      "right: 144px; bottom: 28px;",
+      "right: 14px; bottom: 150px;",
+    ],
+  };
+  return slotMap[groupKey]?.[index] || "";
+}
+
+function peripheralDiagramInlineStyle(node) {
+  const savedPosition = state.peripheralDiagramPositions?.[node.id];
+  if (savedPosition && Number.isFinite(savedPosition.x) && Number.isFinite(savedPosition.y)) {
+    return `left:${savedPosition.x}px; top:${savedPosition.y}px; right:auto; bottom:auto; transform:none;`;
+  }
+  return node.style || "";
+}
+
+function peripheralDiagramRotation(nodeId) {
+  const rotation = Number(state.peripheralDiagramPositions?.[nodeId]?.rotation || 0);
+  if (!Number.isFinite(rotation)) {
+    return 0;
+  }
+  const normalized = rotation % 360;
+  return normalized < 0 ? normalized + 360 : normalized;
+}
+
+function peripheralDiagramUsesAsset(node) {
+  return Boolean(node.src) && !state.peripheralDiagramAssetFailures?.[node.src];
+}
+
+function peripheralDiagramPlaceholderMarkup(node) {
+  return `
+    <div class="peripheral-diagram-node-block" aria-label="${escapeHtml(node.title || node.label)} placeholder">
+      <div class="peripheral-diagram-node-block-title">${escapeHtml(node.title || node.label)}</div>
+      <div class="peripheral-diagram-node-block-pins">
+        ${node.pins.map((pin) => `<span class="peripheral-diagram-node-block-pin">${escapeHtml(pin)}</span>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function peripheralDiagramNodeMarkup(node) {
+  const styleValue = peripheralDiagramInlineStyle(node);
+  const styleAttribute = styleValue ? ` style="${escapeHtml(styleValue)}"` : "";
+  const usesAsset = peripheralDiagramUsesAsset(node);
+  const rotation = peripheralDiagramRotation(node.id);
+  const visualStyle = rotation ? ` style="transform:rotate(${rotation}deg);"` : "";
+
+  if (usesAsset) {
+    return `
+      <div class="${node.className}" data-node-id="${escapeHtml(node.id)}"${styleAttribute}>
+        <button type="button" class="peripheral-diagram-node-rotate" data-node-rotate="${escapeHtml(node.id)}" aria-label="Rotate ${escapeHtml(node.label)} clockwise" title="Rotate 90 degrees clockwise">↻</button>
+        <div class="peripheral-diagram-node-visual"${visualStyle}>
+          <img src="${escapeHtml(node.src)}" alt="${escapeHtml(node.title || node.label)} module" draggable="false" />
+        </div>
+        <div class="peripheral-diagram-node-label">${escapeHtml(node.label)}</div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="${node.className}" data-node-id="${escapeHtml(node.id)}"${styleAttribute}>
+      <button type="button" class="peripheral-diagram-node-rotate" data-node-rotate="${escapeHtml(node.id)}" aria-label="Rotate ${escapeHtml(node.label)} clockwise" title="Rotate 90 degrees clockwise">↻</button>
+      <div class="peripheral-diagram-node-visual"${visualStyle}>
+        ${peripheralDiagramPlaceholderMarkup(node)}
+      </div>
+      <div class="peripheral-diagram-node-label">${escapeHtml(node.label)}</div>
+    </div>
+  `;
+}
+
+function clampPeripheralDiagramPosition(nodeElement, x, y) {
+  const stageRect = elements.peripheralDiagramStage?.getBoundingClientRect();
+  if (!stageRect) {
+    return { x, y };
+  }
+
+  const visualElement = nodeElement.querySelector(".peripheral-diagram-node-visual");
+  const visualWidth = visualElement?.offsetWidth || nodeElement.offsetWidth;
+  const visualHeight = visualElement?.offsetHeight || nodeElement.offsetHeight;
+  const horizontalInset = Math.max(0, (nodeElement.offsetWidth - visualWidth) / 2);
+  const verticalInset = Math.max(0, (nodeElement.offsetHeight - visualHeight) / 2);
+
+  const minX = -horizontalInset;
+  const minY = -verticalInset;
+  const maxX = Math.max(minX, stageRect.width - nodeElement.offsetWidth + horizontalInset);
+  const maxY = Math.max(minY, stageRect.height - nodeElement.offsetHeight + verticalInset);
+  return {
+    x: Math.min(Math.max(minX, x), maxX),
+    y: Math.min(Math.max(minY, y), maxY),
+  };
+}
+
+function applyPeripheralDiagramNodePosition(nodeElement, x, y) {
+  const clamped = clampPeripheralDiagramPosition(nodeElement, x, y);
+  nodeElement.style.left = `${clamped.x}px`;
+  nodeElement.style.top = `${clamped.y}px`;
+  nodeElement.style.right = "auto";
+  nodeElement.style.bottom = "auto";
+  nodeElement.style.transform = "none";
+  return clamped;
+}
+
+function handlePeripheralDiagramPointerDown(event) {
+  if (event.button !== 0 || !elements.peripheralDiagramStage) {
+    return;
+  }
+
+  if (event.target.closest("[data-node-rotate]")) {
+    return;
+  }
+
+  const nodeElement = event.target.closest(".peripheral-diagram-node[data-node-id]");
+  if (!nodeElement) {
+    return;
+  }
+
+  const stageRect = elements.peripheralDiagramStage.getBoundingClientRect();
+  const nodeRect = nodeElement.getBoundingClientRect();
+  const nodeId = String(nodeElement.dataset.nodeId || "");
+  if (!nodeId) {
+    return;
+  }
+
+  event.preventDefault();
+  const currentState = state.peripheralDiagramPositions?.[nodeId] || {};
+  state.peripheralDiagramDrag = {
+    nodeId,
+    pointerId: event.pointerId,
+    offsetX: event.clientX - nodeRect.left,
+    offsetY: event.clientY - nodeRect.top,
+  };
+  nodeElement.classList.add("is-dragging");
+  state.peripheralDiagramPositions[nodeId] = {
+    ...currentState,
+    x: nodeRect.left - stageRect.left,
+    y: nodeRect.top - stageRect.top,
+  };
+  if (typeof nodeElement.setPointerCapture === "function") {
+    nodeElement.setPointerCapture(event.pointerId);
+  }
+}
+
+function handlePeripheralDiagramPointerMove(event) {
+  const dragState = state.peripheralDiagramDrag;
+  if (!dragState || dragState.pointerId !== event.pointerId || !elements.peripheralDiagramStage) {
+    return;
+  }
+
+  const nodeElement = elements.peripheralDiagramItems?.querySelector(`[data-node-id="${dragState.nodeId}"]`);
+  if (!nodeElement) {
+    return;
+  }
+
+  const stageRect = elements.peripheralDiagramStage.getBoundingClientRect();
+  const position = applyPeripheralDiagramNodePosition(
+    nodeElement,
+    event.clientX - stageRect.left - dragState.offsetX,
+    event.clientY - stageRect.top - dragState.offsetY,
+  );
+  state.peripheralDiagramPositions[dragState.nodeId] = {
+    ...(state.peripheralDiagramPositions?.[dragState.nodeId] || {}),
+    ...position,
+  };
+}
+
+function handlePeripheralDiagramPointerUp(event) {
+  const dragState = state.peripheralDiagramDrag;
+  if (!dragState || dragState.pointerId !== event.pointerId) {
+    return;
+  }
+
+  const nodeElement = elements.peripheralDiagramItems?.querySelector(`[data-node-id="${dragState.nodeId}"]`);
+  nodeElement?.classList.remove("is-dragging");
+  savePeripheralDiagramPositions();
+  state.peripheralDiagramDrag = null;
+}
+
+function handlePeripheralDiagramAssetError(event) {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement)) {
+    return;
+  }
+
+  const nodeElement = image.closest(".peripheral-diagram-node[data-node-id]");
+  const nodeId = String(nodeElement?.dataset.nodeId || "");
+  const node = state.peripheralDiagramNodeMap?.[nodeId];
+  if (!node?.src) {
+    return;
+  }
+
+  state.peripheralDiagramAssetFailures[node.src] = true;
+  if (nodeElement) {
+    const rotation = peripheralDiagramRotation(node.id);
+    const visualStyle = rotation ? ` style="transform:rotate(${rotation}deg);"` : "";
+    nodeElement.innerHTML = `<button type="button" class="peripheral-diagram-node-rotate" data-node-rotate="${escapeHtml(node.id)}" aria-label="Rotate ${escapeHtml(node.label)} clockwise" title="Rotate 90 degrees clockwise">↻</button><div class="peripheral-diagram-node-visual"${visualStyle}>${peripheralDiagramPlaceholderMarkup(node)}</div><div class="peripheral-diagram-node-label">${escapeHtml(node.label)}</div>`;
+  }
+}
+
+function rotatePeripheralDiagramNode(nodeId) {
+  if (!nodeId) {
+    return;
+  }
+
+  const current = state.peripheralDiagramPositions?.[nodeId] || {};
+  const nextRotation = (peripheralDiagramRotation(nodeId) + 90) % 360;
+  state.peripheralDiagramPositions[nodeId] = {
+    ...current,
+    rotation: nextRotation,
+  };
+  savePeripheralDiagramPositions();
+
+  const visual = elements.peripheralDiagramItems?.querySelector(`[data-node-id="${nodeId}"] .peripheral-diagram-node-visual`);
+  if (visual) {
+    visual.style.transform = nextRotation ? `rotate(${nextRotation}deg)` : "";
+  }
+}
+
+function handlePeripheralDiagramClick(event) {
+  const rotateButton = event.target.closest("[data-node-rotate]");
+  if (!rotateButton) {
+    return;
+  }
+
+  event.preventDefault();
+  rotatePeripheralDiagramNode(String(rotateButton.dataset.nodeRotate || ""));
+}
+
+function setupPeripheralDiagramInteractions() {
+  if (!elements.peripheralDiagramItems || !elements.peripheralDiagramStage || elements.peripheralDiagramItems.dataset.interactionsReady === "true") {
+    return;
+  }
+
+  elements.peripheralDiagramItems.dataset.interactionsReady = "true";
+  elements.peripheralDiagramItems.addEventListener("pointerdown", handlePeripheralDiagramPointerDown);
+  elements.peripheralDiagramItems.addEventListener("click", handlePeripheralDiagramClick);
+  elements.peripheralDiagramItems.addEventListener("error", handlePeripheralDiagramAssetError, true);
+  document.addEventListener("pointermove", handlePeripheralDiagramPointerMove);
+  document.addEventListener("pointerup", handlePeripheralDiagramPointerUp);
+  document.addEventListener("pointercancel", handlePeripheralDiagramPointerUp);
+}
+
+function renderPeripheralDiagram() {
+  if (!elements.peripheralDiagramItems) {
+    return;
+  }
+
+  const nodes = [];
+  const audioProfile = String(elements.peripheralAudioProfile?.value || "none");
+  const audioInProfile = String(elements.peripheralAudioInProfile?.value || "none");
+  const displayProfile = String(elements.peripheralDisplayProfile?.value || "none");
+  const sensorProfiles = Array.isArray(state.peripheralSensorProfiles) ? state.peripheralSensorProfiles : [];
+  const storageProfiles = Array.isArray(state.peripheralStorageProfiles) ? state.peripheralStorageProfiles : [];
+  const inputProfiles = Array.isArray(state.peripheralInputProfiles) ? state.peripheralInputProfiles : [];
+  const controlProfiles = Array.isArray(state.peripheralControlProfiles) ? state.peripheralControlProfiles : [];
+  const communicationProfiles = Array.isArray(state.peripheralCommunicationProfiles) ? state.peripheralCommunicationProfiles : [];
+  const expansionProfiles = Array.isArray(state.peripheralExpansionProfiles) ? state.peripheralExpansionProfiles : [];
+
+  const audioAsset = PERIPHERAL_DIAGRAM_ASSET_MAP.audio[audioProfile];
+  const audioPins = peripheralDiagramTemplatePins("audio", audioProfile);
+  if (audioProfile !== "none") {
+    nodes.push(audioAsset
+      ? { id: "audio-out", className: "peripheral-diagram-node peripheral-diagram-node-audio", label: "Audio Out", title: peripheralDiagramSelectedLabel(elements.peripheralAudioProfile, "Audio Out"), pins: audioPins, ...audioAsset }
+      : {
+          id: "audio-out",
+          className: "peripheral-diagram-node peripheral-diagram-node-audio",
+          label: "Audio Out",
+          title: peripheralDiagramSelectedLabel(elements.peripheralAudioProfile, "Audio Out"),
+          pins: audioPins,
+        });
+  }
+
+  const audioInAsset = PERIPHERAL_DIAGRAM_ASSET_MAP.audioIn[audioInProfile];
+  const audioInPins = peripheralDiagramTemplatePins("audioIn", audioInProfile);
+  if (audioInProfile !== "none") {
+    nodes.push(audioInAsset
+      ? { id: "audio-in", className: "peripheral-diagram-node peripheral-diagram-node-audio-in", label: "Audio In", title: peripheralDiagramSelectedLabel(elements.peripheralAudioInProfile, "Audio In"), pins: audioInPins, ...audioInAsset }
+      : {
+          id: "audio-in",
+          className: "peripheral-diagram-node peripheral-diagram-node-audio-in",
+          label: "Audio In",
+          title: peripheralDiagramSelectedLabel(elements.peripheralAudioInProfile, "Audio In"),
+          pins: audioInPins,
+        });
+  }
+
+  const displayAsset = PERIPHERAL_DIAGRAM_ASSET_MAP.display[displayProfile];
+  const displayPins = peripheralDiagramTemplatePins("display", displayProfile);
+  if (displayProfile !== "none") {
+    nodes.push(displayAsset
+      ? { id: "display", className: "peripheral-diagram-node peripheral-diagram-node-display", label: "Display", title: peripheralDiagramSelectedLabel(elements.peripheralDisplayProfile, "Display"), pins: displayPins, ...displayAsset }
+      : {
+          id: "display",
+          className: "peripheral-diagram-node peripheral-diagram-node-display",
+          label: "Display",
+          title: peripheralDiagramSelectedLabel(elements.peripheralDisplayProfile, "Display"),
+          pins: displayPins,
+        });
+  }
+
+  storageProfiles.slice(0, 3).forEach((profile, index) => {
+    const normalizedProfile = String(profile || "none");
+    if (normalizedProfile === "none") {
+      return;
+    }
+    const storageAsset = PERIPHERAL_DIAGRAM_ASSET_MAP.storage[normalizedProfile];
+    const baseNode = {
+      id: `storage-${index}`,
+      className: index === 0 ? "peripheral-diagram-node peripheral-diagram-node-storage" : "peripheral-diagram-node",
+      style: index === 0 ? "" : peripheralDiagramSlotStyle("storage", index),
+      label: storageProfiles.length > 1 ? `Storage ${index + 1}` : "Storage",
+      title: peripheralDiagramOptionLabel(PERIPHERAL_STORAGE_PROFILE_OPTIONS, normalizedProfile, "Storage"),
+      pins: peripheralDiagramTemplatePins("storage", normalizedProfile),
+    };
+    nodes.push(storageAsset
+      ? { ...baseNode, src: storageAsset.src }
+      : baseNode);
+  });
+
+  inputProfiles.slice(0, 4).forEach((profile, index) => {
+    const normalizedProfile = String(profile || "none");
+    if (normalizedProfile === "none") {
+      return;
+    }
+    const inputAsset = PERIPHERAL_DIAGRAM_ASSET_MAP.input[normalizedProfile];
+    const baseNode = {
+      id: `input-${index}`,
+      className: `peripheral-diagram-node peripheral-diagram-node-input-${index}`,
+      label: inputProfiles.length > 1 ? `Input ${index + 1}` : "Input",
+      title: peripheralDiagramOptionLabel(PERIPHERAL_INPUT_PROFILE_OPTIONS, normalizedProfile, `Input ${index + 1}`),
+      pins: peripheralDiagramTemplatePins("input", normalizedProfile),
+    };
+    nodes.push(inputAsset
+      ? { ...baseNode, src: inputAsset.src }
+      : baseNode);
+  });
+
+  sensorProfiles.slice(0, 4).forEach((profile, index) => {
+    const normalizedProfile = String(profile || "none");
+    if (normalizedProfile === "none") {
+      return;
+    }
+    nodes.push({
+      id: `sensor-${index}`,
+      className: "peripheral-diagram-node",
+      style: peripheralDiagramSlotStyle("sensor", index),
+      label: sensorProfiles.length > 1 ? `Sensor ${index + 1}` : "Sensor",
+      title: peripheralDiagramOptionLabel(PERIPHERAL_SENSOR_PROFILE_OPTIONS, normalizedProfile, `Sensor ${index + 1}`),
+      pins: peripheralDiagramTemplatePins("sensor", normalizedProfile),
+    });
+  });
+
+  communicationProfiles.slice(0, 4).forEach((profile, index) => {
+    const normalizedProfile = String(profile || "none");
+    if (normalizedProfile === "none") {
+      return;
+    }
+    nodes.push({
+      id: `communication-${index}`,
+      className: "peripheral-diagram-node",
+      style: peripheralDiagramSlotStyle("communication", index),
+      label: communicationProfiles.length > 1 ? `Comm ${index + 1}` : "Comm",
+      title: peripheralDiagramOptionLabel(PERIPHERAL_COMMUNICATION_PROFILE_OPTIONS, normalizedProfile, `Comm ${index + 1}`),
+      pins: peripheralDiagramTemplatePins("communication", normalizedProfile),
+    });
+  });
+
+  expansionProfiles.slice(0, 4).forEach((profile, index) => {
+    const normalizedProfile = String(profile || "none");
+    if (normalizedProfile === "none") {
+      return;
+    }
+    nodes.push({
+      id: `expansion-${index}`,
+      className: "peripheral-diagram-node",
+      style: peripheralDiagramSlotStyle("expansion", index),
+      label: expansionProfiles.length > 1 ? `Expansion ${index + 1}` : "Expansion",
+      title: peripheralDiagramOptionLabel(PERIPHERAL_EXPANSION_PROFILE_OPTIONS, normalizedProfile, `Expansion ${index + 1}`),
+      pins: peripheralDiagramTemplatePins("expansion", normalizedProfile),
+    });
+  });
+
+  controlProfiles.slice(0, 4).forEach((profile, index) => {
+    const normalizedProfile = String(profile || "none");
+    if (normalizedProfile === "none") {
+      return;
+    }
+    nodes.push({
+      id: `control-${index}`,
+      className: "peripheral-diagram-node",
+      style: peripheralDiagramSlotStyle("control", index),
+      label: controlProfiles.length > 1 ? `Control ${index + 1}` : "Control",
+      title: peripheralDiagramOptionLabel(PERIPHERAL_CONTROL_PROFILE_OPTIONS, normalizedProfile, `Control ${index + 1}`),
+      pins: peripheralDiagramTemplatePins("control", normalizedProfile),
+    });
+  });
+
+  state.peripheralDiagramNodeMap = Object.fromEntries(nodes.map((node) => [node.id, node]));
+  elements.peripheralDiagramItems.innerHTML = nodes.map((node) => peripheralDiagramNodeMarkup(node)).join("");
+  if (elements.peripheralDiagramPlaceholderText) {
+    elements.peripheralDiagramPlaceholderText.hidden = nodes.length > 0;
+  }
+}
+
+function renderPeripheralSensorControls() {
+  if (!elements.peripheralSensorsList) {
+    return;
+  }
+
+  state.peripheralSensorProfiles = normalizedPeripheralSensorProfiles();
+  const total = state.peripheralSensorProfiles.length;
+  elements.peripheralSensorsList.innerHTML = "";
+
+  state.peripheralSensorProfiles.forEach((selectedValue, index) => {
+    const row = document.createElement("div");
+    row.className = "peripheral-profile-row";
+
+    const select = document.createElement("select");
+    select.dataset.peripheralSensorIndex = String(index);
+    select.setAttribute("aria-label", `Sensor ${index + 1} peripheral profile`);
+    appendPeripheralOptions(select, PERIPHERAL_SENSOR_PROFILE_OPTIONS, selectedValue);
+    row.appendChild(select);
+
+    row.appendChild(buildPeripheralActionButton({
+      addDatasetKey: "peripheralSensorAdd",
+      removeDatasetKey: "peripheralSensorRemove",
+      index,
+      total,
+      maxCount: MAX_PERIPHERAL_SENSORS,
+      singularLabel: "sensor",
+    }));
+    elements.peripheralSensorsList.appendChild(row);
+  });
+  renderPeripheralDiagram();
+}
+
+function renderPeripheralInputControls() {
+  if (!elements.peripheralInputsList) {
+    return;
+  }
+
+  state.peripheralInputProfiles = normalizedPeripheralInputProfiles();
+  const total = state.peripheralInputProfiles.length;
+  elements.peripheralInputsList.innerHTML = "";
+
+  state.peripheralInputProfiles.forEach((selectedValue, index) => {
+    const row = document.createElement("div");
+    row.className = "peripheral-profile-row";
+
+    const select = document.createElement("select");
+    select.dataset.peripheralInputIndex = String(index);
+    select.setAttribute("aria-label", `Input ${index + 1} peripheral profile`);
+    appendPeripheralOptions(select, PERIPHERAL_INPUT_PROFILE_OPTIONS, selectedValue);
+    row.appendChild(select);
+
+    row.appendChild(buildPeripheralActionButton({
+      addDatasetKey: "peripheralInputAdd",
+      removeDatasetKey: "peripheralInputRemove",
+      index,
+      total,
+      maxCount: MAX_PERIPHERAL_INPUTS,
+      singularLabel: "input",
+    }));
+    elements.peripheralInputsList.appendChild(row);
+  });
+  renderPeripheralDiagram();
+}
+
+function renderPeripheralStorageControls() {
+  if (!elements.peripheralStorageList) {
+    return;
+  }
+
+  state.peripheralStorageProfiles = normalizedPeripheralStorageProfiles();
+  const total = state.peripheralStorageProfiles.length;
+  elements.peripheralStorageList.innerHTML = "";
+
+  state.peripheralStorageProfiles.forEach((selectedValue, index) => {
+    const row = document.createElement("div");
+    row.className = "peripheral-profile-row";
+
+    const select = document.createElement("select");
+    select.dataset.peripheralStorageIndex = String(index);
+    select.setAttribute("aria-label", `Storage ${index + 1} peripheral profile`);
+    appendPeripheralOptions(select, PERIPHERAL_STORAGE_PROFILE_OPTIONS, selectedValue);
+    if (index === 0) {
+      const composite = document.createElement("div");
+      composite.className = "peripheral-field-composite";
+      composite.appendChild(select);
+      composite.appendChild(buildPeripheralBindingGroup("storage"));
+      row.appendChild(composite);
+    } else {
+      row.appendChild(select);
+    }
+
+    row.appendChild(buildPeripheralActionButton({
+      addDatasetKey: "peripheralStorageAdd",
+      removeDatasetKey: "peripheralStorageRemove",
+      index,
+      total,
+      maxCount: MAX_PERIPHERAL_STORAGES,
+      singularLabel: "storage option",
+    }));
+    elements.peripheralStorageList.appendChild(row);
+  });
+  syncPeripheralBindingGroups();
+  renderPeripheralDiagram();
+}
+
+function renderPeripheralControlControls() {
+  if (!elements.peripheralControlsList) {
+    return;
+  }
+
+  state.peripheralControlProfiles = normalizedPeripheralControlProfiles();
+  const total = state.peripheralControlProfiles.length;
+  elements.peripheralControlsList.innerHTML = "";
+
+  state.peripheralControlProfiles.forEach((selectedValue, index) => {
+    const row = document.createElement("div");
+    row.className = "peripheral-profile-row";
+
+    const select = document.createElement("select");
+    select.dataset.peripheralControlIndex = String(index);
+    select.setAttribute("aria-label", `Controls ${index + 1} peripheral profile`);
+    appendPeripheralOptions(select, PERIPHERAL_CONTROL_PROFILE_OPTIONS, selectedValue);
+    row.appendChild(select);
+
+    row.appendChild(buildPeripheralActionButton({
+      addDatasetKey: "peripheralControlAdd",
+      removeDatasetKey: "peripheralControlRemove",
+      index,
+      total,
+      maxCount: MAX_PERIPHERAL_CONTROLS,
+      singularLabel: "control",
+    }));
+    elements.peripheralControlsList.appendChild(row);
+  });
+}
+
+function renderPeripheralExpansionControls() {
+  if (!elements.peripheralExpansionsList) {
+    return;
+  }
+
+  state.peripheralExpansionProfiles = normalizedPeripheralExpansionProfiles();
+  const total = state.peripheralExpansionProfiles.length;
+  elements.peripheralExpansionsList.innerHTML = "";
+
+  state.peripheralExpansionProfiles.forEach((selectedValue, index) => {
+    const row = document.createElement("div");
+    row.className = "peripheral-profile-row";
+
+    const select = document.createElement("select");
+    select.dataset.peripheralExpansionIndex = String(index);
+    select.setAttribute("aria-label", `Expansion ${index + 1} peripheral profile`);
+    appendPeripheralOptions(select, PERIPHERAL_EXPANSION_PROFILE_OPTIONS, selectedValue);
+    row.appendChild(select);
+
+    row.appendChild(buildPeripheralActionButton({
+      addDatasetKey: "peripheralExpansionAdd",
+      removeDatasetKey: "peripheralExpansionRemove",
+      index,
+      total,
+      maxCount: MAX_PERIPHERAL_EXPANSIONS,
+      singularLabel: "expansion",
+    }));
+    elements.peripheralExpansionsList.appendChild(row);
+  });
+}
+
+function renderPeripheralCommunicationControls() {
+  if (!elements.peripheralCommunicationList) {
+    return;
+  }
+
+  state.peripheralCommunicationProfiles = normalizedPeripheralCommunicationProfiles();
+  const total = state.peripheralCommunicationProfiles.length;
+  elements.peripheralCommunicationList.innerHTML = "";
+
+  state.peripheralCommunicationProfiles.forEach((selectedValue, index) => {
+    const row = document.createElement("div");
+    row.className = "peripheral-profile-row";
+
+    const select = document.createElement("select");
+    select.dataset.peripheralCommunicationIndex = String(index);
+    select.setAttribute("aria-label", `Communication ${index + 1} peripheral profile`);
+    appendPeripheralOptions(select, PERIPHERAL_COMMUNICATION_PROFILE_OPTIONS, selectedValue);
+    row.appendChild(select);
+
+    row.appendChild(buildPeripheralActionButton({
+      addDatasetKey: "peripheralCommunicationAdd",
+      removeDatasetKey: "peripheralCommunicationRemove",
+      index,
+      total,
+      maxCount: MAX_PERIPHERAL_COMMUNICATIONS,
+      singularLabel: "communication option",
+    }));
+    elements.peripheralCommunicationList.appendChild(row);
+  });
 }
 
 function oledPreviewNode(selector) {
@@ -1003,11 +2077,43 @@ function availableStatusLedPins() {
 }
 
 function activeGpioBoardProfile(status = state.status) {
+  const autodetectEnabled = Boolean(elements.gpioBoardAutodetect?.checked ?? true);
   const selectedBoard = String(elements.gpioBoardSelector?.value || "");
-  if (selectedBoard && GPIO_BOARD_LAYOUTS[selectedBoard]) {
+  if (!autodetectEnabled && selectedBoard && GPIO_BOARD_LAYOUTS[selectedBoard]) {
     return selectedBoard;
   }
   return detectGpioBoardProfile(status);
+}
+
+function saveGpioBoardPreferences() {
+  const ui = ensureUiSettings();
+  ui.gpioBoardAutodetect = Boolean(elements.gpioBoardAutodetect?.checked ?? true);
+  ui.gpioBoardSelection = elements.gpioBoardSelector?.value && GPIO_BOARD_LAYOUTS[elements.gpioBoardSelector.value]
+    ? String(elements.gpioBoardSelector.value)
+    : "";
+  if (!state.settingsLoading) {
+    queueSettingsSave(0);
+  }
+}
+
+function restoreGpioBoardPreferences() {
+  const ui = ensureUiSettings();
+  if (elements.gpioBoardAutodetect) {
+    elements.gpioBoardAutodetect.checked = ui.gpioBoardAutodetect;
+  }
+  if (elements.gpioBoardSelector && ui.gpioBoardSelection && GPIO_BOARD_LAYOUTS[ui.gpioBoardSelection]) {
+    elements.gpioBoardSelector.value = ui.gpioBoardSelection;
+  }
+}
+
+function isGpioUiInteracting() {
+  if (state.gpioUiInteractionDepth > 0) {
+    return true;
+  }
+  const activeElement = document.activeElement;
+  return activeElement === elements.gpioBoardSelector ||
+    activeElement === elements.gpioBoardAutodetect ||
+    (activeElement instanceof HTMLSelectElement && activeElement.matches("[data-gpio-role-select]"));
 }
 
 function statusLedRoleLabel(settings = state.settings, status = state.status) {
@@ -1202,7 +2308,7 @@ function reservedSdPins(settings = state.settings) {
   return reservedPins;
 }
 
-function populateSdPinOptions(settings = state.settings) {
+function populateSdPinOptions(settings = state.settings, syncBindings = true) {
   const sdFields = [elements.sdCsPin, elements.sdSckPin, elements.sdMosiPin, elements.sdMisoPin];
   if (sdFields.some((field) => !field)) {
     return;
@@ -1246,6 +2352,10 @@ function populateSdPinOptions(settings = state.settings) {
   applySelectedOrFallback(elements.sdSckPin, selectedPins.sck, DEFAULT_SD_GPIO_PINS.sck);
   applySelectedOrFallback(elements.sdMosiPin, selectedPins.mosi, DEFAULT_SD_GPIO_PINS.mosi);
   applySelectedOrFallback(elements.sdMisoPin, selectedPins.miso, DEFAULT_SD_GPIO_PINS.miso);
+
+  if (syncBindings) {
+    syncPeripheralBindingGroups();
+  }
 }
 
 function reservedOledPins(settings = state.settings) {
@@ -2397,6 +3507,11 @@ function updateStorageToolbar(storage = state.storageInfoByTarget[state.activeSt
   }
   if (elements.storageNewFolderButton) {
     elements.storageNewFolderButton.disabled = !storage.mounted;
+  }
+  if (elements.storageRemountButton) {
+    const isSdTarget = state.activeStorageTarget === "sd";
+    elements.storageRemountButton.hidden = !isSdTarget;
+    elements.storageRemountButton.disabled = !isSdTarget;
   }
 }
 
@@ -3565,6 +4680,29 @@ async function reindexStorageDirectory(target = state.activeStorageTarget, direc
   }
 }
 
+async function remountStorageDirectory(target = state.activeStorageTarget, directoryPath = state.currentStoragePathByTarget[target] || "/") {
+  const resolvedTarget = resolveStorageTarget(target);
+  if (resolvedTarget !== "sd") {
+    return;
+  }
+
+  if (elements.storageRemountButton) {
+    elements.storageRemountButton.disabled = true;
+  }
+
+  try {
+    setStorageStatus("Remounting SD card...");
+    const payload = await request(`/api/storage/remount?target=${encodeURIComponent(resolvedTarget)}&dir=${encodeURIComponent(normalizeStorageDirectoryPath(directoryPath))}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    renderStorageManager(payload);
+    setStorageStatus(payload?.message || "SD card remounted.");
+  } finally {
+    updateStorageToolbar(state.storageInfoByTarget[state.activeStorageTarget] || {});
+  }
+}
+
 async function ensureStorageListFilled(target = state.activeStorageTarget) {
   if (!elements.storageFileList) {
     return;
@@ -4052,13 +5190,21 @@ function detectGpioBoardProfile(status = state.status) {
   return "esp32-s3-super-mini";
 }
 
-function updateGpioBoardSelectorMode(status = state.status) {
+function updateGpioBoardSelectorMode(status = state.status, options = {}) {
   if (!elements.gpioBoardSelector) {
     return;
   }
+  const { force = false } = options;
   const autodetectEnabled = Boolean(elements.gpioBoardAutodetect?.checked ?? true);
   elements.gpioBoardSelector.disabled = autodetectEnabled;
   if (!autodetectEnabled) {
+    const selectedBoard = String(elements.gpioBoardSelector.value || "");
+    if (!selectedBoard || !GPIO_BOARD_LAYOUTS[selectedBoard]) {
+      elements.gpioBoardSelector.value = "esp32-s3-super-mini";
+    }
+    return;
+  }
+  if (!force && isGpioUiInteracting()) {
     return;
   }
   const detectedBoard = detectGpioBoardProfile(status);
@@ -4077,6 +5223,11 @@ function updateGpioBoardImage() {
   elements.gpioBoardImage.src = asset.src;
   elements.gpioBoardImage.alt = asset.alt;
   elements.gpioBoardImage.style.transform = presentation.rotation;
+  if (elements.peripheralDiagramBoardImage) {
+    elements.peripheralDiagramBoardImage.src = asset.src;
+    elements.peripheralDiagramBoardImage.alt = `${asset.alt} in peripheral diagram`;
+    elements.peripheralDiagramBoardImage.style.transform = presentation.rotation;
+  }
   if (elements.gpioBoardRecommendations) {
     elements.gpioBoardRecommendations.className = `gpio-board-recommendations gpio-board-recommendations-${presentation.tone || "neutral"}`;
     elements.gpioBoardRecommendations.innerHTML = `
@@ -4084,6 +5235,7 @@ function updateGpioBoardImage() {
       <div>${escapeHtml(presentation.recommendation)}</div>
     `;
   }
+  renderPeripheralDiagram();
   renderGpioOverview();
 }
 
@@ -4189,13 +5341,14 @@ function gpioConfigRoleDefinitions(settings = state.settings) {
       key: "oled.wapeTriggerPin",
       label: "Wape Trigger",
       element: elements.wapeTriggerPin,
+      unusedValue: 0,
       isAssigned: (value) => Number.isFinite(value) && value > 0,
     });
   } else {
     definitions.push(
       { key: "oled.sdaPin", label: "OLED SDA", element: elements.oledSdaPin, isAssigned: (value) => Number.isFinite(value) && value >= 0 },
       { key: "oled.sclPin", label: "OLED SCL", element: elements.oledSclPin, isAssigned: (value) => Number.isFinite(value) && value >= 0 },
-      { key: "oled.resetPin", label: "OLED RESET", element: elements.oledResetPin, isAssigned: (value) => Number.isFinite(value) && value >= 0 },
+      { key: "oled.resetPin", label: "OLED RESET", element: elements.oledResetPin, unusedValue: -1, isAssigned: (value) => Number.isFinite(value) && value >= 0 },
     );
   }
 
@@ -4321,6 +5474,7 @@ function gpioDropdownMarkup(item, roleMap, roleState) {
       <span class="gpio-pin-label">${escapeHtml(label)}</span>
       <select data-gpio-role-select="true" data-pin="${numericPin}" aria-label="${escapeHtml(label)} assignment">
         ${currentRoleKey ? "" : `<option value="" selected>${escapeHtml(selectedLabel)}</option>`}
+        ${currentDefinition?.unusedValue !== undefined ? `<option value="__unused__">Unused</option>` : ""}
         ${options.map((definition) => `<option value="${escapeHtml(definition.key)}"${definition.key === currentRoleKey ? " selected" : ""}>${escapeHtml(definition.label)}</option>`).join("")}
       </select>
     </label>
@@ -4379,6 +5533,7 @@ function syncGpioMappingControls() {
   updateAudioUiState();
   updateBatteryUi();
   updateDisplayModeUi();
+  syncPeripheralBindingGroups();
   renderOledPreview();
   renderDeviceResources(state.status || {});
   renderGpioOverview();
@@ -4386,19 +5541,37 @@ function syncGpioMappingControls() {
 
 function applyGpioRoleSelection(pin, selectedRoleKey) {
   const numericPin = Number(pin);
-  if (!Number.isFinite(numericPin) || !selectedRoleKey) {
+  if (!Number.isFinite(numericPin)) {
     renderGpioOverview();
     return;
   }
 
   const roleState = gpioConfigRoleState(state.settings || {});
+  const currentRoleKey = roleState.pinToRole.get(numericPin) || "";
+
+  if (selectedRoleKey === "__unused__") {
+    const currentDefinition = currentRoleKey ? roleState.byKey.get(currentRoleKey) : null;
+    if (!currentDefinition?.element || currentDefinition.unusedValue === undefined) {
+      renderGpioOverview();
+      return;
+    }
+    currentDefinition.element.value = String(currentDefinition.unusedValue);
+    syncGpioMappingControls();
+    queueSettingsSave(150);
+    return;
+  }
+
+  if (!selectedRoleKey) {
+    renderGpioOverview();
+    return;
+  }
+
   const selectedDefinition = roleState.byKey.get(selectedRoleKey);
   if (!selectedDefinition?.element) {
     renderGpioOverview();
     return;
   }
 
-  const currentRoleKey = roleState.pinToRole.get(numericPin) || "";
   if (currentRoleKey === selectedRoleKey) {
     renderGpioOverview();
     return;
@@ -4486,6 +5659,7 @@ function renderHardwareSummary(status) {
 
 function renderDeviceResources(status) {
   const system = status?.system || {};
+  const hardware = status?.hardware || {};
   const sram = system.sram || {};
   const psram = system.psram || {};
   const spiffs = system.spiffs || {};
@@ -4534,10 +5708,36 @@ function renderDeviceResources(status) {
       0,
       "Waiting for SD card telemetry from the device."
     );
+    updateResourceCard(
+      elements.deviceChipTempValue,
+      elements.deviceChipTempBar,
+      elements.deviceChipTempMeta,
+      "--",
+      0,
+      "Waiting for chip temperature telemetry from the device."
+    );
+    updateResourceCard(
+      elements.deviceFlashHeadroomValue,
+      elements.deviceFlashHeadroomBar,
+      elements.deviceFlashHeadroomMeta,
+      "--",
+      0,
+      "Waiting for flash layout telemetry from the device."
+    );
     return;
   }
 
   const cpuLoadPercent = Math.max(0, Math.min(100, Number(system.cpuLoadPercent || 0)));
+  const chipTemperatureAvailable = Boolean(system.chipTemperatureAvailable);
+  const chipTemperatureC = Number(system.chipTemperatureC);
+  const chipTemperaturePercent = chipTemperatureAvailable && Number.isFinite(chipTemperatureC)
+    ? Math.max(0, Math.min(100, ((chipTemperatureC - 20) / 70) * 100))
+    : 0;
+  const flashSlotSizeBytes = Number(hardware.appPartitionSizeBytes || 0);
+  const firmwareSizeBytes = Number(hardware.sketchSizeBytes || 0);
+  const flashChipSizeBytes = Number(hardware.flashSizeBytes || 0);
+  const flashHeadroomBytes = flashSlotSizeBytes > firmwareSizeBytes ? flashSlotSizeBytes - firmwareSizeBytes : 0;
+  const flashUsedPercent = flashSlotSizeBytes > 0 ? (firmwareSizeBytes * 100) / flashSlotSizeBytes : 0;
 
   updateResourceCard(
     elements.deviceCpuLoadValue,
@@ -4546,6 +5746,17 @@ function renderDeviceResources(status) {
     `${Math.round(cpuLoadPercent)}%`,
     cpuLoadPercent,
     "Approximate load derived from FreeRTOS idle time."
+  );
+
+  updateResourceCard(
+    elements.deviceChipTempValue,
+    elements.deviceChipTempBar,
+    elements.deviceChipTempMeta,
+    chipTemperatureAvailable && Number.isFinite(chipTemperatureC) ? `${chipTemperatureC.toFixed(1)} C` : "Unavailable",
+    chipTemperaturePercent,
+    chipTemperatureAvailable && Number.isFinite(chipTemperatureC)
+      ? "Internal ESP32 die temperature sensor reading."
+      : "This build or target does not expose chip temperature telemetry."
   );
 
   const sramUsedPercent = sram.totalBytes > 0 ? (Number(sram.usedBytes || 0) * 100) / Number(sram.totalBytes) : 0;
@@ -4600,6 +5811,26 @@ function renderDeviceResources(status) {
       "Unavailable",
       0,
       "No flash filesystem partition detected."
+    );
+  }
+
+  if (flashSlotSizeBytes > 0) {
+    updateResourceCard(
+      elements.deviceFlashHeadroomValue,
+      elements.deviceFlashHeadroomBar,
+      elements.deviceFlashHeadroomMeta,
+      formatBytes(flashHeadroomBytes),
+      flashUsedPercent,
+      `${formatBytes(firmwareSizeBytes)} firmware in ${formatBytes(flashSlotSizeBytes)} OTA slot • ${formatBytes(flashChipSizeBytes)} chip flash total`
+    );
+  } else {
+    updateResourceCard(
+      elements.deviceFlashHeadroomValue,
+      elements.deviceFlashHeadroomBar,
+      elements.deviceFlashHeadroomMeta,
+      "Unavailable",
+      0,
+      flashChipSizeBytes > 0 ? `${formatBytes(flashChipSizeBytes)} chip flash detected • OTA slot size unknown` : "Flash layout telemetry is unavailable."
     );
   }
 
@@ -5137,6 +6368,7 @@ function syncPageSections(settings = state.settings) {
   updateLowBatterySleepUi();
   updateConditionalVisibility();
   updateDisplayModeUi();
+  syncPeripheralBindingGroups();
   renderHardwareSummary(state.status || {});
   renderDeviceResources(state.status || {});
   renderOledPreview();
@@ -5406,6 +6638,288 @@ function currentBatteryCalibrationMultiplier() {
     return measuredVoltage / rawAdcVoltage;
   }
   return savedMultiplier || Number(state.settings?.battery?.calibrationMultiplier || 0) || 2.0;
+}
+
+function cloneSettingsObject(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizePeripheralDiagramPositions(value) {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return isPlainObject(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return isPlainObject(value) ? (cloneSettingsObject(value) || {}) : {};
+}
+
+function normalizeUiSettings(uiSettings = {}) {
+  const source = isPlainObject(uiSettings) ? uiSettings : {};
+  return {
+    gpioBoardAutodetect: Object.prototype.hasOwnProperty.call(source, "gpioBoardAutodetect")
+      ? Boolean(source.gpioBoardAutodetect)
+      : true,
+    gpioBoardSelection: String(source.gpioBoardSelection || ""),
+    peripheralDiagramPositions: normalizePeripheralDiagramPositions(
+      source.peripheralDiagramPositions ?? source.peripheralDiagramLayout,
+    ),
+  };
+}
+
+function ensureUiSettings(settings = state.settings) {
+  const normalized = normalizeUiSettings(settings?.ui);
+  if (settings) {
+    settings.ui = normalized;
+  }
+  return normalized;
+}
+
+function mergeSettingsObjects(baseValue, overrideValue) {
+  if (Array.isArray(overrideValue)) {
+    return [...overrideValue];
+  }
+  if (!isPlainObject(overrideValue)) {
+    return overrideValue;
+  }
+
+  const result = isPlainObject(baseValue) ? { ...baseValue } : {};
+  for (const [key, value] of Object.entries(overrideValue)) {
+    result[key] = isPlainObject(value)
+      ? mergeSettingsObjects(result[key], value)
+      : (Array.isArray(value) ? [...value] : value);
+  }
+  return result;
+}
+
+function currentSettingsSnapshot() {
+  const baseSettings = cloneSettingsObject(state.settings || {}) || {};
+  const snapshot = mergeSettingsObjects(baseSettings, collectForm());
+  snapshot.ui = currentBackupUiState();
+  return snapshot;
+}
+
+function currentBackupUiState() {
+  return {
+    gpioBoard: {
+      autodetect: Boolean(elements.gpioBoardAutodetect?.checked ?? true),
+      selectedBoard: String(elements.gpioBoardSelector?.value || ""),
+    },
+    peripheralDiagramPositions: cloneSettingsObject(state.peripheralDiagramPositions || {}) || {},
+  };
+}
+
+function applyBackupUiState(uiState, options = {}) {
+  const { persist = false } = options;
+  if (!isPlainObject(uiState)) {
+    return;
+  }
+
+  const normalized = normalizeUiSettings({
+    gpioBoardAutodetect: uiState?.gpioBoard?.autodetect,
+    gpioBoardSelection: uiState?.gpioBoard?.selectedBoard,
+    peripheralDiagramPositions: uiState?.peripheralDiagramPositions,
+  });
+
+  if (elements.gpioBoardAutodetect) {
+    elements.gpioBoardAutodetect.checked = normalized.gpioBoardAutodetect;
+  }
+  if (elements.gpioBoardSelector && normalized.gpioBoardSelection && GPIO_BOARD_LAYOUTS[normalized.gpioBoardSelection]) {
+    elements.gpioBoardSelector.value = normalized.gpioBoardSelection;
+  }
+  if (state.settings) {
+    state.settings.ui = normalized;
+  }
+  updateGpioBoardSelectorMode(state.status, { force: true });
+  updateGpioBoardImage();
+  if (!isGpioUiInteracting()) {
+    renderGpioOverview();
+  }
+
+  state.peripheralDiagramPositions = cloneSettingsObject(normalized.peripheralDiagramPositions) || {};
+  renderPeripheralDiagram();
+
+  if (persist && !state.settingsLoading) {
+    queueSettingsSave(0);
+  }
+}
+
+function backupTimestamp() {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+}
+
+function backupDeviceLabel(settings) {
+  const friendly = String(settings?.device?.friendlyName || settings?.device?.deviceName || state.status?.device?.friendlyName || "esp32-notifier").trim();
+  return friendly.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "esp32-notifier";
+}
+
+function createConfigurationBackupMarkdown(settings) {
+  const firmwareVersion = String(state.status?.firmware?.version || "unknown");
+  const deviceName = String(settings?.device?.friendlyName || settings?.device?.deviceName || "ESP32 Notifier");
+  const uiState = currentBackupUiState();
+  const backupDocument = {
+    meta: {
+      format: "esp32-notifier-config-backup",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      firmwareVersion,
+      deviceName,
+    },
+    settings,
+    uiState,
+  };
+
+  return [
+    "# ESP32 Notifier Configuration Backup",
+    "",
+    `Device: ${deviceName}`,
+    `Firmware: ${firmwareVersion}`,
+    `Exported: ${backupDocument.meta.exportedAt}`,
+    "",
+    "Edit only the JSON block below if you want to adjust values on a PC before restoring.",
+    "",
+    "```json",
+    JSON.stringify(backupDocument, null, 2),
+    "```",
+    "",
+  ].join("\n");
+}
+
+function downloadTextFile(filename, content, mimeType = "text/markdown;charset=utf-8") {
+  const blob = new Blob([content], { type: mimeType });
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+}
+
+function parseConfigurationBackup(text) {
+  const rawText = String(text || "").trim();
+  if (!rawText) {
+    throw new Error("Backup file is empty.");
+  }
+
+  const tryParseJson = (value) => {
+    const parsed = JSON.parse(value);
+    if (!isPlainObject(parsed)) {
+      throw new Error("Backup file does not contain a settings object.");
+    }
+    return parsed;
+  };
+
+  try {
+    const parsed = tryParseJson(rawText);
+    return {
+      settings: isPlainObject(parsed.settings) ? parsed.settings : parsed,
+      uiState: isPlainObject(parsed.uiState) ? parsed.uiState : {},
+      meta: isPlainObject(parsed.meta) ? parsed.meta : {},
+    };
+  } catch {
+    const fencedMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (!fencedMatch) {
+      throw new Error("Backup file does not contain a readable JSON configuration block.");
+    }
+    const parsed = tryParseJson(fencedMatch[1].trim());
+    return {
+      settings: isPlainObject(parsed.settings) ? parsed.settings : parsed,
+      uiState: isPlainObject(parsed.uiState) ? parsed.uiState : {},
+      meta: isPlainObject(parsed.meta) ? parsed.meta : {},
+    };
+  }
+}
+
+function validateSettingsPayload(submittedSettings) {
+  if (oledPinsConflictInternally(submittedSettings)) {
+    throw new Error("OLED SDA, SCL, and RESET must use different GPIOs.");
+  }
+  if (oledPinsConflictWithAudio(submittedSettings)) {
+    throw new Error("OLED SDA, SCL, and RESET cannot reuse the active MAX98357A I2S pins. Change the display pins or disable OLED first.");
+  }
+  if (sdPinsConflictInternally(submittedSettings)) {
+    throw new Error("SD card CS, SCK, MOSI, and MISO must use four different GPIOs.");
+  }
+  if (sdPinsConflictWithReservedFunctions(submittedSettings)) {
+    throw new Error("SD card pins cannot reuse the active audio, battery, status LED, or Wape trigger GPIOs.");
+  }
+}
+
+async function applySettingsPayload(submittedSettings, options = {}) {
+  const {
+    silent = false,
+    successMessage = silent ? "Settings auto-saved" : "Settings saved",
+    toastMessage = silent ? "" : "Settings saved",
+  } = options;
+
+  const previousSettings = state.settings;
+  submittedSettings.sd ||= {};
+  submittedSettings.sd.enabled = true;
+  submittedSettings.ui = normalizeUiSettings(submittedSettings.ui);
+  validateSettingsPayload(submittedSettings);
+
+  if (!silent) {
+    setMessage("Saving settings...");
+  }
+
+  state.settingsSaving = true;
+  const savePromise = (async () => {
+    try {
+      await request("/api/settings", {
+        method: "POST",
+        body: JSON.stringify(submittedSettings),
+      });
+
+      state.settings = submittedSettings;
+      state.batteryMeasuredVoltageInput = submittedSettings.battery?.measuredVoltage > 0
+        ? Number(submittedSettings.battery.measuredVoltage).toFixed(3)
+        : "";
+      fillForm(submittedSettings);
+      applyBackupUiState({
+        gpioBoard: {
+          autodetect: submittedSettings.ui.gpioBoardAutodetect,
+          selectedBoard: submittedSettings.ui.gpioBoardSelection,
+        },
+        peripheralDiagramPositions: submittedSettings.ui.peripheralDiagramPositions,
+      });
+      renderEffectFileOptions(submittedSettings);
+      state.settingsDirty = false;
+      setMessage(successMessage);
+      if (toastMessage) {
+        toast(toastMessage);
+      }
+
+      loadStatus().catch((error) => console.error(error));
+      refreshSettingsAfterSave(submittedSettings).catch((error) => console.error(error));
+      if (sdSettingsChanged(previousSettings, submittedSettings)) {
+        clearEffectFileOptionsCache();
+        renderEffectFileOptions(submittedSettings);
+      }
+      if (activeTabName() === "storage-external") {
+        if (state.activeStorageTarget === "sd") {
+          refreshExternalStorageTab(state.currentStoragePathByTarget.sd || "/").catch((error) => console.error(error));
+        } else {
+          rerenderStorageManager("sd");
+        }
+      }
+    } finally {
+      state.settingsSaving = false;
+      state.settingsSavePromise = null;
+    }
+  })();
+
+  state.settingsSavePromise = savePromise;
+  return savePromise;
 }
 
 function updateDerivedBatteryCalibration() {
@@ -5800,7 +7314,9 @@ function renderStatus(status) {
   renderHardwareSummary(status);
   renderDeviceResources(status);
   maybeRefreshVisibleStorageTab();
-  renderGpioOverview();
+  if (!isGpioUiInteracting()) {
+    renderGpioOverview();
+  }
   updateStoragePreviewProgressUi();
 
   const previousUpdateVersion = String(previousStatus?.ota?.latestVersion || previousStatus?.otaManager?.latestVersion || "");
@@ -6361,12 +7877,19 @@ async function loadSettings() {
   state.settings = await request("/api/settings");
   state.settings.sd ||= {};
   state.settings.sd.enabled = true;
+  state.settings.ui = normalizeUiSettings(state.settings.ui);
+  state.peripheralDiagramPositions = cloneSettingsObject(state.settings.ui.peripheralDiagramPositions) || {};
+  restoreGpioBoardPreferences();
   state.batteryMeasuredVoltageInput = Number(state.settings?.battery?.measuredVoltage || 0) > 0
     ? Number(state.settings.battery.measuredVoltage).toFixed(3)
     : "";
   fillForm(state.settings);
   setFirmwareAuthorLink(state.settings);
-  renderGpioOverview();
+  updateGpioBoardImage();
+  renderPeripheralDiagram();
+  if (!isGpioUiInteracting()) {
+    renderGpioOverview();
+  }
   resetWifiNetworkList();
   maybeRefreshVisibleStorageTab();
 }
@@ -6389,7 +7912,7 @@ async function saveSettings(options = {}) {
   }
   normalizeDecimalField(elements.batteryMeasuredVoltage);
   const previousSettings = state.settings;
-  const submittedSettings = collectForm();
+  const submittedSettings = currentSettingsSnapshot();
   if (oledPinsConflictInternally(submittedSettings)) {
     throw new Error("OLED SDA, SCL, and RESET must use different GPIOs.");
   }
@@ -6497,64 +8020,11 @@ async function setVolume(volumePercent) {
     body: JSON.stringify({ volumePercent }),
   });
   elements.volumeSlider.value = volumePercent;
-  elements.volumeValue.textContent = `${volumePercent}%`;
   setMessage(`Volume saved at ${volumePercent}%`);
-  await loadStatus();
-  await refreshSettingsAfterSave({ device: { savedVolumePercent: volumePercent } }, 8, 200);
 }
 
-async function setEffectVolume(config, volumePercent) {
-  const nextVolume = effectVolumePercentValue(volumePercent, effectVolumeSetting(config));
-  state.settings ||= {};
-  state.settings.effects ||= {};
-  state.settings.effects[config.volumeField] = nextVolume;
-  if (namedField(`effects.${config.volumeField}`)) {
-    namedField(`effects.${config.volumeField}`).value = String(nextVolume);
-  }
-  await saveSettings({ silent: true });
-  if (config.element?.value) {
-    await previewEffectFile(config.element.value, config.label, { source: config.source });
-  }
-  setMessage(`${config.label} volume saved at ${nextVolume}%`);
-  await refreshSettingsAfterSave({ effects: { [config.volumeField]: nextVolume } }, 8, 200);
-}
-
-async function stopPlayback() {
-  state.playbackActionInProgress = "stop";
-  updatePlaybackActionButton();
-  try {
-    await request("/api/stop", { method: "POST", body: JSON.stringify({}) });
-    const stopped = await pollStatusUntil(
-      (status) => {
-        const playbackState = String(status?.playback?.state || "idle");
-        return playbackState !== "playing" && playbackState !== "buffering";
-      },
-      12,
-      150,
-    );
-    setMessage(stopped ? "Playback stopped" : "Stop requested");
-    toast(stopped ? "Playback stopped" : "Stop requested");
-    if (!stopped) {
-      await loadStatus();
-    }
-  } finally {
-    state.playbackActionInProgress = "";
-    updatePlaybackActionButton();
-  }
-}
-
-async function handlePlaybackAction(event) {
-  if (event) {
-    event.preventDefault();
-  }
-
-  if (state.playbackActionInProgress) {
-    return;
-  }
-
-  const playbackActive = isPlaybackActive();
-
-  if (playbackActive) {
+async function handlePlaybackAction() {
+  if (isPlaybackActive()) {
     await stopPlayback();
     return;
   }
@@ -6564,6 +8034,32 @@ async function handlePlaybackAction(event) {
   }
 
   await submitPlay();
+}
+
+function exportConfigurationBackup() {
+  const settingsSnapshot = currentSettingsSnapshot();
+  const filename = `${backupDeviceLabel(settingsSnapshot)}-config-backup-${backupTimestamp()}.md`;
+  downloadTextFile(filename, createConfigurationBackupMarkdown(settingsSnapshot));
+  setMessage("Configuration backup downloaded");
+  toast("Configuration backup downloaded");
+}
+
+async function restoreConfigurationBackup(file) {
+  if (!file) {
+    return;
+  }
+
+  const text = await file.text();
+  const importedBackup = parseConfigurationBackup(text);
+  const mergedSettings = mergeSettingsObjects(cloneSettingsObject(state.settings || {}) || {}, importedBackup.settings);
+  mergedSettings.sd ||= {};
+  mergedSettings.sd.enabled = true;
+  await applySettingsPayload(mergedSettings, {
+    silent: false,
+    successMessage: "Configuration restored",
+    toastMessage: "Configuration restored",
+  });
+  applyBackupUiState(importedBackup.uiState);
 }
 
 async function checkOta() {
@@ -6684,11 +8180,14 @@ async function requestDeviceRestart(path, {
   title = "Rebooting device...",
   message = "Reboot requested",
   totalSeconds = 30,
+  saveDirtySettingsBeforeRestart = true,
 } = {}) {
-  if (state.settingsDirty) {
+  if (saveDirtySettingsBeforeRestart && state.settingsDirty) {
     await saveSettings({ silent: true });
   }
-  await awaitPendingSettingsSave();
+  if (saveDirtySettingsBeforeRestart) {
+    await awaitPendingSettingsSave();
+  }
   state.rebootOverlayArmed = true;
   showRebootOverlay(title, totalSeconds);
   try {
@@ -6748,6 +8247,33 @@ elements.updateAvailableDialog?.addEventListener("cancel", (event) => {
 });
 elements.displayTriggerButton?.addEventListener("click", () => triggerDisplay().catch(handleError));
 elements.saveDeviceButton?.addEventListener("click", () => saveSettings({ silent: false }).catch(handleError));
+elements.backupConfigButton?.addEventListener("click", () => {
+  try {
+    exportConfigurationBackup();
+  } catch (error) {
+    handleError(error);
+  }
+});
+elements.restoreConfigButton?.addEventListener("click", () => {
+  if (!elements.restoreConfigFile) {
+    return;
+  }
+  elements.restoreConfigFile.value = "";
+  elements.restoreConfigFile.click();
+});
+elements.restoreConfigFile?.addEventListener("change", async () => {
+  const file = elements.restoreConfigFile.files?.[0];
+  if (!file) {
+    return;
+  }
+  try {
+    await restoreConfigurationBackup(file);
+  } catch (error) {
+    handleError(error);
+  } finally {
+    elements.restoreConfigFile.value = "";
+  }
+});
 elements.deviceSpiffsCard?.addEventListener("click", () => {
   if (!flashStorageAvailable()) {
     return;
@@ -6767,13 +8293,14 @@ document.getElementById("rebootButton").addEventListener("click", async () => {
   });
 });
 document.getElementById("factoryResetButton").addEventListener("click", async () => {
-  if (!window.confirm("Erase saved settings and reboot?")) {
+  if (!window.confirm("Factory reset will erase all saved settings and credentials, GPIO and peripheral assignments, diagram positions and rotations, and other persisted device preferences. Continue?")) {
     return;
   }
   await requestDeviceRestart("/api/factory-reset", {
     title: "Factory reset in progress...",
-    message: "Factory reset requested",
+    message: "Factory reset requested. Saved device configuration will be erased.",
     totalSeconds: 35,
+    saveDirtySettingsBeforeRestart: false,
   });
 });
 elements.localFirmwareFile?.addEventListener("change", () => {
@@ -6790,6 +8317,12 @@ elements.storageUpButton?.addEventListener("click", () => {
 });
 elements.storageReindexButton?.addEventListener("click", () => {
   reindexStorageDirectory(
+    state.activeStorageTarget,
+    state.currentStoragePathByTarget[state.activeStorageTarget] || "/"
+  ).catch(handleError);
+});
+elements.storageRemountButton?.addEventListener("click", () => {
+  remountStorageDirectory(
     state.activeStorageTarget,
     state.currentStoragePathByTarget[state.activeStorageTarget] || "/"
   ).catch(handleError);
@@ -6999,7 +8532,15 @@ elements.radioCountrySelect?.addEventListener("change", (event) => {
 elements.radioStationSelect?.addEventListener("change", () => {
   applySelectedRadioStation({ autoPlay: true }).catch(handleError);
 });
-elements.gpioBoardSelector?.addEventListener("change", updateGpioBoardImage);
+elements.gpioBoardSelector?.addEventListener("change", () => {
+  saveGpioBoardPreferences();
+  updateGpioBoardImage();
+});
+for (const field of [elements.peripheralAudioProfile, elements.peripheralDisplayProfile, elements.peripheralAudioInProfile]) {
+  field?.addEventListener("change", () => {
+    renderPeripheralDiagram();
+  });
+}
 elements.wifiNetworkList.addEventListener("change", (event) => {
   if (!event.target.value) {
     state.wifiSelectionPending = false;
@@ -7104,24 +8645,272 @@ elements.displayType?.addEventListener("change", () => {
   renderGpioOverview();
 });
 elements.gpioBoardAutodetect?.addEventListener("change", async () => {
+  saveGpioBoardPreferences();
   if (elements.gpioBoardAutodetect?.checked) {
     try {
       const status = await loadStatus();
-      updateGpioBoardSelectorMode(status);
+      updateGpioBoardSelectorMode(status, { force: true });
     } catch (error) {
       handleError(error);
       return;
     }
   } else {
-    updateGpioBoardSelectorMode(state.status);
+    updateGpioBoardSelectorMode(state.status, { force: true });
   }
+  saveGpioBoardPreferences();
   updateGpioBoardImage();
 });
+elements.peripheralSensorsList?.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLSelectElement)) {
+    return;
+  }
+  const sensorIndex = Number(target.dataset.peripheralSensorIndex);
+  if (!Number.isInteger(sensorIndex) || sensorIndex < 0 || sensorIndex >= state.peripheralSensorProfiles.length) {
+    return;
+  }
+  state.peripheralSensorProfiles[sensorIndex] = String(target.value || "none");
+});
+elements.peripheralSensorsList?.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  if (target.dataset.peripheralSensorAdd === "true") {
+    state.peripheralSensorProfiles = normalizedPeripheralSensorProfiles();
+    if (state.peripheralSensorProfiles.length >= MAX_PERIPHERAL_SENSORS) {
+      return;
+    }
+    state.peripheralSensorProfiles.push("none");
+    renderPeripheralSensorControls();
+    elements.peripheralSensorsList.querySelector(`select[data-peripheral-sensor-index="${state.peripheralSensorProfiles.length - 1}"]`)?.focus();
+    return;
+  }
+
+  const removeIndex = Number(target.dataset.peripheralSensorRemove);
+  if (!Number.isInteger(removeIndex) || removeIndex <= 0 || removeIndex >= state.peripheralSensorProfiles.length) {
+    return;
+  }
+  state.peripheralSensorProfiles.splice(removeIndex, 1);
+  renderPeripheralSensorControls();
+});
+elements.peripheralInputsList?.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLSelectElement)) {
+    return;
+  }
+  const inputIndex = Number(target.dataset.peripheralInputIndex);
+  if (!Number.isInteger(inputIndex) || inputIndex < 0 || inputIndex >= state.peripheralInputProfiles.length) {
+    return;
+  }
+  state.peripheralInputProfiles[inputIndex] = String(target.value || "none");
+});
+elements.peripheralInputsList?.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  if (target.dataset.peripheralInputAdd === "true") {
+    state.peripheralInputProfiles = normalizedPeripheralInputProfiles();
+    if (state.peripheralInputProfiles.length >= MAX_PERIPHERAL_INPUTS) {
+      return;
+    }
+    state.peripheralInputProfiles.push("none");
+    renderPeripheralInputControls();
+    elements.peripheralInputsList.querySelector(`select[data-peripheral-input-index="${state.peripheralInputProfiles.length - 1}"]`)?.focus();
+    return;
+  }
+
+  const removeIndex = Number(target.dataset.peripheralInputRemove);
+  if (!Number.isInteger(removeIndex) || removeIndex <= 0 || removeIndex >= state.peripheralInputProfiles.length) {
+    return;
+  }
+  state.peripheralInputProfiles.splice(removeIndex, 1);
+  renderPeripheralInputControls();
+});
+elements.peripheralControlsList?.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLSelectElement)) {
+    return;
+  }
+  const controlIndex = Number(target.dataset.peripheralControlIndex);
+  if (!Number.isInteger(controlIndex) || controlIndex < 0 || controlIndex >= state.peripheralControlProfiles.length) {
+    return;
+  }
+  state.peripheralControlProfiles[controlIndex] = String(target.value || "none");
+});
+elements.peripheralControlsList?.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  if (target.dataset.peripheralControlAdd === "true") {
+    state.peripheralControlProfiles = normalizedPeripheralControlProfiles();
+    if (state.peripheralControlProfiles.length >= MAX_PERIPHERAL_CONTROLS) {
+      return;
+    }
+    state.peripheralControlProfiles.push("none");
+    renderPeripheralControlControls();
+    elements.peripheralControlsList.querySelector(`select[data-peripheral-control-index="${state.peripheralControlProfiles.length - 1}"]`)?.focus();
+    return;
+  }
+
+  const removeIndex = Number(target.dataset.peripheralControlRemove);
+  if (!Number.isInteger(removeIndex) || removeIndex <= 0 || removeIndex >= state.peripheralControlProfiles.length) {
+    return;
+  }
+  state.peripheralControlProfiles.splice(removeIndex, 1);
+  renderPeripheralControlControls();
+});
+elements.peripheralExpansionsList?.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLSelectElement)) {
+    return;
+  }
+  const expansionIndex = Number(target.dataset.peripheralExpansionIndex);
+  if (!Number.isInteger(expansionIndex) || expansionIndex < 0 || expansionIndex >= state.peripheralExpansionProfiles.length) {
+    return;
+  }
+  state.peripheralExpansionProfiles[expansionIndex] = String(target.value || "none");
+});
+elements.peripheralExpansionsList?.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  if (target.dataset.peripheralExpansionAdd === "true") {
+    state.peripheralExpansionProfiles = normalizedPeripheralExpansionProfiles();
+    if (state.peripheralExpansionProfiles.length >= MAX_PERIPHERAL_EXPANSIONS) {
+      return;
+    }
+    state.peripheralExpansionProfiles.push("none");
+    renderPeripheralExpansionControls();
+    elements.peripheralExpansionsList.querySelector(`select[data-peripheral-expansion-index="${state.peripheralExpansionProfiles.length - 1}"]`)?.focus();
+    return;
+  }
+
+  const removeIndex = Number(target.dataset.peripheralExpansionRemove);
+  if (!Number.isInteger(removeIndex) || removeIndex <= 0 || removeIndex >= state.peripheralExpansionProfiles.length) {
+    return;
+  }
+  state.peripheralExpansionProfiles.splice(removeIndex, 1);
+  renderPeripheralExpansionControls();
+});
+elements.peripheralStorageList?.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLSelectElement)) {
+    return;
+  }
+  const roleKey = String(target.dataset.peripheralBindingKey || "");
+  if (roleKey) {
+    const definition = gpioConfigRoleState(state.settings || {}).byKey.get(roleKey);
+    if (!definition?.element) {
+      return;
+    }
+    definition.element.value = String(target.value || definition.element.value || "");
+    syncGpioMappingControls();
+    queueSettingsSave(150);
+    return;
+  }
+  const storageIndex = Number(target.dataset.peripheralStorageIndex);
+  if (!Number.isInteger(storageIndex) || storageIndex < 0 || storageIndex >= state.peripheralStorageProfiles.length) {
+    return;
+  }
+  state.peripheralStorageProfiles[storageIndex] = String(target.value || "none");
+});
+elements.peripheralStorageList?.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  if (target.dataset.peripheralStorageAdd === "true") {
+    state.peripheralStorageProfiles = normalizedPeripheralStorageProfiles();
+    if (state.peripheralStorageProfiles.length >= MAX_PERIPHERAL_STORAGES) {
+      return;
+    }
+    state.peripheralStorageProfiles.push("none");
+    renderPeripheralStorageControls();
+    elements.peripheralStorageList.querySelector(`select[data-peripheral-storage-index="${state.peripheralStorageProfiles.length - 1}"]`)?.focus();
+    return;
+  }
+
+  const removeIndex = Number(target.dataset.peripheralStorageRemove);
+  if (!Number.isInteger(removeIndex) || removeIndex <= 0 || removeIndex >= state.peripheralStorageProfiles.length) {
+    return;
+  }
+  state.peripheralStorageProfiles.splice(removeIndex, 1);
+  renderPeripheralStorageControls();
+});
+elements.peripheralCommunicationList?.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLSelectElement)) {
+    return;
+  }
+  const communicationIndex = Number(target.dataset.peripheralCommunicationIndex);
+  if (!Number.isInteger(communicationIndex) || communicationIndex < 0 || communicationIndex >= state.peripheralCommunicationProfiles.length) {
+    return;
+  }
+  state.peripheralCommunicationProfiles[communicationIndex] = String(target.value || "none");
+});
+elements.peripheralCommunicationList?.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  if (target.dataset.peripheralCommunicationAdd === "true") {
+    state.peripheralCommunicationProfiles = normalizedPeripheralCommunicationProfiles();
+    if (state.peripheralCommunicationProfiles.length >= MAX_PERIPHERAL_COMMUNICATIONS) {
+      return;
+    }
+    state.peripheralCommunicationProfiles.push("none");
+    renderPeripheralCommunicationControls();
+    elements.peripheralCommunicationList.querySelector(`select[data-peripheral-communication-index="${state.peripheralCommunicationProfiles.length - 1}"]`)?.focus();
+    return;
+  }
+
+  const removeIndex = Number(target.dataset.peripheralCommunicationRemove);
+  if (!Number.isInteger(removeIndex) || removeIndex <= 0 || removeIndex >= state.peripheralCommunicationProfiles.length) {
+    return;
+  }
+  state.peripheralCommunicationProfiles.splice(removeIndex, 1);
+  renderPeripheralCommunicationControls();
+});
+for (const bindingContainer of [elements.peripheralAudioPins, elements.peripheralDisplayPins]) {
+  bindingContainer?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement)) {
+      return;
+    }
+    const roleKey = String(target.dataset.peripheralBindingKey || "");
+    if (!roleKey) {
+      return;
+    }
+    const definition = gpioConfigRoleState(state.settings || {}).byKey.get(roleKey);
+    if (!definition?.element) {
+      return;
+    }
+    definition.element.value = String(target.value || definition.element.value || "");
+    syncGpioMappingControls();
+    queueSettingsSave(150);
+  });
+}
 elements.gpioExtraToggle?.addEventListener("click", () => {
   const expanded = elements.gpioExtraToggle?.getAttribute("aria-expanded") === "true";
   setGpioExtraExpanded(!expanded);
 });
 for (const gpioColumn of [elements.gpioLeftPins, elements.gpioRightPins, elements.gpioExtraLeftPins, elements.gpioExtraRightPins]) {
+  gpioColumn?.addEventListener("focusin", () => {
+    state.gpioUiInteractionDepth += 1;
+  });
+  gpioColumn?.addEventListener("focusout", () => {
+    state.gpioUiInteractionDepth = Math.max(0, state.gpioUiInteractionDepth - 1);
+  });
   gpioColumn?.addEventListener("change", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLSelectElement) || !target.matches("[data-gpio-role-select]")) {
@@ -7264,12 +9053,22 @@ function handleError(error) {
 }
 
 resetTransientOverlays();
+state.peripheralDiagramPositions = loadPeripheralDiagramPositions();
 setupTabs();
 setupPasswordToggles();
+setupPeripheralDiagramInteractions();
 renderRecentPlayback();
+renderPeripheralSensorControls();
+renderPeripheralInputControls();
+renderPeripheralControlControls();
+renderPeripheralExpansionControls();
+renderPeripheralStorageControls();
+renderPeripheralCommunicationControls();
+renderPeripheralDiagram();
 updateWifiActionButton();
 populateButtonActionSelects();
 renderOledPreview();
+restoreGpioBoardPreferences();
 updateGpioBoardSelectorMode(state.status);
 updateGpioBoardImage();
 loadRadioCountries().catch(handleError);

@@ -122,6 +122,13 @@ void sampleSystemMetrics() {
 
     SystemMetricsSnapshot next = metricsSnapshot;
     next.cpuLoadPercent = approximateCpuLoadPercent();
+#if defined(ARDUINO_ARCH_ESP32)
+    next.chipTemperatureC = temperatureRead();
+    next.chipTemperatureAvailable = isfinite(next.chipTemperatureC);
+#else
+    next.chipTemperatureC = 0.0f;
+    next.chipTemperatureAvailable = false;
+#endif
     next.freeHeapBytes = ESP.getFreeHeap();
     next.minFreeHeapBytes = ESP.getMinFreeHeap();
     next.largestHeapBlockBytes = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
@@ -164,6 +171,12 @@ void appendSystemMetricsJson(JsonObject root) {
     system["minFreeHeapBytes"] = snapshot.minFreeHeapBytes;
     system["largestHeapBlockBytes"] = snapshot.largestHeapBlockBytes;
     system["cpuLoadPercent"] = snapshot.cpuLoadPercent;
+    system["chipTemperatureAvailable"] = snapshot.chipTemperatureAvailable;
+    if (snapshot.chipTemperatureAvailable) {
+        system["chipTemperatureC"] = snapshot.chipTemperatureC;
+    } else {
+        system["chipTemperatureC"] = nullptr;
+    }
 
     JsonObject sram = system["sram"].to<JsonObject>();
     sram["available"] = snapshot.sram.available;

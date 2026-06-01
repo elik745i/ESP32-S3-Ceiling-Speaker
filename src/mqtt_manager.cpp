@@ -267,6 +267,7 @@ void MqttManager::handleConnected(bool sessionPresent) {
     client_.subscribe(HaBridge::commandTopic(settings_, "notify").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "web_ui").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "reboot").c_str(), 1);
+    client_.subscribe(HaBridge::commandTopic(settings_, "storage/sd_remount").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "ota/check").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "ota/auto_update").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "ota/install").c_str(), 1);
@@ -411,6 +412,13 @@ void MqttManager::handleMessage(char* topic, char* payload, AsyncMqttClientMessa
 
     if (topicValue == HaBridge::commandTopic(settings_, "reboot")) {
         command.action = "reboot";
+        command.payload = payloadValue;
+        commandHandler_(command);
+        return;
+    }
+
+    if (topicValue == HaBridge::commandTopic(settings_, "storage/sd_remount")) {
+        command.action = "sd_remount";
         command.payload = payloadValue;
         commandHandler_(command);
         return;
@@ -679,6 +687,9 @@ void MqttManager::publishDiscovery() {
         HaBridge::discoveryTopic(settings_, "sensor", "wifi_rssi").c_str(), 1, true,
         HaBridge::discoveryPayloadSensor(settings_, "wifi_rssi", "Wi-Fi RSSI", HaBridge::networkStateTopic(settings_).c_str(), "{{ value_json.wifiRssi }}", "dBm", "signal_strength", "measurement", "mdi:wifi", -1, configurationUrl).c_str());
     client_.publish(
+        HaBridge::discoveryTopic(settings_, "sensor", "connected_ip").c_str(), 1, true,
+        HaBridge::discoveryPayloadSensor(settings_, "connected_ip", "Connected IP", HaBridge::networkStateTopic(settings_).c_str(), "{{ value_json.ip if value_json.wifiConnected and value_json.ip else 'offline' }}", nullptr, nullptr, nullptr, "mdi:ip-network-outline", -1, configurationUrl).c_str());
+    client_.publish(
         HaBridge::discoveryTopic(settings_, "sensor", "playback_state").c_str(), 1, true,
         HaBridge::discoveryPayloadSensor(settings_, "playback_state", "Playback State", HaBridge::playbackStateTopic(settings_).c_str(), "{{ value_json.state }}", nullptr, nullptr, nullptr, "mdi:speaker-wireless", -1, configurationUrl).c_str());
     client_.publish(
@@ -720,6 +731,9 @@ void MqttManager::publishDiscovery() {
     client_.publish(
         HaBridge::discoveryTopic(settings_, "button", "reboot").c_str(), 1, true,
         HaBridge::discoveryPayloadButton(settings_, "reboot", "Reboot Device", HaBridge::commandTopic(settings_, "reboot").c_str(), "reboot", "mdi:restart", configurationUrl).c_str());
+    client_.publish(
+        HaBridge::discoveryTopic(settings_, "button", "storage_sd_remount").c_str(), 1, true,
+        HaBridge::discoveryPayloadButton(settings_, "storage_sd_remount", "Remount SD Card", HaBridge::commandTopic(settings_, "storage/sd_remount").c_str(), "remount", "mdi:sd", configurationUrl).c_str());
     client_.publish(
         HaBridge::discoveryTopic(settings_, "button", "web_ui_lock").c_str(), 1, true,
         HaBridge::discoveryPayloadButton(settings_, "web_ui_lock", "Lock Web UI", HaBridge::commandTopic(settings_, "web_ui").c_str(), "lock", "mdi:web-off", configurationUrl).c_str());

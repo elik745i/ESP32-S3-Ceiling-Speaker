@@ -5,10 +5,12 @@ Custom PlatformIO firmware for ESP32 and ESP32-S3 Wi-Fi speaker/notifier hardwar
 
 ## Current Release
 
-- Firmware version: `v0.1.18`
+- Firmware version: `v0.1.19-beta`
 - Primary release repository: `elik745i/ESP32-S3-Ceiling-Speaker`
 - GitHub Releases feed: `https://api.github.com/repos/elik745i/ESP32-S3-Ceiling-Speaker/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.18.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.19-beta.bin`
+
+This version is intended to be published as a GitHub prerelease (`beta`) using the normal OTA asset names with a `-beta` suffix.
 
 ## What This Firmware Does
 
@@ -127,7 +129,7 @@ Current UI highlights:
 - SD storage playback now starts immediately from the preview modal and toolbar play action without blocking on artwork scans.
 - SD reindex actions now stop playback first and then continue automatically instead of only showing a blocker message.
 - Firmware release browsing, local firmware upload, and firmware action dashboard.
-- Password reveal toggles, reboot, and factory-reset actions.
+- Password reveal toggles, reboot, and factory-reset actions, with backup and restore available from the Device tab.
 - Embedded favicon served from the device web UI.
 
 ## Build Profiles

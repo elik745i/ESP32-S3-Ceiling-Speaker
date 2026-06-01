@@ -1345,6 +1345,37 @@ void WebServerManager::registerApiRoutes() {
             sendJson(request, response, 202);
         });
 
+    server_.on(
+        "/api/storage/remount", HTTP_POST,
+        [](AsyncWebServerRequest* request) {
+            (void)request;
+        }, nullptr,
+        [this](AsyncWebServerRequest* request, uint8_t*, size_t, size_t, size_t) {
+            if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+                return;
+            }
+
+            const StorageTarget target = storageTargetFromRequest(request);
+            if (target != StorageTarget::Sd) {
+                request->send(400, "application/json", "{\"error\":\"Manual remount is only supported for the SD card.\"}");
+                return;
+            }
+
+            if (storageBusy(target)) {
+                request->send(423, "application/json", "{\"error\":\"SD card is busy. Stop playback or transfers before remounting.\"}");
+                return;
+            }
+
+            const String directoryPath = storageDirectoryFromRequest(request);
+            const bool mounted = remountStorageBackend(target, settingsGetter_());
+
+            JsonDocument response;
+            response["ok"] = mounted;
+            response["message"] = mounted ? "SD card remounted. Reloading files..." : "SD card remount failed.";
+            appendStorageDirectoryJson(target, directoryPath, response);
+            sendJson(request, response, mounted ? 200 : 503);
+        });
+
     server_.on("/api/storage/count", HTTP_GET, [this](AsyncWebServerRequest* request) {
         if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
             return;

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 150" role="img" aria-label="TTP223 touch button module">
+  <rect x="12" y="8" width="96" height="134" rx="12" fill="#d73b3e" stroke="#8a1f22" stroke-width="3"/>
+  <rect x="24" y="22" width="72" height="68" rx="8" fill="#f5b0b0" stroke="#b94b4b" stroke-width="2"/>
+  <circle cx="60" cy="56" r="24" fill="#fff6f6" stroke="#c75e5e" stroke-width="3"/>
+  <circle cx="60" cy="56" r="18" fill="#e48686"/>
+  <text x="60" y="18" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="700" fill="#ffffff">TTP223</text>
+  <text x="60" y="58" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="700" fill="#ffffff">TOUCH</text>
+  <text x="60" y="70" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" font-weight="700" fill="#ffffff">BUTTON</text>
+  <g font-family="Arial, sans-serif" font-size="8" font-weight="700" fill="#fff5f5">
+    <text x="30" y="120" text-anchor="middle">SIG</text>
+    <text x="60" y="120" text-anchor="middle">VCC</text>
+    <text x="90" y="120" text-anchor="middle">GND</text>
+  </g>
+  <g>
+    <circle cx="30" cy="130" r="8" fill="#d8af6e" stroke="#7b5f2d" stroke-width="2"/>
+    <circle cx="60" cy="130" r="8" fill="#d8af6e" stroke="#7b5f2d" stroke-width="2"/>
+    <circle cx="90" cy="130" r="8" fill="#d8af6e" stroke="#7b5f2d" stroke-width="2"/>
+  </g>
+</svg>

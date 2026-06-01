@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 190" role="img" aria-label="MicroSD SPI module">
+  <rect x="14" y="10" width="132" height="170" rx="12" fill="#1e2c63" stroke="#0d1638" stroke-width="4"/>
+  <rect x="38" y="24" width="84" height="26" rx="5" fill="#10182f" stroke="#6e7cb1" stroke-width="2"/>
+  <text x="80" y="41" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#dbe6ff">MICRO SD</text>
+  <rect x="54" y="60" width="52" height="74" rx="6" fill="#111111" stroke="#636363" stroke-width="2"/>
+  <rect x="59" y="66" width="42" height="10" rx="2" fill="#2f2f2f"/>
+  <rect x="59" y="80" width="42" height="48" rx="3" fill="#d9d9d9"/>
+  <g fill="#c9a25a" stroke="#7b5f2d" stroke-width="2">
+    <circle cx="24" cy="156" r="8"/>
+    <circle cx="46" cy="156" r="8"/>
+    <circle cx="68" cy="156" r="8"/>
+    <circle cx="90" cy="156" r="8"/>
+    <circle cx="112" cy="156" r="8"/>
+    <circle cx="134" cy="156" r="8"/>
+  </g>
+  <g font-family="Arial, sans-serif" font-size="8" font-weight="700" fill="#f8fafc">
+    <text x="24" y="145" text-anchor="middle">CS</text>
+    <text x="46" y="145" text-anchor="middle">SCK</text>
+    <text x="68" y="145" text-anchor="middle">MOSI</text>
+    <text x="90" y="145" text-anchor="middle">MISO</text>
+    <text x="112" y="145" text-anchor="middle">VCC</text>
+    <text x="134" y="145" text-anchor="middle">GND</text>
+  </g>
+</svg>

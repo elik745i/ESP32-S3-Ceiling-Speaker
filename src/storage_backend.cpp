@@ -9,16 +9,19 @@
 namespace {
 constexpr uint32_t kSdFrequenciesHz[] = {40000000UL, 20000000UL, 10000000UL, 4000000UL, 1000000UL, 400000UL};
 constexpr unsigned long kSdHotplugPollIntervalMs = 2000UL;
+constexpr unsigned long kSdRetryBackoffMs[] = {2000UL, 5000UL, 15000UL, 60000UL};
 
 bool flashMounted = false;
 bool sdMounted = false;
 bool sdSpiStarted = false;
 unsigned long lastSdHotplugPollAt = 0;
+unsigned long nextSdMountAttemptAt = 0;
 SdSettings activeSdSettings;
 StorageBackendSummary sdSummaryCache;
 portMUX_TYPE storageStateMux = portMUX_INITIALIZER_UNLOCKED;
 uint32_t sdWriteDepth = 0;
 uint32_t sdReadDepth = 0;
+uint8_t sdConsecutiveMountFailures = 0;
 
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
 SPIClass sdSpi(FSPI);
@@ -42,6 +45,21 @@ bool sdSettingsUsePin(const SdSettings& settings, uint8_t pin) {
         return false;
     }
     return settings.csPin == pin || settings.sckPin == pin || settings.mosiPin == pin || settings.misoPin == pin;
+}
+
+unsigned long sdRetryDelayForFailureCount(uint8_t failureCount) {
+    if (failureCount == 0) {
+        return kSdHotplugPollIntervalMs;
+    }
+
+    const size_t maxIndex = (sizeof(kSdRetryBackoffMs) / sizeof(kSdRetryBackoffMs[0])) - 1;
+    const size_t index = failureCount > maxIndex ? maxIndex : failureCount - 1;
+    return kSdRetryBackoffMs[index];
+}
+
+void resetSdMountRetryState() {
+    sdConsecutiveMountFailures = 0;
+    nextSdMountAttemptAt = 0;
 }
 
 bool sdFilesystemHealthy() {
@@ -197,6 +215,7 @@ void mountSdStorage(const SdSettings& settings) {
     portEXIT_CRITICAL(&storageStateMux);
 
     if (!settings.enabled) {
+        resetSdMountRetryState();
         cacheSdSummary(StorageBackendSummary{});
         return;
     }
@@ -233,6 +252,7 @@ void mountSdStorage(const SdSettings& settings) {
         }
 
         sdMounted = true;
+        resetSdMountRetryState();
         Serial.printf("[storage] SD mounted cs=%u sck=%u mosi=%u miso=%u freq=%lu card=%llu total=%u used=%u\n",
                       static_cast<unsigned>(settings.csPin),
                       static_cast<unsigned>(settings.sckPin),
@@ -247,11 +267,16 @@ void mountSdStorage(const SdSettings& settings) {
     }
 
     if (!sdMounted) {
-        Serial.printf("[storage] SD mount failed cs=%u sck=%u mosi=%u miso=%u\n",
+        ++sdConsecutiveMountFailures;
+        const unsigned long retryDelayMs = sdRetryDelayForFailureCount(sdConsecutiveMountFailures);
+        nextSdMountAttemptAt = millis() + retryDelayMs;
+        Serial.printf("[storage] SD mount failed cs=%u sck=%u mosi=%u miso=%u retry_in=%lu failure=%u\n",
                       static_cast<unsigned>(settings.csPin),
                       static_cast<unsigned>(settings.sckPin),
                       static_cast<unsigned>(settings.mosiPin),
-                      static_cast<unsigned>(settings.misoPin));
+                      static_cast<unsigned>(settings.misoPin),
+                      static_cast<unsigned long>(retryDelayMs),
+                      static_cast<unsigned>(sdConsecutiveMountFailures));
         StorageBackendSummary summary;
         summary.available = settings.enabled;
         cacheSdSummary(summary);
@@ -276,6 +301,24 @@ void applyStorageSettings(const SettingsBundle& settings) {
     }
 }
 
+bool remountStorageBackend(StorageTarget target, const SettingsBundle& settings) {
+    if (target == StorageTarget::Flash) {
+        if (flashMounted) {
+            LittleFS.end();
+            flashMounted = false;
+        }
+        mountFlashStorage();
+        return flashMounted;
+    }
+
+    if (sdWriteInProgress() || sdReadInProgress()) {
+        return false;
+    }
+
+    mountSdStorage(effectiveSdSettings(settings.sd));
+    return sdMounted;
+}
+
 void pollStorageBackends() {
     if (!activeSdSettings.enabled) {
         return;
@@ -295,7 +338,12 @@ void pollStorageBackends() {
         if (!sdFilesystemHealthy()) {
             Serial.println("[storage] SD card removed or became unavailable");
             unmountSdStorage();
+            resetSdMountRetryState();
         }
+        return;
+    }
+
+    if (nextSdMountAttemptAt != 0 && static_cast<long>(now - nextSdMountAttemptAt) < 0) {
         return;
     }
 
