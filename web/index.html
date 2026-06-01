@@ -216,34 +216,58 @@
           <form>
             <div class="row">
               <label>Startup
-                <select id="effectStartupFile" name="effects.startupFile" form="settingsForm"></select>
+                <div class="effect-select-control">
+                  <select id="effectStartupFile" name="effects.startupFile" form="settingsForm"></select>
+                  <input id="effectStartupVolumePercent" name="effects.startupVolumePercent" form="settingsForm" type="number" min="0" max="100" step="1" inputmode="numeric" aria-label="Startup volume percent" title="Startup volume percent">
+                </div>
               </label>
               <label>Alarm
-                <select id="effectAlarmFile" name="effects.alarmFile" form="settingsForm"></select>
+                <div class="effect-select-control">
+                  <select id="effectAlarmFile" name="effects.alarmFile" form="settingsForm"></select>
+                  <input id="effectAlarmVolumePercent" name="effects.alarmVolumePercent" form="settingsForm" type="number" min="0" max="100" step="1" inputmode="numeric" aria-label="Alarm volume percent" title="Alarm volume percent">
+                </div>
               </label>
             </div>
             <div class="row">
               <label>Notification
-                <select id="effectNotificationFile" name="effects.notificationFile" form="settingsForm"></select>
+                <div class="effect-select-control">
+                  <select id="effectNotificationFile" name="effects.notificationFile" form="settingsForm"></select>
+                  <input id="effectNotificationVolumePercent" name="effects.notificationVolumePercent" form="settingsForm" type="number" min="0" max="100" step="1" inputmode="numeric" aria-label="Notification volume percent" title="Notification volume percent">
+                </div>
               </label>
               <label>Ambient Sound
-                <select id="effectAmbientSoundFile" name="effects.ambientSoundFile" form="settingsForm"></select>
+                <div class="effect-select-control">
+                  <select id="effectAmbientSoundFile" name="effects.ambientSoundFile" form="settingsForm"></select>
+                  <input id="effectAmbientVolumePercent" name="effects.ambientVolumePercent" form="settingsForm" type="number" min="0" max="100" step="1" inputmode="numeric" aria-label="Ambient sound volume percent" title="Ambient sound volume percent">
+                </div>
               </label>
             </div>
             <div class="row">
               <label>Low Battery
-                <select id="effectLowBatteryFile" name="effects.lowBatteryFile" form="settingsForm"></select>
+                <div class="effect-select-control">
+                  <select id="effectLowBatteryFile" name="effects.lowBatteryFile" form="settingsForm"></select>
+                  <input id="effectLowBatteryVolumePercent" name="effects.lowBatteryVolumePercent" form="settingsForm" type="number" min="0" max="100" step="1" inputmode="numeric" aria-label="Low battery volume percent" title="Low battery volume percent">
+                </div>
               </label>
               <label>Shut Down
-                <select id="effectShutDownFile" name="effects.shutDownFile" form="settingsForm"></select>
+                <div class="effect-select-control">
+                  <select id="effectShutDownFile" name="effects.shutDownFile" form="settingsForm"></select>
+                  <input id="effectShutDownVolumePercent" name="effects.shutDownVolumePercent" form="settingsForm" type="number" min="0" max="100" step="1" inputmode="numeric" aria-label="Shut down volume percent" title="Shut down volume percent">
+                </div>
               </label>
             </div>
             <div class="row">
               <label>Updates Available
-                <select id="effectUpdateAvailableFile" name="effects.updateAvailableFile" form="settingsForm"></select>
+                <div class="effect-select-control">
+                  <select id="effectUpdateAvailableFile" name="effects.updateAvailableFile" form="settingsForm"></select>
+                  <input id="effectUpdateAvailableVolumePercent" name="effects.updateAvailableVolumePercent" form="settingsForm" type="number" min="0" max="100" step="1" inputmode="numeric" aria-label="Updates available volume percent" title="Updates available volume percent">
+                </div>
               </label>
               <label>Update Success
-                <select id="effectUpdateSuccessFile" name="effects.updateSuccessFile" form="settingsForm"></select>
+                <div class="effect-select-control">
+                  <select id="effectUpdateSuccessFile" name="effects.updateSuccessFile" form="settingsForm"></select>
+                  <input id="effectUpdateSuccessVolumePercent" name="effects.updateSuccessVolumePercent" form="settingsForm" type="number" min="0" max="100" step="1" inputmode="numeric" aria-label="Update success volume percent" title="Update success volume percent">
+                </div>
               </label>
             </div>
             <p id="effectsFileStatus" class="note">Choose supported audio files from SD <code>/media/wav</code> or flash <code>/wav</code>. Changing a selection previews that file on the device.</p>

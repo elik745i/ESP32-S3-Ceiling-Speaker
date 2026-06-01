@@ -5,10 +5,10 @@ Custom PlatformIO firmware for ESP32 and ESP32-S3 Wi-Fi speaker/notifier hardwar
 
 ## Current Release
 
-- Firmware version: `v0.1.16`
+- Firmware version: `v0.1.17`
 - Primary release repository: `elik745i/ESP32-S3-Ceiling-Speaker`
 - GitHub Releases feed: `https://api.github.com/repos/elik745i/ESP32-S3-Ceiling-Speaker/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.16.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.17.bin`
 
 ## What This Firmware Does
 
@@ -261,19 +261,26 @@ For Home Assistant media-player style control, use the HACS-oriented build with 
 - Recommended ESP32-S3 build: `esp32s3_notifier_hacs`
 - Vendored backup integration: [home_assistant/custom_components/mqtt_media_player](home_assistant/custom_components/mqtt_media_player)
 
+When running multiple notifier devices on the same broker, keep these values unique per device:
+
+- MQTT Client ID
+- MQTT Base Topic
+- Device Name
+- Friendly Name
+
 ## Firmware And Releases
 
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.15`:
+Release asset names for `v0.1.17`:
 
-- `esp32-notifier-v0.1.15.bin`
-- `esp32-notifier-hacs-v0.1.15.bin`
-- `esp32-notifier-hacs-slim-v0.1.15.bin`
-- `esp32s3-notifier-v0.1.15.bin`
-- `esp32s3-notifier-hacs-v0.1.15.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.15.bin`
+- `esp32-notifier-v0.1.17.bin`
+- `esp32-notifier-hacs-v0.1.17.bin`
+- `esp32-notifier-hacs-slim-v0.1.17.bin`
+- `esp32s3-notifier-v0.1.17.bin`
+- `esp32s3-notifier-hacs-v0.1.17.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.17.bin`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard release variants and upload the matching OTA assets back to that release.
 
@@ -349,4 +356,4 @@ Key files and directories:
 
 Current release notes live here:
 
-- [release-assets/v0.1.15/release-notes.md](release-assets/v0.1.15/release-notes.md)
+- [release-assets/v0.1.17/release-notes.md](release-assets/v0.1.17/release-notes.md)

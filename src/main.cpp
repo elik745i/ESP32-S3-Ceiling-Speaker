@@ -232,6 +232,8 @@ SoundEffectsManager* soundEffects = nullptr;
 struct DeferredActions {
     bool settingsApplyPending = false;
     SettingsBundle pendingSettings;
+    bool mqttConnectionChangePending = false;
+    bool mqttConnectRequested = false;
     bool playPending = false;
     bool playAddToHistory = true;
     bool playFromStorage = false;
@@ -256,6 +258,7 @@ struct RuntimeAudioAutomation {
     bool pendingAutoUpdateInstall = false;
     bool lowBatteryCueActive = false;
     bool ambientVolumeApplied = false;
+    bool effectVolumeApplied = false;
     bool alarmActive = false;
     bool restartPending = false;
     bool restartFactoryReset = false;
@@ -334,6 +337,7 @@ constexpr char kOtaLastBadReasonKey[] = "bad_reason";
 
 bool playRequest(const String& url, const String& label, const String& type, const String& source, String& error, bool addToHistory);
 void flushPendingSettingsNow();
+void restoreAmbientVolumeIfNeeded();
 
 bool parseStorageFileReference(const String& raw, StorageTarget& target, String& path) {
     String value = raw;
@@ -629,12 +633,44 @@ String effectFileForSource(const String& source) {
     return "";
 }
 
+uint8_t effectVolumeForSource(const String& source) {
+    if (settings == nullptr) {
+        return DefaultConfig::DEFAULT_VOLUME_PERCENT;
+    }
+    if (source == "effect-startup") return settings->effects.startupVolumePercent;
+    if (source == "effect-alarm") return settings->effects.alarmVolumePercent;
+    if (source == "effect-notification") return settings->effects.notificationVolumePercent;
+    if (source == "effect-ambient") return settings->effects.ambientVolumePercent;
+    if (source == "effect-low-battery") return settings->effects.lowBatteryVolumePercent;
+    if (source == "effect-shutdown") return settings->effects.shutDownVolumePercent;
+    if (source == "effect-update-available") return settings->effects.updateAvailableVolumePercent;
+    if (source == "effect-update-success") return settings->effects.updateSuccessVolumePercent;
+    return settings->device.savedVolumePercent;
+}
+
+void restoreEffectVolumeIfNeeded() {
+    if (!runtimeAudio.effectVolumeApplied || audioPlayer == nullptr) {
+        return;
+    }
+    audioPlayer->setVolumePercent(settings != nullptr ? settings->device.savedVolumePercent : DefaultConfig::DEFAULT_VOLUME_PERCENT);
+    runtimeAudio.effectVolumeApplied = false;
+}
+
 bool playConfiguredEffect(const String& effectRef, const String& label, const String& source) {
     if (effectRef.isEmpty() || deferredActions == nullptr) {
         return false;
     }
+    if (source.startsWith("effect-") && source != "effect-ambient" && audioPlayer != nullptr) {
+        restoreAmbientVolumeIfNeeded();
+        audioPlayer->setVolumePercent(effectVolumeForSource(source));
+        runtimeAudio.effectVolumeApplied = true;
+    }
     String ignored;
-    return playRequest(effectRef, label, "effect", source, ignored, false);
+    if (playRequest(effectRef, label, "effect", source, ignored, false)) {
+        return true;
+    }
+    restoreEffectVolumeIfNeeded();
+    return false;
 }
 
 bool tryOverlayConfiguredEffect(const String& effectRef, uint8_t duckPercent = 35, uint8_t overlayPercent = 100) {
@@ -657,6 +693,13 @@ bool playConfiguredEffectSource(const String& source, const String& label) {
     return playConfiguredEffect(effectFileForSource(source), label, source);
 }
 
+uint8_t ambientPlaybackVolumePercent() {
+    if (settings == nullptr) {
+        return 20;
+    }
+    return effectVolumeForSource("effect-ambient");
+}
+
 void restoreAmbientVolumeIfNeeded() {
     if (!runtimeAudio.ambientVolumeApplied || audioPlayer == nullptr) {
         return;
@@ -674,7 +717,7 @@ void startAmbientIfEligible(const AppStateSnapshot& snapshot) {
         return;
     }
     runtimeAudio.ambientPreviousVolume = settings->device.savedVolumePercent;
-    audioPlayer->setVolumePercent(min<uint8_t>(20, settings->device.savedVolumePercent));
+    audioPlayer->setVolumePercent(ambientPlaybackVolumePercent());
     runtimeAudio.ambientVolumeApplied = true;
     if (!playConfiguredEffectSource("effect-ambient", "Ambient Sound")) {
         restoreAmbientVolumeIfNeeded();
@@ -1223,7 +1266,21 @@ void applyRuntimeSettings() {
 #if APP_AUDIO_DIAGNOSTIC_TEST
     audioPlayer->setDirectLibraryVolume(DefaultConfig::AUDIO_DIAGNOSTIC_LIBRARY_VOLUME);
 #else
-    audioPlayer->setVolumePercent(settings->device.savedVolumePercent);
+    const AppStateSnapshot snapshot = appState->snapshot();
+    if (snapshot.playback.source == "effect-ambient") {
+        runtimeAudio.ambientPreviousVolume = settings->device.savedVolumePercent;
+        audioPlayer->setVolumePercent(ambientPlaybackVolumePercent());
+        runtimeAudio.ambientVolumeApplied = true;
+        runtimeAudio.effectVolumeApplied = false;
+    } else if (snapshot.playback.source.startsWith("effect-")) {
+        audioPlayer->setVolumePercent(effectVolumeForSource(snapshot.playback.source));
+        runtimeAudio.effectVolumeApplied = true;
+        runtimeAudio.ambientVolumeApplied = false;
+    } else {
+        audioPlayer->setVolumePercent(settings->device.savedVolumePercent);
+        runtimeAudio.ambientVolumeApplied = false;
+        runtimeAudio.effectVolumeApplied = false;
+    }
 #endif
     soundEffects->applySettings(*settings);
     mqttManager->applySettings(*settings);
@@ -1397,7 +1454,7 @@ void executePlaybackCommand(const PlaybackCommand& command) {
         stopAlarmPlayback();
         mqttManager->publishState();
     } else if (command.action == "notify") {
-        if (!tryOverlayConfiguredEffect(settings->effects.notificationFile, 35, 100)) {
+        if (!tryOverlayConfiguredEffect(settings->effects.notificationFile, 35, effectVolumeForSource("effect-notification"))) {
             playConfiguredEffectSource("effect-notification", command.payload.isEmpty() ? "MQTT Notification" : command.payload);
         }
     } else if (command.action == "web_ui_lock") {
@@ -1461,6 +1518,18 @@ void processDeferredActions() {
 
     if (deferredActions->settingsApplyPending) {
         flushPendingSettingsNow();
+    }
+
+    if (deferredActions->mqttConnectionChangePending) {
+        String error;
+        if (deferredActions->mqttConnectRequested) {
+            if (!mqttManager->requestConnect(error) && appState != nullptr && !error.isEmpty()) {
+                appState->setLastError(error);
+            }
+        } else {
+            mqttManager->requestDisconnect(error);
+        }
+        deferredActions->mqttConnectionChangePending = false;
     }
 
     if (deferredActions->stopPending) {
@@ -1601,11 +1670,10 @@ void setup() {
         []() { return *settings; },
         saveSettingsFromJson,
         [](const String& url, const String& label, const String& type, String& error) {
-            const bool ambientSelection = type == "effect-ambient";
-            const bool effectPreview = type == "effect-preview";
-            const bool addToHistory = !effectPreview && !ambientSelection;
-            const String source = ambientSelection ? "effect-ambient" : (effectPreview ? "effect-preview" : "");
-            const String normalizedType = ambientSelection ? String("effect") : type;
+            const bool effectSelection = type.startsWith("effect-");
+            const bool addToHistory = !effectSelection;
+            const String source = effectSelection ? type : String("");
+            const String normalizedType = effectSelection ? String("effect") : type;
             return playRequest(url, label, normalizedType, source, error, addToHistory);
         },
         []() {
@@ -1619,9 +1687,18 @@ void setup() {
         [](bool apply) { return otaManager->triggerCheck(apply); },
         [](bool connect, String& error) {
             if (connect) {
-                flushPendingSettingsNow();
+                const String host = deferredActions->settingsApplyPending
+                    ? deferredActions->pendingSettings.mqtt.host
+                    : settings->mqtt.host;
+                if (host.isEmpty()) {
+                    error = "Enter an MQTT host first.";
+                    return false;
+                }
             }
-            return connect ? mqttManager->requestConnect(error) : mqttManager->requestDisconnect(error);
+            deferredActions->mqttConnectRequested = connect;
+            deferredActions->mqttConnectionChangePending = true;
+            error = "";
+            return true;
         },
         []() { triggerWapeDisplay(); },
         []() {
@@ -1704,6 +1781,7 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
     }
 
     if (playbackStopped) {
+        restoreEffectVolumeIfNeeded();
         if (runtimeAudio.pendingCommandAfterNotification) {
             runtimeAudio.pendingCommandAfterNotification = false;
             executePlaybackCommand(runtimeAudio.pendingCommand);
@@ -1740,7 +1818,7 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
             restoreAmbientVolumeIfNeeded();
             if (!runtimeAudio.alarmActive) {
                 runtimeAudio.ambientPreviousVolume = settings->device.savedVolumePercent;
-                audioPlayer->setVolumePercent(min<uint8_t>(20, settings->device.savedVolumePercent));
+                audioPlayer->setVolumePercent(ambientPlaybackVolumePercent());
                 runtimeAudio.ambientVolumeApplied = true;
                 if (!playConfiguredEffectSource("effect-ambient", "Ambient Sound")) {
                     restoreAmbientVolumeIfNeeded();
@@ -1756,7 +1834,7 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
         runtimeAudio.updateAvailableHandled = true;
         runtimeAudio.pendingAutoUpdateInstall = settings->ota.autoUpdate;
         const bool playedUpdateAvailableCue =
-            tryOverlayConfiguredEffect(settings->effects.updateAvailableFile, 40, 100) ||
+            tryOverlayConfiguredEffect(settings->effects.updateAvailableFile, 40, effectVolumeForSource("effect-update-available")) ||
             playConfiguredEffectSource("effect-update-available", "Update Available");
         if (!playedUpdateAvailableCue && runtimeAudio.pendingAutoUpdateInstall) {
             runtimeAudio.pendingAutoUpdateInstall = false;
@@ -1805,7 +1883,7 @@ void serviceRuntimeAudioAutomation(const AppStateSnapshot& snapshot) {
         runtimeAudio.lowBatteryCueActive = false;
     } else if (!runtimeAudio.lowBatteryCueActive && !settings->effects.lowBatteryFile.isEmpty() && !runtimeAudio.alarmActive && !runtimeAudio.restartPending) {
         runtimeAudio.lowBatteryCueActive =
-            tryOverlayConfiguredEffect(settings->effects.lowBatteryFile, 40, 100) ||
+            tryOverlayConfiguredEffect(settings->effects.lowBatteryFile, 40, effectVolumeForSource("effect-low-battery")) ||
             playConfiguredEffectSource("effect-low-battery", "Low Battery");
     }
 

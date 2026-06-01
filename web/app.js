@@ -95,14 +95,14 @@ const EFFECT_FILE_SOURCES = [
 ];
 const EFFECT_FILE_PAGE_SIZE = 20;
 const EFFECT_SELECT_CONFIG = [
-  { id: "effectStartupFile", field: "startupFile", label: "Startup" },
-  { id: "effectAlarmFile", field: "alarmFile", label: "Alarm" },
-  { id: "effectNotificationFile", field: "notificationFile", label: "Notification" },
-  { id: "effectAmbientSoundFile", field: "ambientSoundFile", label: "Ambient Sound" },
-  { id: "effectLowBatteryFile", field: "lowBatteryFile", label: "Low Battery" },
-  { id: "effectShutDownFile", field: "shutDownFile", label: "Shut Down" },
-  { id: "effectUpdateAvailableFile", field: "updateAvailableFile", label: "Updates Available" },
-  { id: "effectUpdateSuccessFile", field: "updateSuccessFile", label: "Update Success" },
+  { id: "effectStartupFile", field: "startupFile", label: "Startup", source: "effect-startup", volumeId: "effectStartupVolumePercent", volumeField: "startupVolumePercent" },
+  { id: "effectAlarmFile", field: "alarmFile", label: "Alarm", source: "effect-alarm", volumeId: "effectAlarmVolumePercent", volumeField: "alarmVolumePercent" },
+  { id: "effectNotificationFile", field: "notificationFile", label: "Notification", source: "effect-notification", volumeId: "effectNotificationVolumePercent", volumeField: "notificationVolumePercent" },
+  { id: "effectAmbientSoundFile", field: "ambientSoundFile", label: "Ambient Sound", source: "effect-ambient", volumeId: "effectAmbientVolumePercent", volumeField: "ambientVolumePercent" },
+  { id: "effectLowBatteryFile", field: "lowBatteryFile", label: "Low Battery", source: "effect-low-battery", volumeId: "effectLowBatteryVolumePercent", volumeField: "lowBatteryVolumePercent" },
+  { id: "effectShutDownFile", field: "shutDownFile", label: "Shut Down", source: "effect-shutdown", volumeId: "effectShutDownVolumePercent", volumeField: "shutDownVolumePercent" },
+  { id: "effectUpdateAvailableFile", field: "updateAvailableFile", label: "Updates Available", source: "effect-update-available", volumeId: "effectUpdateAvailableVolumePercent", volumeField: "updateAvailableVolumePercent" },
+  { id: "effectUpdateSuccessFile", field: "updateSuccessFile", label: "Update Success", source: "effect-update-success", volumeId: "effectUpdateSuccessVolumePercent", volumeField: "updateSuccessVolumePercent" },
 ];
 const STORAGE_PREVIEW_EMBEDDED_SCAN_MAX_BYTES = 256 * 1024;
 const GPIO_BOARD_PRESENTATION = {
@@ -611,13 +611,21 @@ const elements = {
   audioBclkPin: document.getElementById("audioBclkPin"),
   audioDoutPin: document.getElementById("audioDoutPin"),
   effectStartupFile: document.getElementById("effectStartupFile"),
+  effectStartupVolumePercent: document.getElementById("effectStartupVolumePercent"),
   effectAlarmFile: document.getElementById("effectAlarmFile"),
+  effectAlarmVolumePercent: document.getElementById("effectAlarmVolumePercent"),
   effectNotificationFile: document.getElementById("effectNotificationFile"),
+  effectNotificationVolumePercent: document.getElementById("effectNotificationVolumePercent"),
   effectAmbientSoundFile: document.getElementById("effectAmbientSoundFile"),
+  effectAmbientVolumePercent: document.getElementById("effectAmbientVolumePercent"),
   effectLowBatteryFile: document.getElementById("effectLowBatteryFile"),
+  effectLowBatteryVolumePercent: document.getElementById("effectLowBatteryVolumePercent"),
   effectShutDownFile: document.getElementById("effectShutDownFile"),
+  effectShutDownVolumePercent: document.getElementById("effectShutDownVolumePercent"),
   effectUpdateAvailableFile: document.getElementById("effectUpdateAvailableFile"),
+  effectUpdateAvailableVolumePercent: document.getElementById("effectUpdateAvailableVolumePercent"),
   effectUpdateSuccessFile: document.getElementById("effectUpdateSuccessFile"),
+  effectUpdateSuccessVolumePercent: document.getElementById("effectUpdateSuccessVolumePercent"),
   effectsFileStatus: document.getElementById("effectsFileStatus"),
   audioWsSummary: document.getElementById("audioWsSummary"),
   audioBclkSummary: document.getElementById("audioBclkSummary"),
@@ -4746,7 +4754,7 @@ function closeUpdateAvailablePopup() {
 
 function effectSelectElements() {
   return EFFECT_SELECT_CONFIG
-    .map((item) => ({ ...item, element: elements[item.id] }))
+    .map((item) => ({ ...item, element: elements[item.id], volumeElement: elements[item.volumeId] }))
     .filter((item) => item.element);
 }
 
@@ -5034,7 +5042,7 @@ async function loadEffectFileOptions(options = {}) {
   }
 }
 
-async function previewEffectFile(effectRef, effectLabel, { ambient = false } = {}) {
+async function previewEffectFile(effectRef, effectLabel, { source = "effect-preview" } = {}) {
   if (!effectRef) {
     return;
   }
@@ -5043,10 +5051,10 @@ async function previewEffectFile(effectRef, effectLabel, { ambient = false } = {
     body: JSON.stringify({
       url: effectRef,
       label: effectLabel,
-      type: ambient ? "effect-ambient" : "effect-preview",
+      type: source,
     }),
   });
-  setMessage(ambient ? `Starting ${effectLabel}` : `Previewing ${effectLabel}`);
+  setMessage(source === "effect-ambient" ? `Starting ${effectLabel}` : `Previewing ${effectLabel}`);
 }
 
 function syncEffectsPage(settings = state.settings) {
@@ -5087,6 +5095,22 @@ function syncPageSections(settings = state.settings) {
   renderOledPreview();
 }
 
+function effectVolumePercentValue(value, fallback = 100) {
+  const trimmedValue = String(value ?? "").trim();
+  if (!trimmedValue) {
+    return fallback;
+  }
+  const numericValue = Math.round(Number(trimmedValue));
+  if (!Number.isFinite(numericValue)) {
+    return fallback;
+  }
+  return Math.max(0, Math.min(100, numericValue));
+}
+
+function effectVolumeSetting(config, settings = state.settings) {
+  return Number(settings?.effects?.[config.volumeField] ?? (config.source === "effect-ambient" ? 20 : 100));
+}
+
 function fillForm(data) {
   state.settingsLoading = true;
   data.sd ||= {};
@@ -5104,6 +5128,9 @@ function fillForm(data) {
     for (const [key, value] of Object.entries(sectionValue)) {
       const field = elements.settingsForm.elements.namedItem(`${section}.${key}`);
       if (!field) {
+        continue;
+      }
+      if (field === document.activeElement) {
         continue;
       }
       if (field.type === "checkbox") {
@@ -5396,14 +5423,10 @@ function collectForm() {
   payload.sd.sckPin = Number(elements.sdSckPin?.value || payload.sd.sckPin || DEFAULT_SD_GPIO_PINS.sck);
   payload.sd.mosiPin = Number(elements.sdMosiPin?.value || payload.sd.mosiPin || DEFAULT_SD_GPIO_PINS.mosi);
   payload.sd.misoPin = Number(elements.sdMisoPin?.value || payload.sd.misoPin || DEFAULT_SD_GPIO_PINS.miso);
-  payload.effects.startupFile = String(elements.effectStartupFile?.value || elements.effectStartupFile?.dataset?.savedEffectValue || payload.effects.startupFile || "");
-  payload.effects.alarmFile = String(elements.effectAlarmFile?.value || elements.effectAlarmFile?.dataset?.savedEffectValue || payload.effects.alarmFile || "");
-  payload.effects.notificationFile = String(elements.effectNotificationFile?.value || elements.effectNotificationFile?.dataset?.savedEffectValue || payload.effects.notificationFile || "");
-  payload.effects.ambientSoundFile = String(elements.effectAmbientSoundFile?.value || elements.effectAmbientSoundFile?.dataset?.savedEffectValue || payload.effects.ambientSoundFile || "");
-  payload.effects.lowBatteryFile = String(elements.effectLowBatteryFile?.value || elements.effectLowBatteryFile?.dataset?.savedEffectValue || payload.effects.lowBatteryFile || "");
-  payload.effects.shutDownFile = String(elements.effectShutDownFile?.value || elements.effectShutDownFile?.dataset?.savedEffectValue || payload.effects.shutDownFile || "");
-  payload.effects.updateAvailableFile = String(elements.effectUpdateAvailableFile?.value || elements.effectUpdateAvailableFile?.dataset?.savedEffectValue || payload.effects.updateAvailableFile || "");
-  payload.effects.updateSuccessFile = String(elements.effectUpdateSuccessFile?.value || elements.effectUpdateSuccessFile?.dataset?.savedEffectValue || payload.effects.updateSuccessFile || "");
+  for (const config of EFFECT_SELECT_CONFIG) {
+    payload.effects[config.field] = String(config.element?.value || config.element?.dataset?.savedEffectValue || payload.effects[config.field] || "");
+    payload.effects[config.volumeField] = effectVolumePercentValue(config.volumeElement?.value, effectVolumeSetting(config));
+  }
   return payload;
 }
 
@@ -6376,6 +6399,22 @@ async function setVolume(volumePercent) {
   await refreshSettingsAfterSave({ device: { savedVolumePercent: volumePercent } }, 8, 200);
 }
 
+async function setEffectVolume(config, volumePercent) {
+  const nextVolume = effectVolumePercentValue(volumePercent, effectVolumeSetting(config));
+  state.settings ||= {};
+  state.settings.effects ||= {};
+  state.settings.effects[config.volumeField] = nextVolume;
+  if (namedField(`effects.${config.volumeField}`)) {
+    namedField(`effects.${config.volumeField}`).value = String(nextVolume);
+  }
+  await saveSettings({ silent: true });
+  if (config.element?.value) {
+    await previewEffectFile(config.element.value, config.label, { source: config.source });
+  }
+  setMessage(`${config.label} volume saved at ${nextVolume}%`);
+  await refreshSettingsAfterSave({ effects: { [config.volumeField]: nextVolume } }, 8, 200);
+}
+
 async function stopPlayback() {
   state.playbackActionInProgress = "stop";
   updatePlaybackActionButton();
@@ -6899,7 +6938,8 @@ for (const field of [elements.audioWsPin, elements.audioBclkPin, elements.audioD
     state.settingsDirty = true;
   });
 }
-for (const { label, element } of effectSelectElements()) {
+for (const config of effectSelectElements()) {
+  const { label, element, volumeElement, source } = config;
   const ensureEffectOptionsLoaded = () => {
     if (state.effectFilesLoading || state.effectFileOptionsLoaded) {
       return;
@@ -6910,21 +6950,31 @@ for (const { label, element } of effectSelectElements()) {
   element?.addEventListener("focus", ensureEffectOptionsLoaded);
   element?.addEventListener("change", async () => {
     const selectedValue = String(element.value || "").trim();
-    const isAmbientSelection = element.id === "effectAmbientSoundFile";
     element.dataset.savedEffectValue = selectedValue;
     state.settingsDirty = true;
     try {
       await saveSettings({ silent: true });
       if (selectedValue) {
-        await previewEffectFile(
-          selectedValue,
-          isAmbientSelection ? "Ambient Sound" : `${label} preview`,
-          { ambient: isAmbientSelection },
-        );
+        await previewEffectFile(selectedValue, label, { source });
       }
     } catch (error) {
       handleError(error);
     }
+  });
+  volumeElement?.addEventListener("input", (event) => {
+    const trimmedValue = String(event.target.value ?? "").trim();
+    if (!trimmedValue) {
+      state.settingsDirty = true;
+      return;
+    }
+    const normalizedValue = effectVolumePercentValue(trimmedValue, effectVolumeSetting(config));
+    if (String(normalizedValue) !== trimmedValue) {
+      event.target.value = String(normalizedValue);
+    }
+    state.settingsDirty = true;
+  });
+  volumeElement?.addEventListener("change", (event) => {
+    setEffectVolume(config, event.target.value).catch(handleError);
   });
 }
 elements.effectsReindexButton?.addEventListener("click", () => {

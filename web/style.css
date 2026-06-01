@@ -754,6 +754,18 @@ body {
     gap: 10px;
   }
 
+  .effect-select-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 4.5rem;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .effect-select-control input {
+    text-align: center;
+    padding-inline: 6px;
+  }
+
   button {
     border: 0;
     font-weight: 700;

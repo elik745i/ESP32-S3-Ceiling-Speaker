@@ -386,13 +386,21 @@ SettingsBundle SettingsManager::defaults() const {
     settings.audio.bclkPin = DefaultConfig::I2S_BCLK_PIN;
 
     settings.effects.startupFile = "";
+    settings.effects.startupVolumePercent = 100;
     settings.effects.alarmFile = "";
+    settings.effects.alarmVolumePercent = 100;
     settings.effects.notificationFile = "";
+    settings.effects.notificationVolumePercent = 100;
     settings.effects.ambientSoundFile = "";
+    settings.effects.ambientVolumePercent = 20;
     settings.effects.lowBatteryFile = "";
+    settings.effects.lowBatteryVolumePercent = 100;
     settings.effects.shutDownFile = "";
+    settings.effects.shutDownVolumePercent = 100;
     settings.effects.updateAvailableFile = "";
+    settings.effects.updateAvailableVolumePercent = 100;
     settings.effects.updateSuccessFile = "";
+    settings.effects.updateSuccessVolumePercent = 100;
 
     settings.oled.enabled = DefaultConfig::OLED_ENABLED;
     settings.oled.displayType = "oled";
@@ -484,13 +492,21 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     settings.device.button1Action = normalizeButtonAction(settings.device.button1Action, DefaultConfig::BUTTON1_DEFAULT_ACTION);
     settings.device.button2Action = normalizeButtonAction(settings.device.button2Action, DefaultConfig::BUTTON2_DEFAULT_ACTION);
     settings.effects.startupFile = normalizeEffectFileRef(settings.effects.startupFile);
+    settings.effects.startupVolumePercent = clampValue<uint8_t>(settings.effects.startupVolumePercent, static_cast<uint8_t>(0), static_cast<uint8_t>(100));
     settings.effects.alarmFile = normalizeEffectFileRef(settings.effects.alarmFile);
+    settings.effects.alarmVolumePercent = clampValue<uint8_t>(settings.effects.alarmVolumePercent, static_cast<uint8_t>(0), static_cast<uint8_t>(100));
     settings.effects.notificationFile = normalizeEffectFileRef(settings.effects.notificationFile);
+    settings.effects.notificationVolumePercent = clampValue<uint8_t>(settings.effects.notificationVolumePercent, static_cast<uint8_t>(0), static_cast<uint8_t>(100));
     settings.effects.ambientSoundFile = normalizeEffectFileRef(settings.effects.ambientSoundFile);
+    settings.effects.ambientVolumePercent = clampValue<uint8_t>(settings.effects.ambientVolumePercent, static_cast<uint8_t>(0), static_cast<uint8_t>(100));
     settings.effects.lowBatteryFile = normalizeEffectFileRef(settings.effects.lowBatteryFile);
+    settings.effects.lowBatteryVolumePercent = clampValue<uint8_t>(settings.effects.lowBatteryVolumePercent, static_cast<uint8_t>(0), static_cast<uint8_t>(100));
     settings.effects.shutDownFile = normalizeEffectFileRef(settings.effects.shutDownFile);
+    settings.effects.shutDownVolumePercent = clampValue<uint8_t>(settings.effects.shutDownVolumePercent, static_cast<uint8_t>(0), static_cast<uint8_t>(100));
     settings.effects.updateAvailableFile = normalizeEffectFileRef(settings.effects.updateAvailableFile);
+    settings.effects.updateAvailableVolumePercent = clampValue<uint8_t>(settings.effects.updateAvailableVolumePercent, static_cast<uint8_t>(0), static_cast<uint8_t>(100));
     settings.effects.updateSuccessFile = normalizeEffectFileRef(settings.effects.updateSuccessFile);
+    settings.effects.updateSuccessVolumePercent = clampValue<uint8_t>(settings.effects.updateSuccessVolumePercent, static_cast<uint8_t>(0), static_cast<uint8_t>(100));
     settings.device.lowBatterySleepThresholdPercent = clampValue<uint8_t>(settings.device.lowBatterySleepThresholdPercent, static_cast<uint8_t>(1), static_cast<uint8_t>(100));
     settings.device.lowBatteryWakeIntervalMinutes = clampValue<uint16_t>(settings.device.lowBatteryWakeIntervalMinutes, static_cast<uint16_t>(0), static_cast<uint16_t>(1440));
     settings.battery.calibrationMultiplier = clampValue<float>(settings.battery.calibrationMultiplier, 0.1f, 10.0f);
@@ -614,13 +630,21 @@ SettingsBundle SettingsManager::load() {
     settings.audio.bclkPin = readUInt("aud_bclk", settings.audio.bclkPin);
 
     settings.effects.startupFile = readString("eff_start", settings.effects.startupFile);
+    settings.effects.startupVolumePercent = readUInt("eff_st_vol", settings.effects.startupVolumePercent);
     settings.effects.alarmFile = readString("eff_alarm", settings.effects.alarmFile);
+    settings.effects.alarmVolumePercent = readUInt("eff_al_vol", settings.effects.alarmVolumePercent);
     settings.effects.notificationFile = readString("eff_note", settings.effects.notificationFile);
+    settings.effects.notificationVolumePercent = readUInt("eff_no_vol", settings.effects.notificationVolumePercent);
     settings.effects.ambientSoundFile = readString("eff_amb", settings.effects.ambientSoundFile);
+    settings.effects.ambientVolumePercent = readUInt("eff_amb_vol", settings.effects.ambientVolumePercent);
     settings.effects.lowBatteryFile = readString("eff_low", settings.effects.lowBatteryFile);
+    settings.effects.lowBatteryVolumePercent = readUInt("eff_lo_vol", settings.effects.lowBatteryVolumePercent);
     settings.effects.shutDownFile = readString("eff_down", settings.effects.shutDownFile);
+    settings.effects.shutDownVolumePercent = readUInt("eff_sh_vol", settings.effects.shutDownVolumePercent);
     settings.effects.updateAvailableFile = readString("eff_up_av", settings.effects.updateAvailableFile);
+    settings.effects.updateAvailableVolumePercent = readUInt("eff_ua_vol", settings.effects.updateAvailableVolumePercent);
     settings.effects.updateSuccessFile = readString("eff_up_ok", settings.effects.updateSuccessFile);
+    settings.effects.updateSuccessVolumePercent = readUInt("eff_us_vol", settings.effects.updateSuccessVolumePercent);
 
     settings.oled.enabled = readBool("oled_en", settings.oled.enabled);
     settings.oled.displayType = readString("oled_mode", settings.oled.displayType);
@@ -707,13 +731,21 @@ bool SettingsManager::save(const SettingsBundle& settings) {
     changed |= writeUIntIfChanged("aud_bclk", sanitized.audio.bclkPin);
 
     changed |= writeStringIfChanged("eff_start", sanitized.effects.startupFile);
+    changed |= writeUIntIfChanged("eff_st_vol", sanitized.effects.startupVolumePercent);
     changed |= writeStringIfChanged("eff_alarm", sanitized.effects.alarmFile);
+    changed |= writeUIntIfChanged("eff_al_vol", sanitized.effects.alarmVolumePercent);
     changed |= writeStringIfChanged("eff_note", sanitized.effects.notificationFile);
+    changed |= writeUIntIfChanged("eff_no_vol", sanitized.effects.notificationVolumePercent);
     changed |= writeStringIfChanged("eff_amb", sanitized.effects.ambientSoundFile);
+    changed |= writeUIntIfChanged("eff_amb_vol", sanitized.effects.ambientVolumePercent);
     changed |= writeStringIfChanged("eff_low", sanitized.effects.lowBatteryFile);
+    changed |= writeUIntIfChanged("eff_lo_vol", sanitized.effects.lowBatteryVolumePercent);
     changed |= writeStringIfChanged("eff_down", sanitized.effects.shutDownFile);
+    changed |= writeUIntIfChanged("eff_sh_vol", sanitized.effects.shutDownVolumePercent);
     changed |= writeStringIfChanged("eff_up_av", sanitized.effects.updateAvailableFile);
+    changed |= writeUIntIfChanged("eff_ua_vol", sanitized.effects.updateAvailableVolumePercent);
     changed |= writeStringIfChanged("eff_up_ok", sanitized.effects.updateSuccessFile);
+    changed |= writeUIntIfChanged("eff_us_vol", sanitized.effects.updateSuccessVolumePercent);
 
     changed |= writeBoolIfChanged("oled_en", sanitized.oled.enabled);
     changed |= writeStringIfChanged("oled_mode", sanitized.oled.displayType);
@@ -806,13 +838,21 @@ void SettingsManager::toJson(const SettingsBundle& settings, JsonObject root) co
 
     JsonObject effects = root["effects"].to<JsonObject>();
     effects["startupFile"] = settings.effects.startupFile;
+    effects["startupVolumePercent"] = settings.effects.startupVolumePercent;
     effects["alarmFile"] = settings.effects.alarmFile;
+    effects["alarmVolumePercent"] = settings.effects.alarmVolumePercent;
     effects["notificationFile"] = settings.effects.notificationFile;
+    effects["notificationVolumePercent"] = settings.effects.notificationVolumePercent;
     effects["ambientSoundFile"] = settings.effects.ambientSoundFile;
+    effects["ambientVolumePercent"] = settings.effects.ambientVolumePercent;
     effects["lowBatteryFile"] = settings.effects.lowBatteryFile;
+    effects["lowBatteryVolumePercent"] = settings.effects.lowBatteryVolumePercent;
     effects["shutDownFile"] = settings.effects.shutDownFile;
+    effects["shutDownVolumePercent"] = settings.effects.shutDownVolumePercent;
     effects["updateAvailableFile"] = settings.effects.updateAvailableFile;
+    effects["updateAvailableVolumePercent"] = settings.effects.updateAvailableVolumePercent;
     effects["updateSuccessFile"] = settings.effects.updateSuccessFile;
+    effects["updateSuccessVolumePercent"] = settings.effects.updateSuccessVolumePercent;
 
     JsonObject oled = root["oled"].to<JsonObject>();
     oled["enabled"] = settings.oled.enabled;
@@ -929,13 +969,21 @@ bool SettingsManager::updateFromJson(SettingsBundle& settings, JsonVariantConst 
     JsonObjectConst effects = object["effects"];
     if (!effects.isNull()) {
         copyString(effects, "startupFile", settings.effects.startupFile);
+        if (effects["startupVolumePercent"].is<uint8_t>()) settings.effects.startupVolumePercent = effects["startupVolumePercent"].as<uint8_t>();
         copyString(effects, "alarmFile", settings.effects.alarmFile);
+        if (effects["alarmVolumePercent"].is<uint8_t>()) settings.effects.alarmVolumePercent = effects["alarmVolumePercent"].as<uint8_t>();
         copyString(effects, "notificationFile", settings.effects.notificationFile);
+        if (effects["notificationVolumePercent"].is<uint8_t>()) settings.effects.notificationVolumePercent = effects["notificationVolumePercent"].as<uint8_t>();
         copyString(effects, "ambientSoundFile", settings.effects.ambientSoundFile);
+        if (effects["ambientVolumePercent"].is<uint8_t>()) settings.effects.ambientVolumePercent = effects["ambientVolumePercent"].as<uint8_t>();
         copyString(effects, "lowBatteryFile", settings.effects.lowBatteryFile);
+        if (effects["lowBatteryVolumePercent"].is<uint8_t>()) settings.effects.lowBatteryVolumePercent = effects["lowBatteryVolumePercent"].as<uint8_t>();
         copyString(effects, "shutDownFile", settings.effects.shutDownFile);
+        if (effects["shutDownVolumePercent"].is<uint8_t>()) settings.effects.shutDownVolumePercent = effects["shutDownVolumePercent"].as<uint8_t>();
         copyString(effects, "updateAvailableFile", settings.effects.updateAvailableFile);
+        if (effects["updateAvailableVolumePercent"].is<uint8_t>()) settings.effects.updateAvailableVolumePercent = effects["updateAvailableVolumePercent"].as<uint8_t>();
         copyString(effects, "updateSuccessFile", settings.effects.updateSuccessFile);
+        if (effects["updateSuccessVolumePercent"].is<uint8_t>()) settings.effects.updateSuccessVolumePercent = effects["updateSuccessVolumePercent"].as<uint8_t>();
     }
 
     JsonObjectConst oled = object["oled"];

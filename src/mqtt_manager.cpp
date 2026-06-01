@@ -750,12 +750,17 @@ bool MqttManager::requestConnect(String& error) {
         return false;
     }
 
+    error = "";
     connectionEnabled_ = true;
     if (client_.connected()) {
         if (settings_.mqtt.discoveryEnabled && !discoveryPublishedForSession_) {
             discoveryPublishPending_ = true;
         }
         statePublishPending_ = true;
+        return true;
+    }
+
+    if (lastConnectAttemptAt_ != 0 && millis() - lastConnectAttemptAt_ < MQTT_RETRY_INTERVAL_MS) {
         return true;
     }
 

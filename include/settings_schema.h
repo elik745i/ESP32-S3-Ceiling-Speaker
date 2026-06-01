@@ -105,13 +105,21 @@ struct SdSettings {
 
 struct EffectSettings {
     String startupFile;
+    uint8_t startupVolumePercent = 100;
     String alarmFile;
+    uint8_t alarmVolumePercent = 100;
     String notificationFile;
+    uint8_t notificationVolumePercent = 100;
     String ambientSoundFile;
+    uint8_t ambientVolumePercent = 20;
     String lowBatteryFile;
+    uint8_t lowBatteryVolumePercent = 100;
     String shutDownFile;
+    uint8_t shutDownVolumePercent = 100;
     String updateAvailableFile;
+    uint8_t updateAvailableVolumePercent = 100;
     String updateSuccessFile;
+    uint8_t updateSuccessVolumePercent = 100;
 };
 
 struct DeviceSettings {
