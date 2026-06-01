@@ -682,8 +682,8 @@ void startAmbientIfEligible(const AppStateSnapshot& snapshot) {
     }
 }
 
-void scheduleAmbientResume() {
-    runtimeAudio.ambientEligibleAt = millis() + kAmbientResumeDelayMs;
+void scheduleAmbientResume(unsigned long delayMs = 0UL) {
+    runtimeAudio.ambientEligibleAt = millis() + delayMs;
 }
 
 void applyWebUiLockNow() {
@@ -1601,9 +1601,12 @@ void setup() {
         []() { return *settings; },
         saveSettingsFromJson,
         [](const String& url, const String& label, const String& type, String& error) {
-            const bool addToHistory = type != "effect-preview";
-            const String source = type == "effect-preview" ? "effect-preview" : "";
-            return playRequest(url, label, type, source, error, addToHistory);
+            const bool ambientSelection = type == "effect-ambient";
+            const bool effectPreview = type == "effect-preview";
+            const bool addToHistory = !effectPreview && !ambientSelection;
+            const String source = ambientSelection ? "effect-ambient" : (effectPreview ? "effect-preview" : "");
+            const String normalizedType = ambientSelection ? String("effect") : type;
+            return playRequest(url, label, normalizedType, source, error, addToHistory);
         },
         []() {
             deferredActions->stopPending = true;
@@ -1691,7 +1694,7 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
     if (playbackStarted) {
         soundEffects->playPlaybackStart();
         if (snapshot.playback.source != "effect-ambient") {
-            runtimeAudio.ambientEligibleAt = millis() + kAmbientResumeDelayMs;
+            scheduleAmbientResume();
         }
         if (settings != nullptr && settings->oled.wapeTriggerEvent == "play_start") {
             requestWapeTriggerPulse();
@@ -1741,7 +1744,7 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
                 runtimeAudio.ambientVolumeApplied = true;
                 if (!playConfiguredEffectSource("effect-ambient", "Ambient Sound")) {
                     restoreAmbientVolumeIfNeeded();
-                    scheduleAmbientResume();
+                    scheduleAmbientResume(kAmbientResumeDelayMs);
                 }
             }
         } else if (previousPlaybackSource == "effect-low-battery") {

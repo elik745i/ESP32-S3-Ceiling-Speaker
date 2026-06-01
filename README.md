@@ -5,10 +5,10 @@ Custom PlatformIO firmware for ESP32 and ESP32-S3 Wi-Fi speaker/notifier hardwar
 
 ## Current Release
 
-- Firmware version: `v0.1.15`
+- Firmware version: `v0.1.16`
 - Primary release repository: `elik745i/ESP32-S3-Ceiling-Speaker`
 - GitHub Releases feed: `https://api.github.com/repos/elik745i/ESP32-S3-Ceiling-Speaker/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.15.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.16.bin`
 
 ## What This Firmware Does
 
@@ -93,6 +93,7 @@ Runtime automation and local sound-effect routing are coordinated in [src/main.c
 Current behavior:
 
 - Configurable effect-file routing is available for startup, alarm, notification, ambient, low-battery, shutdown, update-available, and update-success events.
+- Ambient selection now starts the dedicated ambient playback source, resumes automatically after other playback stops, and keeps non-ambient effect dropdowns as one-shot previews.
 - Ambient and alert cues can be selected from local storage and triggered without replacing the normal release asset flow.
 - Low-battery handling can play a cue before entering deep sleep when that mode is enabled.
 - OTA availability and success cues can be paired with the firmware action flow.
@@ -112,13 +113,16 @@ Current UI highlights:
 - Direct URL playback and TTS playback entry.
 - Previous, play or stop, and next station transport controls from the top playback card.
 - Audio Effects tab for assigning local files to startup, alert, ambient, and OTA cues.
+- Audio Effects ambient playback now uses the real looping ambient source and automatically returns after manual playback or streams stop.
 - I2S pin remapping for MAX98357A wiring.
 - OLED pin remapping plus display-mode selection between OLED and Wape trigger mode.
 - Battery configuration, charging-sense pin selection, calibration helpers, and low-battery sleep controls.
 - GPIO Info tab with board selector, dedicated SVG board art, side-by-side pin guidance, and board suitability recommendations.
 - Internal flash and SD storage tabs with file browsing, folder creation, upload support, selection tools, and SD pin configuration.
+- SD storage playback now starts immediately from the preview modal and toolbar play action without blocking on artwork scans.
 - Firmware release browsing, local firmware upload, and firmware action dashboard.
 - Password reveal toggles, reboot, and factory-reset actions.
+- Embedded favicon served from the device web UI.
 
 ## Build Profiles
 

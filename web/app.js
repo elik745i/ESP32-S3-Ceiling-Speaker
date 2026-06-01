@@ -9,6 +9,7 @@ const state = {
   storageSelectionMode: false,
   storageSelectedPathsByTarget: { flash: [], sd: [] },
   storagePreviewItem: null,
+  storagePreviewTarget: "flash",
   storagePreviewAudio: null,
   storagePreviewObjectUrl: "",
   storagePreviewArtworkUrl: "",
@@ -753,6 +754,7 @@ const elements = {
   storageSelectModeButton: document.getElementById("storageSelectModeButton"),
   storageSelectAllButton: document.getElementById("storageSelectAllButton"),
   storageDeleteButton: document.getElementById("storageDeleteButton"),
+  storagePlayButton: document.getElementById("storagePlayButton"),
   storageUploadButton: document.getElementById("storageUploadButton"),
   storageFileInput: document.getElementById("storageFileInput"),
   storageProgressFill: document.getElementById("storageProgressFill"),
@@ -762,12 +764,15 @@ const elements = {
   storagePreviewCloseButton: document.getElementById("storagePreviewCloseButton"),
   storagePreviewTitle: document.getElementById("storagePreviewTitle"),
   storagePreviewMeta: document.getElementById("storagePreviewMeta"),
+  storagePreviewPath: document.getElementById("storagePreviewPath"),
   storagePreviewAlbum: document.getElementById("storagePreviewAlbum"),
   storagePreviewArtwork: document.getElementById("storagePreviewArtwork"),
   storagePreviewArtworkFallback: document.getElementById("storagePreviewArtworkFallback"),
   storagePreviewArtworkStatus: document.getElementById("storagePreviewArtworkStatus"),
   storagePreviewProgressFill: document.getElementById("storagePreviewProgressFill"),
   storagePreviewProgressLabel: document.getElementById("storagePreviewProgressLabel"),
+  storagePreviewVolumeSlider: document.getElementById("storagePreviewVolumeSlider"),
+  storagePreviewVolumeValue: document.getElementById("storagePreviewVolumeValue"),
   storagePreviewPrevButton: document.getElementById("storagePreviewPrevButton"),
   storagePreviewPlayButton: document.getElementById("storagePreviewPlayButton"),
   storagePreviewNextButton: document.getElementById("storagePreviewNextButton"),
@@ -2286,6 +2291,18 @@ function clearStorageSelection(target = state.activeStorageTarget) {
   setStorageSelection([], target);
 }
 
+function selectedStoragePlaybackEntry(target = state.activeStorageTarget) {
+  const selectedPaths = activeStorageSelection(target);
+  if (selectedPaths.length !== 1) {
+    return null;
+  }
+  const entry = activeStorageEntries(target).find((candidate) => candidate.path === selectedPaths[0]);
+  if (!entry || entry.isDirectory || !isAudioStoragePath(entry.path)) {
+    return null;
+  }
+  return entry;
+}
+
 function rerenderStorageManager(target = state.activeStorageTarget) {
   renderStorageManager({
     target,
@@ -2330,6 +2347,7 @@ function storageItemSubtitle(entry) {
 function updateStorageToolbar(storage = state.storageInfoByTarget[state.activeStorageTarget] || {}) {
   const entries = activeStorageEntries();
   const selectedPaths = activeStorageSelection();
+  const playableEntry = selectedStoragePlaybackEntry();
   const allVisibleSelected = entries.length > 0 && entries.every((entry) => selectedPaths.includes(entry.path));
   const setButtonLabel = (button, label) => {
     if (!button) {
@@ -2352,6 +2370,13 @@ function updateStorageToolbar(storage = state.storageInfoByTarget[state.activeSt
   if (elements.storageDeleteButton) {
     elements.storageDeleteButton.disabled = selectedPaths.length === 0;
     setButtonLabel(elements.storageDeleteButton, selectedPaths.length > 1 ? `Delete (${selectedPaths.length})` : "Delete");
+  }
+  if (elements.storagePlayButton) {
+    elements.storagePlayButton.disabled = !playableEntry;
+    elements.storagePlayButton.classList.toggle("active", Boolean(playableEntry));
+    elements.storagePlayButton.title = playableEntry
+      ? `Play ${playableEntry.name || playableEntry.path}`
+      : "Select one audio file to play";
   }
   if (elements.storageUploadButton) {
     elements.storageUploadButton.disabled = !storage.mounted || state.storageUploadInProgress;
@@ -2384,6 +2409,8 @@ function updateStoragePreviewPlaybackControls() {
   if (elements.storagePreviewShuffleButton) {
     elements.storagePreviewShuffleButton.setAttribute("aria-pressed", String(Boolean(state.storagePreviewPlaybackMode.shuffle)));
   }
+
+  updateStoragePreviewProgressUi();
 }
 
 function releaseStoragePreviewUrls() {
@@ -2397,34 +2424,30 @@ function releaseStoragePreviewUrls() {
   }
 }
 
-function ensureStoragePreviewAudio() {
-  if (state.storagePreviewAudio) {
-    return state.storagePreviewAudio;
+function updateStoragePreviewPath(path = "") {
+  if (!elements.storagePreviewPath) {
+    return;
   }
+  const label = String(path || "").trim();
+  elements.storagePreviewPath.textContent = label || "\u00a0";
+  elements.storagePreviewPath.title = label;
+}
 
-  const audio = new Audio();
-  audio.preload = "metadata";
-  const syncProgress = () => {
-    const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
-    const currentTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
-    const percent = duration > 0 ? Math.max(0, Math.min(100, (currentTime / duration) * 100)) : 0;
-    if (elements.storagePreviewProgressFill) {
-      elements.storagePreviewProgressFill.style.width = `${percent}%`;
-    }
-    if (elements.storagePreviewProgressLabel) {
-      elements.storagePreviewProgressLabel.textContent = `${formatPlaybackClock(currentTime)} / ${formatPlaybackClock(duration)}`;
-    }
-  };
+function updateStoragePreviewProgressUi() {
+  const playbackState = String(state.status?.playback?.state || "idle");
+  const deviceActive = Boolean(state.storagePreviewPlaybackMode.deviceActive);
+  const hasPreviewItem = Boolean(state.storagePreviewItem);
+  const buffering = deviceActive && playbackState === "buffering";
+  const percent = deviceActive ? (buffering ? 42 : 100) : 0;
 
-  audio.addEventListener("loadedmetadata", syncProgress);
-  audio.addEventListener("timeupdate", syncProgress);
-  audio.addEventListener("ended", syncProgress);
-  audio.addEventListener("pause", syncProgress);
-  audio.addEventListener("ended", () => {
-    advanceStoragePreviewTrack(1, { autoplayDevice: true, autoplayBrowser: true, respectModes: true }).catch(handleError);
-  });
-  state.storagePreviewAudio = audio;
-  return audio;
+  if (elements.storagePreviewProgressFill) {
+    elements.storagePreviewProgressFill.style.width = `${percent}%`;
+  }
+  if (elements.storagePreviewProgressLabel) {
+    elements.storagePreviewProgressLabel.textContent = deviceActive
+      ? (buffering ? "Buffering on device..." : "Playing on device")
+      : (hasPreviewItem ? "Ready on device" : "00:00 / 00:00");
+  }
 }
 
 function parseSynchsafeInt(bytes) {
@@ -2679,28 +2702,33 @@ async function fetchRemoteArtworkUrl({ title = "", artist = "", album = "", file
   return "";
 }
 
-async function findLocalArtworkUrl(entry) {
+async function findLocalArtworkUrl(entry, target = state.activeStorageTarget) {
   if (!entry?.path) {
     return "";
   }
 
-  const availableEntries = activeStorageEntries()
+  const resolvedTarget = resolveStorageTarget(target);
+  const availableEntries = activeStorageEntries(resolvedTarget)
     .filter((candidate) => !candidate?.isDirectory)
     .map((candidate) => String(candidate.path || ""));
   for (const candidatePath of localArtworkCandidatePaths(entry.path)) {
     if (availableEntries.includes(candidatePath)) {
-      return storageStreamUrl(candidatePath, state.activeStorageTarget);
+      return storageStreamUrl(candidatePath, resolvedTarget);
     }
+  }
+
+  if (resolvedTarget === "sd") {
+    return "";
   }
 
   const directoryPath = storageParentDirectoryPath(entry.path);
   try {
-    const payload = await request(`/api/storage?target=${encodeURIComponent(state.activeStorageTarget)}&dir=${encodeURIComponent(directoryPath)}`);
+    const payload = await request(`/api/storage?target=${encodeURIComponent(resolvedTarget)}&dir=${encodeURIComponent(directoryPath)}`);
     const remoteEntries = Array.isArray(payload?.entries) ? payload.entries : [];
     const remotePaths = new Set(remoteEntries.filter((candidate) => !candidate?.isDirectory).map((candidate) => String(candidate.path || "")));
     for (const candidatePath of localArtworkCandidatePaths(entry.path)) {
       if (remotePaths.has(candidatePath)) {
-        return storageStreamUrl(candidatePath, state.activeStorageTarget);
+        return storageStreamUrl(candidatePath, resolvedTarget);
       }
     }
   } catch {
@@ -2741,6 +2769,10 @@ async function cacheRemoteArtworkForEntry(entry, remoteArtworkUrl) {
     return "";
   }
 
+  if (state.storagePreviewTarget === "sd" || shouldDeferSdReads()) {
+    return "";
+  }
+
   try {
     const response = await fetch(remoteArtworkUrl, { cache: "no-store" });
     if (!response.ok) {
@@ -2762,12 +2794,8 @@ function resetStoragePreviewUi() {
   if (elements.storagePreviewArtworkFallback) {
     elements.storagePreviewArtworkFallback.hidden = false;
   }
-  if (elements.storagePreviewProgressFill) {
-    elements.storagePreviewProgressFill.style.width = "0%";
-  }
-  if (elements.storagePreviewProgressLabel) {
-    elements.storagePreviewProgressLabel.textContent = "00:00 / 00:00";
-  }
+  updateStoragePreviewPath("");
+  updateStoragePreviewProgressUi();
   setStoragePreviewArtworkStatus("Waiting for artwork lookup.");
 }
 
@@ -2784,6 +2812,7 @@ function setStoragePreviewSummary({ title, artist, album, fileName, sizeBytes, p
   if (elements.storagePreviewMeta) {
     elements.storagePreviewMeta.textContent = `${resolvedArtist} • ${resolvedAlbum} • ${formatBytes(sizeBytes || 0)}`;
   }
+  updateStoragePreviewPath(path || resolvedFileName);
   if (elements.storagePreviewAlbum) {
     elements.storagePreviewAlbum.textContent = `${resolvedTitle}\n${resolvedArtist}\n${resolvedAlbum || resolvedFileName}`;
   }
@@ -2809,17 +2838,17 @@ function renderStorageBreadcrumbs(currentPath) {
 
   const normalized = normalizeStorageDirectoryPath(currentPath);
   const segments = normalized.split("/").filter(Boolean);
-  const crumbs = [{ label: "Root", path: "/" }];
+  const crumbs = [{ label: "Root", path: "/", current: normalized === "/" }];
   let runningPath = "";
   for (const segment of segments) {
     runningPath += `/${segment}`;
-    crumbs.push({ label: segment, path: runningPath });
+    crumbs.push({ label: runningPath, path: runningPath, current: runningPath === normalized });
   }
 
   elements.storageBreadcrumbs.innerHTML = `
     <div class="storage-crumb-trail">
       ${crumbs.map((crumb, index) => (
-        `<button type="button" class="storage-crumb storage-crumb-inline" data-storage-nav="${escapeHtml(crumb.path)}">${escapeHtml(crumb.label)}</button>${index < crumbs.length - 1 ? '<span class="storage-crumb-sep">/</span>' : ''}`
+        `<button type="button" class="storage-crumb storage-crumb-inline${crumb.current ? ' storage-crumb-current' : ''}" data-storage-nav="${escapeHtml(crumb.path)}"${crumb.current ? ' aria-current="page"' : ''}>${escapeHtml(index === 0 ? crumb.label : crumb.label)}</button>`
       )).join("")}
     </div>
   `;
@@ -2924,9 +2953,11 @@ async function deleteSelectedStorageItems() {
 }
 
 function closeStoragePreview() {
-  const audio = ensureStoragePreviewAudio();
-  audio.pause();
-  audio.currentTime = 0;
+  if (state.storagePreviewAudio) {
+    state.storagePreviewAudio.pause();
+    state.storagePreviewAudio.currentTime = 0;
+    state.storagePreviewAudio.removeAttribute("src");
+  }
   state.storagePreviewPlaybackMode.deviceActive = false;
   state.storagePreviewPlaybackMode.previousDeviceActive = false;
   state.storagePreviewPlaybackMode.suppressAutoAdvance = false;
@@ -2937,12 +2968,52 @@ function closeStoragePreview() {
   if (elements.storagePreviewMeta) {
     elements.storagePreviewMeta.textContent = "Select a track to preview it.";
   }
+  updateStoragePreviewPath("");
   if (elements.storagePreviewAlbum) {
     elements.storagePreviewAlbum.textContent = "Album art unavailable";
   }
+  state.storagePreviewTarget = state.activeStorageTarget;
   if (elements.storagePreviewModal?.open) {
     elements.storagePreviewModal.close();
   }
+}
+
+async function queueStoragePlayback(entry, target = state.activeStorageTarget) {
+  if (!entry || entry.isDirectory || !isAudioStoragePath(entry.path)) {
+    setStorageStatus("Select one audio file first.", true);
+    return false;
+  }
+
+  const resolvedTarget = resolveStorageTarget(target);
+  const payload = {
+    url: storagePlaybackRef(entry.path, resolvedTarget),
+    label: normalizePlaybackTitle(entry.name || entry.path, entry.path),
+    type: "media",
+  };
+
+  await request("/api/play", { method: "POST", body: JSON.stringify(payload) });
+  state.recentPlayback.unshift(payload);
+  state.recentPlayback = state.recentPlayback.filter((item, index, array) => index === array.findIndex((candidate) => candidate.url === item.url && candidate.type === item.type));
+  saveRecentPlayback();
+  renderRecentPlayback();
+
+  const started = await pollStatusUntil(
+    (status) => {
+      const playbackState = String(status?.playback?.state || "idle");
+      const playbackUrl = String(status?.playback?.url || "");
+      return (playbackState === "playing" || playbackState === "buffering") && playbackUrl === payload.url;
+    },
+    12,
+    150,
+  );
+
+  setMessage(started ? `Playing ${payload.label}` : `Playback queued for ${payload.label}`);
+  setStorageStatus(started ? `Playing ${payload.label}` : `Playback queued for ${payload.label}`);
+  if (!started) {
+    await loadStatus();
+  }
+
+  return started;
 }
 
 async function playStoragePreviewOnDevice() {
@@ -2951,39 +3022,17 @@ async function playStoragePreviewOnDevice() {
     return;
   }
 
-  const audio = ensureStoragePreviewAudio();
-  const payload = {
-    url: storagePlaybackRef(entry.path, state.activeStorageTarget),
-    label: normalizePlaybackTitle(entry.name || entry.path, entry.path),
-    type: "media",
-  };
-
   state.storagePreviewPlaybackMode.suppressAutoAdvance = false;
-  await request("/api/play", { method: "POST", body: JSON.stringify(payload) });
-  state.recentPlayback.unshift(payload);
-  state.recentPlayback = state.recentPlayback.filter((item, index, array) => index === array.findIndex((candidate) => candidate.url === item.url && candidate.type === item.type));
-  saveRecentPlayback();
-  renderRecentPlayback();
-
-  if (state.storagePreviewObjectUrl) {
-    audio.src = state.storagePreviewObjectUrl;
-  }
-  try {
-    await audio.play();
-  } catch {
-  }
-
-  state.storagePreviewPlaybackMode.deviceActive = true;
+  const started = await queueStoragePlayback(entry, state.storagePreviewTarget);
+  state.storagePreviewPlaybackMode.deviceActive = started;
   updateStoragePreviewPlaybackControls();
-  setMessage(`Playing ${payload.label}`);
-  setStorageStatus(`Playing ${payload.label}`);
-  await loadStatus();
 }
 
 async function stopStoragePreviewPlayback() {
-  const audio = ensureStoragePreviewAudio();
-  audio.pause();
-  audio.currentTime = 0;
+  if (state.storagePreviewAudio) {
+    state.storagePreviewAudio.pause();
+    state.storagePreviewAudio.currentTime = 0;
+  }
   state.storagePreviewPlaybackMode.suppressAutoAdvance = true;
   await request("/api/stop", { method: "POST", body: JSON.stringify({}) });
   state.storagePreviewPlaybackMode.deviceActive = false;
@@ -3000,15 +3049,8 @@ async function toggleStoragePreviewPlayback() {
   await playStoragePreviewOnDevice();
 }
 
-async function activateStoragePreviewEntry(entry, { autoplayDevice = false, autoplayBrowser = false } = {}) {
+async function activateStoragePreviewEntry(entry, { autoplayDevice = false } = {}) {
   await openStoragePreview(entry);
-  if (autoplayBrowser) {
-    const audio = ensureStoragePreviewAudio();
-    try {
-      await audio.play();
-    } catch {
-    }
-  }
   if (autoplayDevice) {
     await playStoragePreviewOnDevice();
   } else {
@@ -3022,18 +3064,19 @@ async function hydrateStoragePreviewMetadataAndArtwork(entry, requestId) {
     return;
   }
 
+  const previewTarget = resolveStorageTarget(state.storagePreviewTarget);
   let title = entry.name || entry.path || "Track Preview";
   let artist = "Unknown artist";
   let album = "Unknown album";
   let artworkApplied = false;
   const extension = storageFileExtension(entry.path);
-  const canScanEmbedded = extension === "mp3" && Number(entry.sizeBytes || 0) > 0 &&
+  const canScanEmbedded = previewTarget !== "sd" && extension === "mp3" && Number(entry.sizeBytes || 0) > 0 &&
     Number(entry.sizeBytes || 0) <= STORAGE_PREVIEW_EMBEDDED_SCAN_MAX_BYTES;
 
   if (canScanEmbedded) {
     setStoragePreviewArtworkStatus("Checking embedded artwork...");
     try {
-      const response = await fetch(storageStreamUrl(entry.path, state.activeStorageTarget), { cache: "no-store" });
+      const response = await fetch(storageStreamUrl(entry.path, state.storagePreviewTarget), { cache: "no-store" });
       const blob = await response.blob();
       if (requestId !== state.storagePreviewRequestId) {
         return;
@@ -3078,8 +3121,10 @@ async function hydrateStoragePreviewMetadataAndArtwork(entry, requestId) {
   if (!artworkApplied) {
     setStoragePreviewArtworkStatus(canScanEmbedded
       ? "Checking cached artwork in this folder..."
-      : "Skipping heavy embedded scan. Checking cached artwork in this folder...");
-    const localArtworkUrl = await findLocalArtworkUrl(entry);
+      : (previewTarget === "sd"
+        ? "Skipping SD artwork scan so playback stays immediate."
+        : "Skipping heavy embedded scan. Checking cached artwork in this folder..."));
+    const localArtworkUrl = previewTarget === "sd" ? "" : await findLocalArtworkUrl(entry, previewTarget);
     if (requestId !== state.storagePreviewRequestId) {
       return;
     }
@@ -3109,22 +3154,26 @@ async function hydrateStoragePreviewMetadataAndArtwork(entry, requestId) {
     if (remoteArtworkUrl) {
       artworkApplied = await applyStoragePreviewArtworkSource(remoteArtworkUrl);
       if (artworkApplied) {
-        setStoragePreviewArtworkStatus("Loaded online artwork. Saving cache for offline use...");
-        const cachedPath = await cacheRemoteArtworkForEntry(entry, remoteArtworkUrl);
-        if (requestId !== state.storagePreviewRequestId) {
-          return;
-        }
-        setStoragePreviewArtworkStatus(cachedPath
-          ? "Loaded online artwork and cached it for offline use."
-          : "Loaded online artwork.");
-        if (cachedPath && storageParentPath(cachedPath) === normalizeStorageDirectoryPath(state.currentStoragePathByTarget[state.activeStorageTarget] || "/")) {
-          injectVisibleStorageEntry(state.activeStorageTarget, {
-            path: cachedPath,
-            name: storageBaseName(cachedPath),
-            isDirectory: false,
-            sizeBytes: 0,
-            url: storageStreamUrl(cachedPath, state.activeStorageTarget),
-          });
+        if (previewTarget === "sd") {
+          setStoragePreviewArtworkStatus("Loaded online artwork.");
+        } else {
+          setStoragePreviewArtworkStatus("Loaded online artwork. Saving cache for offline use...");
+          const cachedPath = await cacheRemoteArtworkForEntry(entry, remoteArtworkUrl);
+          if (requestId !== state.storagePreviewRequestId) {
+            return;
+          }
+          setStoragePreviewArtworkStatus(cachedPath
+            ? "Loaded online artwork and cached it for offline use."
+            : "Loaded online artwork.");
+          if (cachedPath && storageParentPath(cachedPath) === normalizeStorageDirectoryPath(state.currentStoragePathByTarget[state.storagePreviewTarget] || "/")) {
+            injectVisibleStorageEntry(state.storagePreviewTarget, {
+              path: cachedPath,
+              name: storageBaseName(cachedPath),
+              isDirectory: false,
+              sizeBytes: 0,
+              url: storageStreamUrl(cachedPath, state.storagePreviewTarget),
+            });
+          }
         }
       }
     }
@@ -3151,7 +3200,7 @@ async function hydrateStoragePreviewMetadataAndArtwork(entry, requestId) {
 }
 
 async function advanceStoragePreviewTrack(delta, options = {}) {
-  const { autoplayDevice = false, autoplayBrowser = false, respectModes = false } = options;
+  const { autoplayDevice = false, respectModes = false } = options;
   const entries = activeStorageAudioEntries();
   if (!entries.length) {
     return;
@@ -3159,7 +3208,7 @@ async function advanceStoragePreviewTrack(delta, options = {}) {
 
   const currentIndex = currentStoragePreviewQueueIndex();
   if (currentIndex < 0) {
-    await activateStoragePreviewEntry(entries[0], { autoplayDevice, autoplayBrowser });
+    await activateStoragePreviewEntry(entries[0], { autoplayDevice });
     return;
   }
 
@@ -3189,7 +3238,7 @@ async function advanceStoragePreviewTrack(delta, options = {}) {
     return;
   }
 
-  await activateStoragePreviewEntry(entries[nextIndex], { autoplayDevice, autoplayBrowser });
+  await activateStoragePreviewEntry(entries[nextIndex], { autoplayDevice });
 }
 
 async function openStoragePreview(entry) {
@@ -3200,6 +3249,7 @@ async function openStoragePreview(entry) {
   state.storagePreviewRequestId += 1;
   const requestId = state.storagePreviewRequestId;
   state.storagePreviewItem = entry;
+  state.storagePreviewTarget = state.activeStorageTarget;
   releaseStoragePreviewUrls();
   resetStoragePreviewUi();
 
@@ -3207,19 +3257,14 @@ async function openStoragePreview(entry) {
     elements.storagePreviewTitle.textContent = entry.name || "Track Preview";
   }
   if (elements.storagePreviewMeta) {
-    elements.storagePreviewMeta.textContent = `${formatBytes(entry.sizeBytes || 0)} • ${storageBadgeLabel(entry)} • ${entry.path}`;
+    elements.storagePreviewMeta.textContent = `${formatBytes(entry.sizeBytes || 0)} • ${storageBadgeLabel(entry)}`;
   }
+  updateStoragePreviewPath(entry.path);
   if (elements.storagePreviewAlbum) {
     elements.storagePreviewAlbum.textContent = `${entry.name || entry.path}\nUnknown artist\nUnknown album`;
   }
   setStoragePreviewArtworkStatus("Playback can start immediately. Artwork is loading in the background.");
   elements.storagePreviewModal?.showModal();
-
-  const audio = ensureStoragePreviewAudio();
-  audio.pause();
-  audio.currentTime = 0;
-  audio.src = storageStreamUrl(entry.path, state.activeStorageTarget);
-  audio.load();
 
   updateStoragePreviewPlaybackControls();
   hydrateStoragePreviewMetadataAndArtwork(entry, requestId).catch((error) => {
@@ -4989,7 +5034,7 @@ async function loadEffectFileOptions(options = {}) {
   }
 }
 
-async function previewEffectFile(effectRef, effectLabel) {
+async function previewEffectFile(effectRef, effectLabel, { ambient = false } = {}) {
   if (!effectRef) {
     return;
   }
@@ -4998,10 +5043,10 @@ async function previewEffectFile(effectRef, effectLabel) {
     body: JSON.stringify({
       url: effectRef,
       label: effectLabel,
-      type: "effect-preview",
+      type: ambient ? "effect-ambient" : "effect-preview",
     }),
   });
-  setMessage(`Previewing ${effectLabel}`);
+  setMessage(ambient ? `Starting ${effectLabel}` : `Previewing ${effectLabel}`);
 }
 
 function syncEffectsPage(settings = state.settings) {
@@ -5592,14 +5637,14 @@ function renderWifiHero(connected, ipAddress, rssi) {
 function renderStatus(status) {
   const previousStatus = state.status;
   state.status = status;
-  const previewRef = state.storagePreviewItem ? storagePlaybackRef(state.storagePreviewItem.path, state.activeStorageTarget) : "";
+  const previewRef = state.storagePreviewItem ? storagePlaybackRef(state.storagePreviewItem.path, state.storagePreviewTarget) : "";
   const currentPlaybackUrl = String(status?.playback?.url || "");
   const wasDeviceActive = Boolean(state.storagePreviewPlaybackMode.deviceActive);
   const isDeviceActive = Boolean(previewRef && currentPlaybackUrl === previewRef && isPlaybackActive(status));
   state.storagePreviewPlaybackMode.previousDeviceActive = wasDeviceActive;
   state.storagePreviewPlaybackMode.deviceActive = isDeviceActive;
   if (wasDeviceActive && !isDeviceActive && previewRef && !state.storagePreviewPlaybackMode.suppressAutoAdvance) {
-    advanceStoragePreviewTrack(1, { autoplayDevice: true, autoplayBrowser: true, respectModes: true }).catch(handleError);
+    advanceStoragePreviewTrack(1, { autoplayDevice: true, respectModes: true }).catch(handleError);
   }
   if (!isDeviceActive && state.storagePreviewPlaybackMode.suppressAutoAdvance) {
     state.storagePreviewPlaybackMode.suppressAutoAdvance = false;
@@ -5661,7 +5706,13 @@ function renderStatus(status) {
   if (document.activeElement !== elements.volumeSlider) {
     elements.volumeSlider.value = savedVolumePercent;
   }
+  if (document.activeElement !== elements.storagePreviewVolumeSlider && elements.storagePreviewVolumeSlider) {
+    elements.storagePreviewVolumeSlider.value = savedVolumePercent;
+  }
   elements.volumeValue.textContent = `${document.activeElement === elements.volumeSlider ? elements.volumeSlider.value : savedVolumePercent}%`;
+  if (elements.storagePreviewVolumeValue) {
+    elements.storagePreviewVolumeValue.textContent = `${document.activeElement === elements.storagePreviewVolumeSlider ? elements.storagePreviewVolumeSlider.value : savedVolumePercent}%`;
+  }
   const audioMuted = Boolean(elements.audioMutedToggle?.checked);
   const audioEnabled = Boolean(firmware.audioEnabled);
 
@@ -5676,6 +5727,7 @@ function renderStatus(status) {
   renderDeviceResources(status);
   maybeRefreshVisibleStorageTab();
   renderGpioOverview();
+  updateStoragePreviewProgressUi();
 
   const previousUpdateVersion = String(previousStatus?.ota?.latestVersion || previousStatus?.otaManager?.latestVersion || "");
   const currentUpdateVersion = String(status?.ota?.latestVersion || ota.latestVersion || "");
@@ -6610,6 +6662,14 @@ elements.storageSelectAllButton?.addEventListener("click", () => {
 elements.storageDeleteButton?.addEventListener("click", () => {
   deleteSelectedStorageItems().catch(handleError);
 });
+elements.storagePlayButton?.addEventListener("click", () => {
+  const entry = selectedStoragePlaybackEntry();
+  if (!entry) {
+    setStorageStatus("Select one audio file first.", true);
+    return;
+  }
+  queueStoragePlayback(entry, state.activeStorageTarget).catch(handleError);
+});
 elements.storageNewFolderButton?.addEventListener("click", () => createStorageFolder().catch(handleError));
 elements.storageUploadButton?.addEventListener("click", () => {
   elements.storageFileInput.value = "";
@@ -6763,14 +6823,12 @@ elements.storagePreviewPlayButton?.addEventListener("click", () => {
 elements.storagePreviewPrevButton?.addEventListener("click", () => {
   advanceStoragePreviewTrack(-1, {
     autoplayDevice: state.storagePreviewPlaybackMode.deviceActive,
-    autoplayBrowser: true,
     respectModes: false,
   }).catch(handleError);
 });
 elements.storagePreviewNextButton?.addEventListener("click", () => {
   advanceStoragePreviewTrack(1, {
     autoplayDevice: state.storagePreviewPlaybackMode.deviceActive,
-    autoplayBrowser: true,
     respectModes: false,
   }).catch(handleError);
 });
@@ -6813,8 +6871,14 @@ elements.wifiNetworkList.addEventListener("change", (event) => {
   }
 });
 elements.volumeSlider.addEventListener("change", (event) => setVolume(Number(event.target.value)).catch(handleError));
+elements.storagePreviewVolumeSlider?.addEventListener("change", (event) => setVolume(Number(event.target.value)).catch(handleError));
 elements.volumeSlider.addEventListener("input", (event) => {
   elements.volumeValue.textContent = `${event.target.value}%`;
+});
+elements.storagePreviewVolumeSlider?.addEventListener("input", (event) => {
+  if (elements.storagePreviewVolumeValue) {
+    elements.storagePreviewVolumeValue.textContent = `${event.target.value}%`;
+  }
 });
 elements.batteryAdcPin?.addEventListener("change", () => {
   populateSdPinOptions();
@@ -6846,13 +6910,18 @@ for (const { label, element } of effectSelectElements()) {
   element?.addEventListener("focus", ensureEffectOptionsLoaded);
   element?.addEventListener("change", async () => {
     const selectedValue = String(element.value || "").trim();
+    const isAmbientSelection = element.id === "effectAmbientSoundFile";
     element.dataset.savedEffectValue = selectedValue;
     state.settingsDirty = true;
     try {
-      if (selectedValue) {
-        await previewEffectFile(selectedValue, `${label} preview`);
-      }
       await saveSettings({ silent: true });
+      if (selectedValue) {
+        await previewEffectFile(
+          selectedValue,
+          isAmbientSelection ? "Ambient Sound" : `${label} preview`,
+          { ambient: isAmbientSelection },
+        );
+      }
     } catch (error) {
       handleError(error);
     }

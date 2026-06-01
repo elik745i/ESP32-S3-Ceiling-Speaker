@@ -1965,38 +1965,48 @@ body {
   }
 
 .storage-path-bar {
-  display: block;
+  display: flex;
+  min-width: 0;
 }
 
 .storage-breadcrumbs {
-  display: block;
+  display: flex;
   min-width: 0;
+  width: 100%;
 }
 
 .storage-crumb-trail {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-start;
-  gap: 6px;
+  gap: 0;
   width: 100%;
   min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
   padding: 12px 18px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: #f7f7f7;
   text-align: left;
+  white-space: nowrap;
 }
 
 .storage-crumb {
   min-width: 0;
-  padding: 6px 10px;
+   width: auto;
+  padding: 0;
   color: #444444;
   font-size: 0.82rem;
   font-weight: 700;
 }
 
 .storage-crumb-inline {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+   width: auto;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -2004,14 +2014,17 @@ body {
   text-align: left;
 }
 
+.storage-crumb-inline + .storage-crumb-inline {
+  margin-left: 2px;
+}
+
+.storage-crumb-current {
+  color: var(--ink);
+}
+
 .storage-crumb-inline:hover {
   color: var(--accent-strong);
   background: transparent;
-}
-
-.storage-crumb-sep {
-  color: var(--muted);
-  font-size: 0.8rem;
 }
 
   .panel-head-inline {
@@ -2220,6 +2233,17 @@ body {
     margin: 0 0 4px;
   }
 
+  .storage-preview-path {
+    margin-top: 6px;
+    max-width: min(100%, 420px);
+    font-size: 0.79rem;
+    line-height: 1.25;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   .storage-preview-close {
     min-width: auto;
   }
@@ -2284,6 +2308,17 @@ body {
 
   .storage-preview-progress-wrap {
     margin: 0;
+  }
+
+  .storage-preview-volume-card {
+    margin-top: 0;
+  }
+
+  .storage-preview-volume-card label {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
   }
 
   .storage-preview-actions {
@@ -2356,6 +2391,10 @@ body {
       max-width: 220px;
       justify-self: center;
       width: 100%;
+    }
+
+    .storage-preview-path {
+      max-width: 100%;
     }
   }
 

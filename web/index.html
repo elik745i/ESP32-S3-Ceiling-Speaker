@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ESP32 Notifier</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -677,6 +678,9 @@
                 <button id="storageDeleteButton" type="button" class="secondary storage-tool-button storage-tool-danger icon-only-button" title="Delete selected items" aria-label="Delete selected items">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 14h10l1-14"></path><path d="M10 10v6"></path><path d="M14 10v6"></path></svg>
                 </button>
+                <button id="storagePlayButton" type="button" class="secondary storage-tool-button icon-only-button" title="Select one audio file to play" aria-label="Play selected audio file" disabled>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>
+                </button>
                 <button id="storageUploadButton" type="button" class="storage-tool-button icon-only-button" title="Upload audio files" aria-label="Upload audio files">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4"></path><path d="m7 9 5-5 5 5"></path><path d="M5 20h14"></path></svg>
                 </button>
@@ -703,6 +707,7 @@
               <div>
                 <h3 id="storagePreviewTitle">Track Preview</h3>
                 <div id="storagePreviewMeta" class="scan-status">Select a track to preview it.</div>
+                <div id="storagePreviewPath" class="storage-preview-path" title="">&nbsp;</div>
               </div>
               <button id="storagePreviewCloseButton" type="button" class="secondary storage-preview-close" aria-label="Close track preview" title="Close preview">Close</button>
             </div>
@@ -720,6 +725,10 @@
                   <div class="progress-bar"><div id="storagePreviewProgressFill" class="progress-fill"></div></div>
                   <div id="storagePreviewProgressLabel" class="progress-label">00:00 / 00:00</div>
                 </div>
+                <div class="volume-card storage-preview-volume-card">
+                  <label for="storagePreviewVolumeSlider">Device volume <span id="storagePreviewVolumeValue">0%</span></label>
+                  <input id="storagePreviewVolumeSlider" type="range" min="0" max="100" step="1">
+                </div>
                 <div class="storage-preview-actions">
                   <button id="storagePreviewPrevButton" type="button" class="secondary" aria-label="Previous track" title="Previous track">&#9664;</button>
                   <button id="storagePreviewPlayButton" type="button">Play</button>
@@ -727,7 +736,7 @@
                   <button id="storagePreviewLoopButton" type="button" class="secondary" aria-pressed="false">Loop</button>
                   <button id="storagePreviewShuffleButton" type="button" class="secondary" aria-pressed="false">Shuffle</button>
                 </div>
-                <p class="note">Double-click any music file to preview its metadata, listen in the browser for progress tracking, and start or stop that same file on the device.</p>
+                <p class="note">Double-click any music file to inspect its metadata and control playback on the device only.</p>
               </div>
             </div>
           </div>
