@@ -24,7 +24,7 @@ class WebServerManager {
     using VolumeHandler = std::function<void(uint8_t)>;
     using SimpleHandler = std::function<void(void)>;
     using OtaHandler = std::function<bool(bool)>;
-    using MqttHandler = std::function<bool(bool, String&)>;
+    using MqttHandler = std::function<bool(const String&, String&)>;
 
     WebServerManager();
     void begin(

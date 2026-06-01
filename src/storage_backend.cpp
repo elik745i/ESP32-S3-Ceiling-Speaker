@@ -347,7 +347,7 @@ StorageBackendSummary getStorageSummary(StorageTarget target) {
         return summary;
     }
 
-    if (sdWriteInProgress()) {
+    if (sdWriteInProgress() || sdReadInProgress()) {
         summary = cachedSdSummary();
         summary.available = activeSdSettings.enabled;
         summary.mounted = sdMounted;

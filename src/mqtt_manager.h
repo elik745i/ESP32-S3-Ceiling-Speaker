@@ -25,6 +25,7 @@ class MqttManager {
     bool isConnected() const;
     bool requestConnect(String& error);
     bool requestDisconnect(String& error);
+    bool requestRediscovery(String& error);
     bool shouldRebootForRecovery() const;
     uint8_t consecutiveFailureCount() const;
 

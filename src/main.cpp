@@ -1685,7 +1685,12 @@ void setup() {
             deferredActions->volumePending = true;
         },
         [](bool apply) { return otaManager->triggerCheck(apply); },
-        [](bool connect, String& error) {
+        [](const String& action, String& error) {
+            if (action == "rediscover") {
+                return mqttManager->requestRediscovery(error);
+            }
+
+            const bool connect = action != "disconnect";
             if (connect) {
                 const String host = deferredActions->settingsApplyPending
                     ? deferredActions->pendingSettings.mqtt.host

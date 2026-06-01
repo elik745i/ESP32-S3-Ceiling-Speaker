@@ -171,7 +171,7 @@ void MqttManager::configureClient() {
 
     if (!settings_.mqtt.host.isEmpty() && wifiManager_ != nullptr && wifiManager_->isConnected()) {
         Serial.printf("[mqtt] immediate reconnect attempt %u/%u to %s:%u\n",
-                      static_cast<unsigned>(consecutiveFailureCount_ + 1),
+                  static_cast<unsigned>(min<uint8_t>(static_cast<uint8_t>(consecutiveFailureCount_ + 1), MQTT_MAX_CONSECUTIVE_FAILURES)),
                       static_cast<unsigned>(MQTT_MAX_CONSECUTIVE_FAILURES),
                       settings_.mqtt.host.c_str(), settings_.mqtt.port);
         lastConnectAttemptAt_ = millis();
@@ -213,7 +213,7 @@ void MqttManager::connectIfNeeded() {
         return;
     }
     Serial.printf("[mqtt] connect attempt %u/%u to %s:%u\n",
-                  static_cast<unsigned>(consecutiveFailureCount_ + 1),
+                  static_cast<unsigned>(min<uint8_t>(static_cast<uint8_t>(consecutiveFailureCount_ + 1), MQTT_MAX_CONSECUTIVE_FAILURES)),
                   static_cast<unsigned>(MQTT_MAX_CONSECUTIVE_FAILURES),
                   settings_.mqtt.host.c_str(), settings_.mqtt.port);
     lastConnectAttemptAt_ = millis();
@@ -809,6 +809,22 @@ bool MqttManager::requestDisconnect(String& error) {
     return true;
 }
 
+bool MqttManager::requestRediscovery(String& error) {
+    if (!settings_.mqtt.discoveryEnabled) {
+        error = "Home Assistant discovery is disabled.";
+        return false;
+    }
+    if (!client_.connected()) {
+        error = "MQTT must be connected before discovery can be republished.";
+        return false;
+    }
+
+    publishDiscovery();
+    statePublishPending_ = true;
+    error = "";
+    return true;
+}
+
 void MqttManager::registerFailedAttempt(AsyncMqttClientDisconnectReason reason) {
     if (!connectionEnabled_ || settings_.mqtt.host.isEmpty() || client_.connected()) {
         return;
@@ -833,9 +849,9 @@ void MqttManager::registerFailedAttempt(AsyncMqttClientDisconnectReason reason) 
     }
 
     if (consecutiveFailureCount_ >= MQTT_MAX_CONSECUTIVE_FAILURES) {
-        clearFrontendError();
-        recoveryRebootRecommended_ = true;
-        Serial.println("[mqtt] max consecutive failures reached, recovery reboot recommended");
+        setFrontendError("MQTT broker unreachable. The device will keep retrying without rebooting.");
+        recoveryRebootRecommended_ = false;
+        Serial.println("[mqtt] max consecutive failures reached, continuing retries without recovery reboot");
     }
 }
 

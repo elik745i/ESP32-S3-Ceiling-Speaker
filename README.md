@@ -95,6 +95,7 @@ Current behavior:
 - Configurable effect-file routing is available for startup, alarm, notification, ambient, low-battery, shutdown, update-available, and update-success events.
 - Ambient selection now starts the dedicated ambient playback source, resumes automatically after other playback stops, and keeps non-ambient effect dropdowns as one-shot previews.
 - Ambient and alert cues can be selected from local storage and triggered without replacing the normal release asset flow.
+- Active SD-backed playback now keeps storage-summary reads on cached values so background status polling does not probe the card mid-stream.
 - Low-battery handling can play a cue before entering deep sleep when that mode is enabled.
 - OTA availability and success cues can be paired with the firmware action flow.
 
@@ -117,6 +118,7 @@ Current UI highlights:
 - I2S pin remapping for MAX98357A wiring.
 - OLED pin remapping plus display-mode selection between OLED and Wape trigger mode.
 - Battery configuration, charging-sense pin selection, calibration helpers, and low-battery sleep controls.
+- MQTT tab connect or disconnect control plus a dedicated Republish Discovery button for Home Assistant rediscovery.
 - GPIO Info tab with board selector, dedicated SVG board art, side-by-side pin guidance, and board suitability recommendations.
 - Internal flash and SD storage tabs with file browsing, folder creation, upload support, selection tools, and SD pin configuration.
 - SD storage playback now starts immediately from the preview modal and toolbar play action without blocking on artwork scans.
@@ -276,6 +278,12 @@ Home Assistant rename behavior:
 - MQTT discovery identity is derived from Device Name and Friendly Name.
 - If an older device name is still shown in Home Assistant after a rename, remove the old device entry or clear the retained discovery topics for the old device name.
 
+Current MQTT behavior:
+
+- The MQTT tab can republish Home Assistant discovery without disconnecting the broker session.
+- Generic broker reachability failures now keep retrying instead of forcing a device recovery reboot.
+- Credential or client-ID rejections still surface as an explicit frontend error.
+
 ## Firmware And Releases
 
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
@@ -331,6 +339,7 @@ Current behavior:
 - SD storage can be enabled and pinned through the UI.
 - The web UI supports browsing, folder creation, upload actions, bulk selection controls, and in-browser preview helpers for available storage targets.
 - SD pin choices are checked against active audio, battery, and status pin assignments.
+- Storage summary polling now uses cached SD values during active SD reads so ambient and other SD-backed playback are not interrupted by status refreshes.
 
 ## Repository Layout
 

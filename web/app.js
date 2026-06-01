@@ -69,6 +69,7 @@ const state = {
   wifiConnectInProgress: false,
   mqttConnectInProgress: false,
   mqttActionInProgress: "",
+  mqttRediscoveryInProgress: false,
   playbackActionInProgress: "",
   storageUploadInProgress: false,
   stationRedirectInProgress: false,
@@ -728,6 +729,7 @@ const elements = {
   scanStatus: document.getElementById("scanStatus"),
   wifiNetworkList: document.getElementById("wifiNetworkList"),
   mqttConnectButton: document.getElementById("mqttConnectButton"),
+  mqttRediscoveryButton: document.getElementById("mqttRediscoveryButton"),
   saveDeviceButton: document.getElementById("saveDeviceButton"),
   mqttConnectStatus: document.getElementById("mqttConnectStatus"),
   displayType: document.getElementById("displayType"),
@@ -5797,6 +5799,8 @@ function renderStatus(status) {
       } else {
         setMqttConnectStatus("Disconnecting from MQTT broker...");
       }
+    } else if (state.mqttActionInProgress === "rediscover") {
+      setMqttConnectStatus("Republishing Home Assistant discovery...");
     } else if (mqttConnected) {
       setMqttConnectStatus(`Connected to ${state.settings?.mqtt?.host || namedField("mqtt.host")?.value || "broker"}`);
     } else if (!wifiConnected) {
@@ -5841,8 +5845,16 @@ function updateMqttActionButton() {
   }
 
   const mqttConnected = Boolean(state.status?.network?.mqttConnected);
+  const discoveryEnabled = Boolean(namedField("mqtt.discoveryEnabled")?.checked ?? state.settings?.mqtt?.discoveryEnabled);
   elements.mqttConnectButton.textContent = mqttConnected ? "Disconnect MQTT" : "Connect MQTT";
   elements.mqttConnectButton.classList.toggle("secondary", !mqttConnected);
+
+  if (elements.mqttRediscoveryButton) {
+    elements.mqttRediscoveryButton.disabled = !mqttConnected || !discoveryEnabled || state.mqttConnectInProgress;
+    elements.mqttRediscoveryButton.title = !discoveryEnabled
+      ? "Enable Home Assistant discovery first"
+      : (!mqttConnected ? "Connect MQTT first" : "Republish Home Assistant discovery topics");
+  }
 }
 
 function updatePlaybackActionButton() {
@@ -6257,6 +6269,49 @@ async function connectMqtt() {
   }
 }
 
+async function republishMqttDiscovery() {
+  const mqttConnected = Boolean(state.status?.network?.mqttConnected);
+  if (!mqttConnected) {
+    setMqttConnectStatus("Connect MQTT first.", true);
+    return;
+  }
+
+  const discoveryEnabled = Boolean(namedField("mqtt.discoveryEnabled")?.checked ?? state.settings?.mqtt?.discoveryEnabled);
+  if (!discoveryEnabled) {
+    setMqttConnectStatus("Enable Home Assistant discovery first.", true);
+    return;
+  }
+
+  state.mqttConnectInProgress = true;
+  state.mqttRediscoveryInProgress = true;
+  state.mqttActionInProgress = "rediscover";
+  if (elements.mqttConnectButton) {
+    elements.mqttConnectButton.disabled = true;
+  }
+  if (elements.mqttRediscoveryButton) {
+    elements.mqttRediscoveryButton.disabled = true;
+  }
+  setMqttConnectStatus("Republishing Home Assistant discovery...");
+
+  try {
+    const response = await request("/api/mqtt", {
+      method: "POST",
+      body: JSON.stringify({ action: "rediscover" }),
+    });
+    setMqttConnectStatus(response?.message || "MQTT discovery republished.");
+    setMessage("MQTT discovery republished");
+    await loadStatus();
+  } finally {
+    state.mqttConnectInProgress = false;
+    state.mqttRediscoveryInProgress = false;
+    state.mqttActionInProgress = "";
+    if (elements.mqttConnectButton) {
+      elements.mqttConnectButton.disabled = false;
+    }
+    updateMqttActionButton();
+  }
+}
+
 async function loadSettings() {
   state.settings = await request("/api/settings");
   state.settings.sd ||= {};
@@ -6640,6 +6695,7 @@ document.getElementById("copyUrlButton").addEventListener("click", () => copyCur
 document.getElementById("checkOtaButton").addEventListener("click", () => checkOta().catch(handleError));
 document.getElementById("applyOtaButton").addEventListener("click", () => installSelectedFirmware().catch(handleError));
 elements.mqttConnectButton?.addEventListener("click", () => connectMqtt().catch(handleError));
+elements.mqttRediscoveryButton?.addEventListener("click", () => republishMqttDiscovery().catch(handleError));
 elements.updateAvailableCloseButton?.addEventListener("click", closeUpdateAvailablePopup);
 elements.updateAvailableDialog?.addEventListener("cancel", (event) => {
   event.preventDefault();

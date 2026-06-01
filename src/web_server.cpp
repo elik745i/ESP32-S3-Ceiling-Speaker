@@ -1148,17 +1148,18 @@ void WebServerManager::registerApiRoutes() {
             }
 
             const String action = String(static_cast<const char*>(doc["action"] | ""));
-            const bool connect = action != "disconnect";
             String error;
-            if (!mqttHandler_ || !mqttHandler_(connect, error)) {
+            if (!mqttHandler_ || !mqttHandler_(action, error)) {
                 request->send(400, "application/json", String("{\"error\":\"") + error + "\"}");
                 return;
             }
 
             JsonDocument response;
             response["ok"] = true;
-            response["action"] = connect ? "connect" : "disconnect";
-            response["message"] = connect ? "MQTT connect requested" : "MQTT disconnect requested";
+            response["action"] = action;
+            response["message"] = action == "disconnect"
+                ? "MQTT disconnect requested"
+                : (action == "rediscover" ? "MQTT discovery republished" : "MQTT connect requested");
             sendJson(request, response);
         });
 
