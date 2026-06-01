@@ -79,6 +79,7 @@ Important current behavior:
 - The Audio tab supports direct Radio Browser station switching while already playing.
 - The hero playback card includes previous station, play or stop, and next station controls.
 - The browser default radio selection is Azerbaijan with AvtoFM preselected.
+- SD mounting now prefers 40 MHz first and falls back through 20, 10, 4, 1, and 0.4 MHz for cards or wiring that need a slower clock.
 
 There is also a dedicated diagnostic build for isolated MAX98357A testing:
 
@@ -96,6 +97,8 @@ Current behavior:
 - Ambient selection now starts the dedicated ambient playback source, resumes automatically after other playback stops, and keeps non-ambient effect dropdowns as one-shot previews.
 - Ambient and alert cues can be selected from local storage and triggered without replacing the normal release asset flow.
 - Active SD-backed playback now keeps storage-summary reads on cached values so background status polling does not probe the card mid-stream.
+- SD folder navigation now keeps the requested path in sync with the rendered list during playback-safe cached views.
+- SD folder paging now keeps loading indexed batches during playback instead of stopping at the first 20 entries.
 - Low-battery handling can play a cue before entering deep sleep when that mode is enabled.
 - OTA availability and success cues can be paired with the firmware action flow.
 
@@ -122,6 +125,7 @@ Current UI highlights:
 - GPIO Info tab with board selector, dedicated SVG board art, side-by-side pin guidance, and board suitability recommendations.
 - Internal flash and SD storage tabs with file browsing, folder creation, upload support, selection tools, and SD pin configuration.
 - SD storage playback now starts immediately from the preview modal and toolbar play action without blocking on artwork scans.
+- SD reindex actions now stop playback first and then continue automatically instead of only showing a blocker message.
 - Firmware release browsing, local firmware upload, and firmware action dashboard.
 - Password reveal toggles, reboot, and factory-reset actions.
 - Embedded favicon served from the device web UI.
@@ -283,6 +287,7 @@ Current MQTT behavior:
 - The MQTT tab can republish Home Assistant discovery without disconnecting the broker session.
 - Generic broker reachability failures now keep retrying instead of forcing a device recovery reboot.
 - Credential or client-ID rejections still surface as an explicit frontend error.
+- Automatic broker reconnect now uses the same configure-and-connect path as the manual Connect button.
 
 ## Firmware And Releases
 

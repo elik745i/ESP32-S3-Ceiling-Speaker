@@ -1098,10 +1098,14 @@ function activeTabName() {
 }
 
 async function refreshExternalStorageTab(directoryPath = state.currentStoragePathByTarget.sd || "/", options = {}) {
+  const normalizedDirectoryPath = normalizeStorageDirectoryPath(directoryPath);
+  const canReuseCachedDirectory = shouldDeferSdReads()
+    && activeStorageEntries("sd").length
+    && normalizedDirectoryPath === normalizeStorageDirectoryPath(state.currentStoragePathByTarget.sd || "/");
   state.storageInitialLoadRequested = true;
   state.activeStorageTarget = "sd";
-  state.currentStoragePathByTarget.sd = normalizeStorageDirectoryPath(directoryPath);
-  if (shouldDeferSdReads() && activeStorageEntries("sd").length) {
+  state.currentStoragePathByTarget.sd = normalizedDirectoryPath;
+  if (canReuseCachedDirectory) {
     state.deferredStorageReload = true;
     setStorageStatus("Using cached folder view during playback. Stop playback or scroll later to refresh from SD.");
     rerenderStorageManager("sd");
@@ -1109,7 +1113,7 @@ async function refreshExternalStorageTab(directoryPath = state.currentStoragePat
   }
   state.deferredStorageReload = false;
   setStorageStatus("Loading files...");
-  const payload = await refreshStorageManager("sd", directoryPath, options);
+  const payload = await refreshStorageManager("sd", normalizedDirectoryPath, options);
   if (elements.storageProgressFill) {
     elements.storageProgressFill.style.width = "0%";
   }
@@ -3370,11 +3374,6 @@ async function loadMoreStorageEntries(target = state.activeStorageTarget) {
   if (meta.loadingMore || !meta.hasMore) {
     return;
   }
-  if (target === "sd" && shouldDeferSdReads()) {
-    state.deferredStorageReload = true;
-    setStorageStatus("Playback is active, so loading more SD files is paused to avoid audio interruptions.");
-    return;
-  }
 
   const requestId = Number(meta.requestId || state.storageListRequestId || 0);
   const directoryPath = state.currentStoragePathByTarget[target] || "/";
@@ -3462,6 +3461,32 @@ async function reindexEffectsFiles() {
     toast(message);
     return;
   }
+  if (shouldDeferSdReads()) {
+    if (elements.effectsFileStatus) {
+      elements.effectsFileStatus.textContent = "Stopping playback before reindexing effect files...";
+    }
+    await stopPlayback();
+    const playbackStopped = !shouldDeferSdReads() || await pollStatusUntil(
+      (status) => {
+        const playbackState = String(status?.playback?.state || "idle");
+        return playbackState !== "playing" && playbackState !== "buffering";
+      },
+      32,
+      150,
+    );
+    if (playbackStopped && !shouldDeferSdReads()) {
+      if (elements.effectsFileStatus) {
+        elements.effectsFileStatus.textContent = "Playback stopped. Starting effect-file reindex...";
+      }
+    } else {
+      const message = "Playback is still stopping. Try reindexing SD effect files again in a moment.";
+      if (elements.effectsFileStatus) {
+        elements.effectsFileStatus.textContent = message;
+      }
+      toast(message);
+      return;
+    }
+  }
   state.effectReindexInProgress = true;
   if (elements.effectsReindexButton) {
     elements.effectsReindexButton.disabled = true;
@@ -3496,6 +3521,26 @@ async function reindexStorageDirectory(target = state.activeStorageTarget, direc
     setStorageStatus(message);
     toast(message);
     return;
+  }
+  if (resolvedTarget === "sd" && shouldDeferSdReads()) {
+    setStorageStatus("Stopping playback before reindexing...");
+    await stopPlayback();
+    const playbackStopped = !shouldDeferSdReads() || await pollStatusUntil(
+      (status) => {
+        const playbackState = String(status?.playback?.state || "idle");
+        return playbackState !== "playing" && playbackState !== "buffering";
+      },
+      32,
+      150,
+    );
+    if (playbackStopped && !shouldDeferSdReads()) {
+      setStorageStatus("Playback stopped. Starting reindex...");
+    } else {
+      const message = "Playback is still stopping. Try reindexing again in a moment.";
+      setStorageStatus(message, true);
+      toast(message);
+      return;
+    }
   }
   state.storageReindexInProgressByTarget[resolvedTarget] = true;
   if (elements.storageReindexButton) {

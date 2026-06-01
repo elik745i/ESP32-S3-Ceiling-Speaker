@@ -212,12 +212,7 @@ void MqttManager::connectIfNeeded() {
     if (millis() - lastConnectAttemptAt_ < MQTT_RETRY_INTERVAL_MS) {
         return;
     }
-    Serial.printf("[mqtt] connect attempt %u/%u to %s:%u\n",
-                  static_cast<unsigned>(min<uint8_t>(static_cast<uint8_t>(consecutiveFailureCount_ + 1), MQTT_MAX_CONSECUTIVE_FAILURES)),
-                  static_cast<unsigned>(MQTT_MAX_CONSECUTIVE_FAILURES),
-                  settings_.mqtt.host.c_str(), settings_.mqtt.port);
-    lastConnectAttemptAt_ = millis();
-    client_.connect();
+    configureClient();
 }
 
 void MqttManager::handleWiFiState() {
