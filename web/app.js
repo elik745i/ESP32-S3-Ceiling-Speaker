@@ -5331,13 +5331,16 @@ function updateLowBatterySleepUi() {
 
 function updateBatteryUi() {
   const adcPin = Number(elements.batteryAdcPin?.value || state.settings?.battery?.adcPin || 0);
+  const chargingSensePin = Number(state.settings?.battery?.chargingSensePin || 0);
   const exampleSuffix = ` Example Li-ion divider for GPIO${adcPin > 0 ? adcPin : 3}: BAT+ --- 220K - GPIO${adcPin > 0 ? adcPin : 3} - 220K ---- GND.`;
   if (elements.batteryPinSummary) {
     elements.batteryPinSummary.textContent = adcPin > 0 ? `GPIO${adcPin}` : "-";
   }
   if (elements.chargingSenseSummary) {
     const chargingState = state.status?.battery?.charging ? "Charging" : "Idle";
-    elements.chargingSenseSummary.textContent = adcPin > 0 ? `GPIO${adcPin} trend • ${chargingState}` : chargingState;
+    elements.chargingSenseSummary.textContent = chargingSensePin > 0
+      ? `GPIO${chargingSensePin} sense • ${chargingState}`
+      : (adcPin > 0 ? `GPIO${adcPin} trend • ${chargingState}` : chargingState);
   }
   if (elements.batteryNote) {
     elements.batteryNote.textContent = adcPin > 0
@@ -5583,12 +5586,13 @@ function wifiSignalState(rssi, connected) {
   return { level: 1, label: "Weak", tone: "weak" };
 }
 
-function renderBatteryHero(voltage) {
+function renderBatteryHero(voltage, charging = false) {
   if (!elements.batteryHero) {
     return;
   }
 
   const numericVoltage = Number(voltage || 0);
+  const isCharging = Boolean(charging);
   const usbPowered = numericVoltage > 4.5;
   const percent = estimateBatteryPercent(numericVoltage);
   const levelClass = batteryLevelClass(percent);
@@ -5597,7 +5601,7 @@ function renderBatteryHero(voltage) {
   elements.batteryHero.className = "stat-value stat-value-battery";
   if (usbPowered) {
     elements.batteryHero.innerHTML = `
-      <div class="battery-hero-widget battery-usb" aria-label="USB power connected">
+      <div class="battery-hero-widget battery-usb" aria-label="${isCharging ? "USB charging" : "USB power connected"}">
         <div class="usb-hero-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" focusable="false">
             <path d="M4.7 19.3 19 5"></path>
@@ -5607,7 +5611,7 @@ function renderBatteryHero(voltage) {
             <path d="m18 12 1-1 1 1-1 1Z"></path>
           </svg>
         </div>
-        <div class="wifi-quality">USB Power</div>
+        <div class="wifi-quality">${isCharging ? "USB Charging" : "USB Power"}</div>
         <div class="battery-meta">${numericVoltage.toFixed(2)} V</div>
       </div>
     `;
@@ -5615,7 +5619,7 @@ function renderBatteryHero(voltage) {
   }
 
   elements.batteryHero.innerHTML = `
-    <div class="battery-hero-widget battery-${levelClass}" aria-label="Battery ${percent}%">
+    <div class="battery-hero-widget battery-${levelClass} ${isCharging ? "battery-charging" : ""}" aria-label="Battery ${percent}%${isCharging ? ", charging" : ""}">
       <div class="battery-shell">
         <div class="battery-body">
           <div class="battery-fill" style="width: ${fillWidth}%;"></div>
@@ -5623,7 +5627,7 @@ function renderBatteryHero(voltage) {
         </div>
         <div class="battery-terminal"></div>
       </div>
-      <div class="battery-meta">${numericVoltage.toFixed(2)} V</div>
+      <div class="battery-meta">${numericVoltage.toFixed(2)} V${isCharging ? " • Charging" : ""}</div>
     </div>
   `;
 }
@@ -5745,7 +5749,7 @@ function renderStatus(status) {
   renderWifiHero(wifiConnected, network.ip || (network.apMode ? "192.168.4.1" : "No IP"), network.wifiRssi);
   setPill(elements.mqttPill, mqttConnected ? "MQTT Connected" : "MQTT Offline", mqttConnected ? "ok" : "warn");
   renderPlaybackHero(status, audioMuted);
-  renderBatteryHero(battery.voltage || 0);
+  renderBatteryHero(battery.voltage || 0, battery.charging);
   renderHardwareSummary(status);
   renderDeviceResources(status);
   maybeRefreshVisibleStorageTab();

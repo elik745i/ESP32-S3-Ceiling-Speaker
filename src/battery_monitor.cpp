@@ -35,6 +35,10 @@ void BatteryMonitor::applySettings(const BatterySettings& settings, uint8_t adcP
     pinMode(adcPin_, INPUT);
     analogSetPinAttenuation(adcPin_, ADC_11db);
     settings_ = settings;
+    chargingSensePin_ = settings_.chargingSensePin;
+    if (chargingSensePin_ > 0 && chargingSensePin_ != adcPin_) {
+        pinMode(chargingSensePin_, INPUT_PULLUP);
+    }
     resetFilterState();
     latest_ = sampleNow();
     if (appState_ != nullptr) {
@@ -74,27 +78,34 @@ BatteryReading BatteryMonitor::sampleNow() {
 
     const float filteredVoltage = movingAverageCount_ == 0 ? correctedVoltage : (movingAverageSum_ / movingAverageCount_);
 
-    if (!chargingStateInitialized_) {
-        lastTrendVoltage_ = filteredVoltage;
+    if (chargingSensePin_ > 0 && chargingSensePin_ != adcPin_) {
+        chargingState_ = digitalRead(chargingSensePin_) == LOW;
         chargingStateInitialized_ = true;
-    } else {
-        const float delta = filteredVoltage - lastTrendVoltage_;
-        if (delta >= kChargingRiseThresholdVolts) {
-            chargingState_ = true;
-        } else if (delta <= -kChargingFallThresholdVolts) {
-            chargingState_ = false;
-        }
         lastTrendVoltage_ = filteredVoltage;
+    } else {
+        if (!chargingStateInitialized_) {
+            lastTrendVoltage_ = filteredVoltage;
+            chargingStateInitialized_ = true;
+        } else {
+            const float delta = filteredVoltage - lastTrendVoltage_;
+            if (delta >= kChargingRiseThresholdVolts) {
+                chargingState_ = true;
+            } else if (delta <= -kChargingFallThresholdVolts) {
+                chargingState_ = false;
+            }
+            lastTrendVoltage_ = filteredVoltage;
+        }
     }
 
     if (batteryDebugEnabled()) {
-        Serial.printf("[battery] raw=%u raw_v=%.3f corrected_v=%.3f filtered_v=%.3f window=%u pin=%u charging=%s\n",
+        Serial.printf("[battery] raw=%u raw_v=%.3f corrected_v=%.3f filtered_v=%.3f window=%u pin=%u charge_pin=%u charging=%s\n",
                       raw,
                       rawVoltage,
                       correctedVoltage,
                       filteredVoltage,
                       windowSize,
                       adcPin_,
+                      chargingSensePin_,
                       chargingState_ ? "yes" : "no");
     }
 

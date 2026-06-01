@@ -9,7 +9,7 @@ void fillDevice(const SettingsBundle& settings, JsonObject device, const String&
     JsonArray ids = device["identifiers"].to<JsonArray>();
     ids.add(settings.device.deviceName);
     device["name"] = settings.device.friendlyName;
-    device["manufacturer"] = "DIY";
+    device["manufacturer"] = "Elnur Mehdiyev";
     device["model"] = "ESP32 Wi-Fi Audio Notifier";
     device["sw_version"] = APP_VERSION;
     if (!configurationUrl.isEmpty()) {
@@ -87,6 +87,23 @@ String discoveryPayloadSensor(const SettingsBundle& settings, const char* object
     if (stateClass != nullptr) doc["stat_cla"] = stateClass;
     if (icon != nullptr) doc["ic"] = icon;
     if (suggestedDisplayPrecision >= 0) doc["suggested_display_precision"] = suggestedDisplayPrecision;
+    fillDevice(settings, doc["dev"].to<JsonObject>(), configurationUrl);
+    String out;
+    serializeJson(doc, out);
+    return out;
+}
+
+String discoveryPayloadBinarySensor(const SettingsBundle& settings, const char* objectId, const char* name, const char* stateTopic, const char* valueTemplate, const char* deviceClass, const char* payloadOn, const char* payloadOff, const char* icon, const String& configurationUrl) {
+    JsonDocument doc;
+    doc["name"] = name;
+    doc["uniq_id"] = entityUniqueId(settings, objectId);
+    doc["stat_t"] = stateTopic;
+    doc["avty_t"] = availabilityTopic(settings);
+    doc["val_tpl"] = valueTemplate;
+    doc["pl_on"] = payloadOn;
+    doc["pl_off"] = payloadOff;
+    if (deviceClass != nullptr) doc["dev_cla"] = deviceClass;
+    if (icon != nullptr) doc["ic"] = icon;
     fillDevice(settings, doc["dev"].to<JsonObject>(), configurationUrl);
     String out;
     serializeJson(doc, out);

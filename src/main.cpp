@@ -1987,7 +1987,7 @@ void loop() {
 
     if (batteryUpdated) {
         const BatteryReading reading = batteryMonitor->latest();
-        mqttManager->publishBattery(reading.filteredVoltage, reading.rawAdcVoltage, reading.rawAdc);
+        mqttManager->publishBattery(reading.filteredVoltage, reading.rawAdcVoltage, reading.rawAdc, reading.charging);
         mqttManager->publishState();
     }
 

@@ -19,7 +19,7 @@ class MqttManager {
     void applySettings(const SettingsBundle& settings);
     void loop();
     void publishState();
-    void publishBattery(float voltage, float rawAdcVoltage, uint16_t rawAdc);
+    void publishBattery(float voltage, float rawAdcVoltage, uint16_t rawAdc, bool charging);
     void publishDiscovery();
     bool publishButtonActionEvent(const String& buttonLabel, uint8_t pin, const String& action);
     bool isConnected() const;

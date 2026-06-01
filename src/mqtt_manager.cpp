@@ -18,7 +18,20 @@ bool mqttReconnectRequired(const SettingsBundle& current, const SettingsBundle& 
            current.mqtt.username != next.mqtt.username ||
            current.mqtt.password != next.mqtt.password ||
            current.mqtt.clientId != next.mqtt.clientId ||
+           current.mqtt.baseTopic != next.mqtt.baseTopic ||
            current.device.deviceName != next.device.deviceName;
+}
+
+uint8_t batteryPercentFromVoltage(float voltage) {
+    if (!isfinite(voltage) || voltage <= 0.0f) {
+        return 0;
+    }
+    const float clamped = voltage < 3.2f ? 3.2f : (voltage > 4.2f ? 4.2f : voltage);
+    return static_cast<uint8_t>(((clamped - 3.2f) / (4.2f - 3.2f) * 100.0f) + 0.5f);
+}
+
+const char* mqttBinaryPayload(bool enabled) {
+    return enabled ? "ON" : "OFF";
 }
 
 String normalizeMediaType(const String& value, bool announce) {
@@ -541,8 +554,10 @@ void MqttManager::publishState() {
 
     JsonDocument battery;
     battery["voltage"] = snapshot.battery.voltage;
+    battery["percent"] = batteryPercentFromVoltage(snapshot.battery.voltage);
     battery["rawAdcVoltage"] = snapshot.battery.rawAdcVoltage;
     battery["rawAdc"] = snapshot.battery.rawAdc;
+    battery["charging"] = snapshot.battery.charging;
     publishJson(HaBridge::batteryStateTopic(settings_), battery, true);
 
     JsonDocument ota;
@@ -585,6 +600,8 @@ void MqttManager::publishState() {
 
     client_.publish((settings_.mqtt.baseTopic + "/state/volume").c_str(), 1, true, String(snapshot.playback.volumePercent).c_str());
     client_.publish((settings_.mqtt.baseTopic + "/state/battery_voltage").c_str(), 1, true, String(snapshot.battery.voltage, 3).c_str());
+    client_.publish((settings_.mqtt.baseTopic + "/state/battery_percent").c_str(), 1, true, String(batteryPercentFromVoltage(snapshot.battery.voltage)).c_str());
+    client_.publish((settings_.mqtt.baseTopic + "/state/battery_charging").c_str(), 1, true, mqttBinaryPayload(snapshot.battery.charging));
 #ifdef APP_ENABLE_HACS_MQTT
     client_.publish(HaBridge::hacsMediaPlayerStateTopic(settings_, "state").c_str(), 1, true, normalizedHacsPlaybackState(snapshot.playback.state).c_str());
     client_.publish(HaBridge::hacsMediaPlayerStateTopic(settings_, "title").c_str(), 1, true, snapshot.playback.title.c_str());
@@ -593,16 +610,20 @@ void MqttManager::publishState() {
 #endif
 }
 
-void MqttManager::publishBattery(float voltage, float rawAdcVoltage, uint16_t rawAdc) {
+void MqttManager::publishBattery(float voltage, float rawAdcVoltage, uint16_t rawAdc, bool charging) {
     if (!client_.connected()) {
         return;
     }
     JsonDocument battery;
     battery["voltage"] = voltage;
+    battery["percent"] = batteryPercentFromVoltage(voltage);
     battery["rawAdcVoltage"] = rawAdcVoltage;
     battery["rawAdc"] = rawAdc;
+    battery["charging"] = charging;
     publishJson(HaBridge::batteryStateTopic(settings_), battery, true);
     client_.publish((settings_.mqtt.baseTopic + "/state/battery_voltage").c_str(), 1, true, String(voltage, 3).c_str());
+    client_.publish((settings_.mqtt.baseTopic + "/state/battery_percent").c_str(), 1, true, String(batteryPercentFromVoltage(voltage)).c_str());
+    client_.publish((settings_.mqtt.baseTopic + "/state/battery_charging").c_str(), 1, true, mqttBinaryPayload(charging));
     noteBrokerActivity();
 }
 
@@ -637,6 +658,12 @@ void MqttManager::publishDiscovery() {
     client_.publish(
         HaBridge::discoveryTopic(settings_, "sensor", "battery_voltage").c_str(), 1, true,
         HaBridge::discoveryPayloadSensor(settings_, "battery_voltage", "Battery Voltage", HaBridge::batteryStateTopic(settings_).c_str(), "{{ value_json.voltage | float(0) | round(2) }}", "V", "voltage", "measurement", "mdi:battery", 2, configurationUrl).c_str());
+    client_.publish(
+        HaBridge::discoveryTopic(settings_, "sensor", "battery_percent").c_str(), 1, true,
+        HaBridge::discoveryPayloadSensor(settings_, "battery_percent", "Battery", HaBridge::batteryStateTopic(settings_).c_str(), "{{ value_json.percent | int(0) }}", "%", "battery", "measurement", "mdi:battery-medium", 0, configurationUrl).c_str());
+    client_.publish(
+        HaBridge::discoveryTopic(settings_, "binary_sensor", "battery_charging").c_str(), 1, true,
+        HaBridge::discoveryPayloadBinarySensor(settings_, "battery_charging", "Battery Charging", HaBridge::batteryStateTopic(settings_).c_str(), "{{ 'ON' if value_json.charging else 'OFF' }}", "battery_charging", "ON", "OFF", "mdi:battery-charging", configurationUrl).c_str());
     client_.publish(
         HaBridge::discoveryTopic(settings_, "sensor", "wifi_rssi").c_str(), 1, true,
         HaBridge::discoveryPayloadSensor(settings_, "wifi_rssi", "Wi-Fi RSSI", HaBridge::networkStateTopic(settings_).c_str(), "{{ value_json.wifiRssi }}", "dBm", "signal_strength", "measurement", "mdi:wifi", -1, configurationUrl).c_str());

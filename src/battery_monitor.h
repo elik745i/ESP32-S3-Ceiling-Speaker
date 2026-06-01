@@ -34,6 +34,7 @@ class BatteryMonitor {
     uint16_t movingAverageCount_ = 0;
     uint16_t movingAverageIndex_ = 0;
     float lastTrendVoltage_ = 0.0f;
+    uint8_t chargingSensePin_ = 0;
     bool chargingState_ = false;
     bool chargingStateInitialized_ = false;
 

@@ -605,6 +605,19 @@ body {
     background: #d94a44;
   }
 
+  .battery-charging .battery-shell {
+    border-color: #1a9a55;
+    box-shadow: 0 0 0 3px rgba(26, 154, 85, 0.12);
+  }
+
+  .battery-charging .battery-terminal {
+    background: #1a9a55;
+  }
+
+  .battery-charging .battery-meta {
+    color: #1a9a55;
+  }
+
   .grid {
     margin-top: 12px;
     display: grid;

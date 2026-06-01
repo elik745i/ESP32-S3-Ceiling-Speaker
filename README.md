@@ -242,6 +242,8 @@ Typical state topics:
 - `esp32_notifier/state/playback`
 - `esp32_notifier/state/network`
 - `esp32_notifier/state/battery`
+- `esp32_notifier/state/battery_percent`
+- `esp32_notifier/state/battery_charging`
 - `esp32_notifier/state/volume`
 
 Example play payload:
@@ -268,6 +270,12 @@ When running multiple notifier devices on the same broker, keep these values uni
 - Device Name
 - Friendly Name
 
+Home Assistant rename behavior:
+
+- Changing only MQTT Client ID or Base Topic does not rename the Home Assistant device entry.
+- MQTT discovery identity is derived from Device Name and Friendly Name.
+- If an older device name is still shown in Home Assistant after a rename, remove the old device entry or clear the retained discovery topics for the old device name.
+
 ## Firmware And Releases
 
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
@@ -293,7 +301,9 @@ Current ESP32-S3 default behavior:
 - The ESP32-S3 Super Mini profiles use `GPIO3` for voltage sensing.
 - The default ESP32-S3 calibration multiplier is `2.0`.
 - On some ESP32-S3 Super Mini boards this reflects a built-in VBUS divider rather than a true direct cell-voltage measurement.
-- An optional charging-sense pin can be assigned when voltage-only charging detection is not sufficient.
+- Battery MQTT discovery now exposes battery voltage, battery percentage, and charging state to Home Assistant.
+- An optional charging-sense pin can be assigned and is now used directly for charging detection when configured.
+- If no charging-sense pin is configured, charging falls back to filtered voltage-trend detection.
 - Device settings now include low-battery sleep enablement, threshold percentage, and wake interval controls.
 
 If the reported voltage is off, recalibrate it from the Battery tab using a multimeter measurement.
