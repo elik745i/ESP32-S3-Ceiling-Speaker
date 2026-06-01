@@ -350,6 +350,10 @@ void OtaManager::setProgressCallback(void (*callback)()) {
     progressCallback_ = callback;
 }
 
+void OtaManager::setRestartHandler(RestartHandler handler) {
+    restartHandler_ = handler;
+}
+
 void OtaManager::applySettings(const SettingsBundle& settings) {
     settings_ = settings;
 }
@@ -385,7 +389,11 @@ void OtaManager::reportError(const String& error) {
 void OtaManager::loop() {
     if (rebootPending_ && static_cast<long>(millis() - rebootAtMs_) >= 0) {
         rebootPending_ = false;
-        ESP.restart();
+        if (restartHandler_ != nullptr) {
+            restartHandler_(String("ota"));
+        } else {
+            ESP.restart();
+        }
     }
     if (pendingReleaseRefresh_ && !busy_ && !releaseRefreshInProgress_ &&
         static_cast<long>(millis() - releaseRefreshNextAttemptAtMs_) >= 0) {
@@ -662,6 +670,8 @@ void OtaManager::appendFirmwareInfoJson(JsonObject root, bool refresh, String& e
     root["rollbackPendingVersion"] = rollbackPendingVersion_;
     root["rolledBackVersion"] = rolledBackVersion_;
     root["rollbackReason"] = rollbackReason_;
+    root["autoCheck"] = settings_.ota.autoCheck;
+    root["autoUpdate"] = settings_.ota.autoUpdate;
 
     if (refresh) {
         if (busy_) {

@@ -4,6 +4,13 @@
 
 WebServerManager::WebServerManager() = default;
 
+void WebServerManager::setWebUiLocked(bool) {
+}
+
+bool WebServerManager::webUiLocked() const {
+    return true;
+}
+
 void WebServerManager::begin(
     AppState&,
     WiFiManager&,
@@ -18,12 +25,16 @@ void WebServerManager::begin(
     MqttHandler,
     SimpleHandler,
     SimpleHandler,
+    SimpleHandler,
     SimpleHandler) {
 }
 
 #else
 
 #include <ArduinoJson.h>
+#include <AsyncJson.h>
+#include <cstring>
+#include <memory>
 #include <esp_heap_caps.h>
 
 #include "generated_web_assets.h"
@@ -33,6 +44,69 @@ void WebServerManager::begin(
 
 namespace {
 constexpr size_t kStorageReserveBytes = 4096;
+constexpr size_t kStorageDirectoryListBatchDefault = 0;
+
+struct StorageReindexStatus {
+    bool active = false;
+    bool completed = false;
+    bool success = false;
+    StorageTarget target = StorageTarget::Sd;
+    char directoryPath[160] = "/";
+    char stage[24] = "idle";
+    char error[160] = "";
+    size_t processedEntries = 0;
+    size_t totalEntries = 0;
+    uint32_t startedAt = 0;
+    uint32_t updatedAt = 0;
+};
+
+struct StorageReindexTaskParams {
+    StorageTarget target = StorageTarget::Sd;
+    String directoryPath = "/";
+};
+
+StorageReindexStatus storageReindexStatus;
+portMUX_TYPE storageReindexMux = portMUX_INITIALIZER_UNLOCKED;
+
+StorageReindexStatus snapshotStorageReindexStatus() {
+    portENTER_CRITICAL(&storageReindexMux);
+    const StorageReindexStatus snapshot = storageReindexStatus;
+    portEXIT_CRITICAL(&storageReindexMux);
+    return snapshot;
+}
+
+void copyReindexText(char* destination, size_t destinationSize, const String& value) {
+    if (destination == nullptr || destinationSize == 0) {
+        return;
+    }
+    strlcpy(destination, value.c_str(), destinationSize);
+}
+
+void copyReindexText(char* destination, size_t destinationSize, const char* value) {
+    if (destination == nullptr || destinationSize == 0) {
+        return;
+    }
+    strlcpy(destination, value != nullptr ? value : "", destinationSize);
+}
+
+void updateStorageReindexStatus(const std::function<void(StorageReindexStatus&)>& updater) {
+    portENTER_CRITICAL(&storageReindexMux);
+    updater(storageReindexStatus);
+    storageReindexStatus.updatedAt = millis();
+    portEXIT_CRITICAL(&storageReindexMux);
+}
+
+void resetStorageReindexStatus(StorageTarget target, const String& directoryPath) {
+    portENTER_CRITICAL(&storageReindexMux);
+    storageReindexStatus = StorageReindexStatus{};
+    storageReindexStatus.target = target;
+    copyReindexText(storageReindexStatus.directoryPath, sizeof(storageReindexStatus.directoryPath), directoryPath);
+    storageReindexStatus.active = true;
+    copyReindexText(storageReindexStatus.stage, sizeof(storageReindexStatus.stage), "counting");
+    storageReindexStatus.startedAt = millis();
+    storageReindexStatus.updatedAt = storageReindexStatus.startedAt;
+    portEXIT_CRITICAL(&storageReindexMux);
+}
 
 const EmbeddedWebAsset* findAsset(const String& path) {
     for (size_t index = 0; index < WEB_ASSET_COUNT; ++index) {
@@ -155,10 +229,64 @@ String storageDownloadName(const String& path) {
     return path.substring(1);
 }
 
+String storageIndexPathForDirectory(const String& directoryPath) {
+    const String normalized = normalizeStoragePath(directoryPath, true);
+    if (normalized.isEmpty()) {
+        return String();
+    }
+    return normalized == "/" ? String("/.index") : normalized + "/.index";
+}
+
+String parseIndexedStorageEntryPath(const String& directoryPath, const String& rawLine, bool& isDirectoryHint) {
+    String line = rawLine;
+    isDirectoryHint = false;
+    line.replace("\r", "");
+    line.trim();
+    if (line.isEmpty() || line.startsWith("#")) {
+        return String();
+    }
+
+    const int commaIndex = line.indexOf(',');
+    if (commaIndex > 0) {
+        const String metadata = line.substring(commaIndex + 1);
+        line = line.substring(0, commaIndex);
+        const int metadataSeparator = metadata.indexOf(',');
+        const String directoryToken = metadataSeparator >= 0 ? metadata.substring(0, metadataSeparator) : metadata;
+        const String normalizedDirectoryToken = directoryToken;
+        isDirectoryHint = normalizedDirectoryToken == "1" || normalizedDirectoryToken.equalsIgnoreCase("true") || normalizedDirectoryToken.equalsIgnoreCase("dir");
+    } else {
+        int separatorIndex = line.indexOf('\t');
+        const int pipeIndex = line.indexOf('|');
+        if (separatorIndex < 0 || (pipeIndex >= 0 && pipeIndex < separatorIndex)) {
+            separatorIndex = pipeIndex;
+        }
+        if (separatorIndex > 0) {
+            line = line.substring(0, separatorIndex);
+            line.trim();
+        }
+    }
+
+    if (line.isEmpty() || line == ".index" || line == "/.index") {
+        return String();
+    }
+
+    while (line.endsWith("/")) {
+        isDirectoryHint = true;
+        line.remove(line.length() - 1);
+    }
+    line.trim();
+    if (line.isEmpty()) {
+        return String();
+    }
+
+    return line.startsWith("/") ? normalizeStoragePath(line, false) : joinStoragePath(directoryPath, line);
+}
+
 bool isAllowedStoragePath(const String& path) {
     const String lower = path;
     return lower.endsWith(".mp3") || lower.endsWith(".wav") || lower.endsWith(".aac") || lower.endsWith(".m4a") ||
-        lower.endsWith(".ogg") || lower.endsWith(".opus") || lower.endsWith(".flac");
+        lower.endsWith(".ogg") || lower.endsWith(".opus") || lower.endsWith(".flac") ||
+        lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp");
 }
 
 const char* contentTypeForPath(const String& path) {
@@ -170,6 +298,9 @@ const char* contentTypeForPath(const String& path) {
     if (lower.endsWith(".ogg")) return "audio/ogg";
     if (lower.endsWith(".opus")) return "audio/ogg";
     if (lower.endsWith(".flac")) return "audio/flac";
+    if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+    if (lower.endsWith(".png")) return "image/png";
+    if (lower.endsWith(".webp")) return "image/webp";
     return "application/octet-stream";
 }
 
@@ -183,23 +314,138 @@ void appendStorageSummaryJson(StorageTarget target, JsonObject root) {
     root["label"] = storageTargetLabel(target);
     root["available"] = summary.available;
     root["mounted"] = summary.mounted;
+    root["cardSizeBytes"] = summary.cardSizeBytes;
     root["totalBytes"] = summary.totalBytes;
     root["usedBytes"] = summary.usedBytes;
     root["freeBytes"] = summary.freeBytes;
-    root["maxUploadBytes"] = static_cast<uint32_t>(summary.freeBytes > kStorageReserveBytes ? summary.freeBytes - kStorageReserveBytes : 0);
+    root["maxUploadBytes"] = summary.freeBytes > kStorageReserveBytes ? summary.freeBytes - kStorageReserveBytes : 0;
 }
 
-void appendStorageEntriesJson(StorageTarget target, const String& directoryPath, JsonArray files) {
+size_t requestSizeParam(AsyncWebServerRequest* request, const char* name, size_t fallbackValue) {
+    if (request == nullptr || !request->hasParam(name)) {
+        return fallbackValue;
+    }
+    const String rawValue = request->getParam(name)->value();
+    if (rawValue.isEmpty()) {
+        return fallbackValue;
+    }
+    const unsigned long parsed = strtoul(rawValue.c_str(), nullptr, 10);
+    return static_cast<size_t>(parsed);
+}
+
+bool requestFlagParam(AsyncWebServerRequest* request, const char* name) {
+    if (request == nullptr || !request->hasParam(name)) {
+        return false;
+    }
+    const String rawValue = request->getParam(name)->value();
+    return rawValue.isEmpty() || rawValue == "1" || rawValue.equalsIgnoreCase("true") || rawValue.equalsIgnoreCase("yes");
+}
+
+bool appendStorageEntriesFromIndex(StorageTarget target, const String& directoryPath, JsonArray files, size_t offset, size_t limit, size_t& nextOffset, bool& hasMore, size_t& totalEntries) {
     if (!storageMounted(target)) {
+        nextOffset = offset;
+        hasMore = false;
+        totalEntries = 0;
+        return false;
+    }
+
+    const String indexPath = storageIndexPathForDirectory(directoryPath);
+    if (indexPath.isEmpty() || !storageExists(target, indexPath)) {
+        return false;
+    }
+
+    beginStorageRead(target);
+    File indexFile = storageOpen(target, indexPath, "r");
+    if (!indexFile || indexFile.isDirectory()) {
+        endStorageRead(target);
+        nextOffset = offset;
+        hasMore = false;
+        totalEntries = 0;
+        return false;
+    }
+
+    size_t scannedEntries = 0;
+    size_t returnedEntries = 0;
+    while (indexFile.available()) {
+        bool isDirectoryHint = false;
+        const String entryPath = parseIndexedStorageEntryPath(directoryPath, indexFile.readStringUntil('\n'), isDirectoryHint);
+        if (entryPath.isEmpty()) {
+            continue;
+        }
+        totalEntries += 1;
+        if (scannedEntries++ < offset) {
+            continue;
+        }
+        if (limit > 0 && returnedEntries >= limit) {
+            hasMore = true;
+            continue;
+        }
+
+        File entry = storageOpen(target, entryPath, "r");
+        if (!entry) {
+            continue;
+        }
+
+        const bool isDirectory = isDirectoryHint || entry.isDirectory();
+        JsonObject file = files.add<JsonObject>();
+        file["path"] = entryPath;
+        file["name"] = storageBaseName(entryPath);
+        file["isDirectory"] = isDirectory;
+        file["sizeBytes"] = isDirectory ? 0U : static_cast<uint32_t>(entry.size());
+        if (!isDirectory) {
+            file["url"] = String("/api/storage/file?target=") + storageTargetId(target) + "&path=" + entryPath;
+        }
+        entry.close();
+
+        returnedEntries += 1;
+        if ((scannedEntries % 32U) == 0U) {
+            delay(0);
+        }
+    }
+
+    indexFile.close();
+    endStorageRead(target);
+    nextOffset = offset + returnedEntries;
+    return true;
+}
+
+void appendStorageEntriesJson(StorageTarget target, const String& directoryPath, JsonArray files, size_t offset, size_t limit, size_t& nextOffset, bool& hasMore, size_t& totalEntries, bool exhaustiveScan = true) {
+    if (!storageMounted(target)) {
+        nextOffset = offset;
+        hasMore = false;
+        totalEntries = 0;
         return;
     }
 
+    beginStorageRead(target);
     File root = storageOpen(target, directoryPath, "r");
     if (!root || !root.isDirectory()) {
+        endStorageRead(target);
+        nextOffset = offset;
+        hasMore = false;
+        totalEntries = 0;
         return;
     }
 
+    size_t scannedEntries = 0;
+    size_t returnedEntries = 0;
     for (File entry = root.openNextFile(); entry; entry = root.openNextFile()) {
+        if (exhaustiveScan) {
+            totalEntries += 1;
+        }
+        if (scannedEntries++ < offset) {
+            entry.close();
+            continue;
+        }
+        if (limit > 0 && returnedEntries >= limit) {
+            entry.close();
+            hasMore = true;
+            if (!exhaustiveScan) {
+                break;
+            }
+            continue;
+        }
+
         JsonObject file = files.add<JsonObject>();
         const String path = String(entry.path());
         const bool isDirectory = entry.isDirectory();
@@ -210,7 +456,319 @@ void appendStorageEntriesJson(StorageTarget target, const String& directoryPath,
         if (!isDirectory) {
             file["url"] = String("/api/storage/file?target=") + storageTargetId(target) + "&path=" + path;
         }
+        returnedEntries += 1;
+        entry.close();
+        if ((scannedEntries % 16U) == 0U) {
+            delay(0);
+        }
     }
+
+    root.close();
+    endStorageRead(target);
+    nextOffset = offset + returnedEntries;
+    if (!exhaustiveScan && totalEntries == 0) {
+        totalEntries = returnedEntries + offset + (hasMore ? 1U : 0U);
+    }
+}
+
+bool rebuildStorageDirectoryIndex(StorageTarget target, const String& directoryPath) {
+    if (!storageMounted(target)) {
+        return false;
+    }
+
+    const String normalizedDirectory = normalizeStoragePath(directoryPath, true);
+    const String indexPath = storageIndexPathForDirectory(normalizedDirectory);
+    if (normalizedDirectory.isEmpty() || indexPath.isEmpty()) {
+        return false;
+    }
+
+    fs::FS* fs = getStorageFs(target);
+    if (fs == nullptr) {
+        return false;
+    }
+    const String tempIndexPath = indexPath + ".tmp";
+    fs->remove(tempIndexPath);
+
+    beginStorageWrite(target);
+    File indexFile = storageOpen(target, tempIndexPath, "w");
+    if (!indexFile) {
+        endStorageWrite(target);
+        return false;
+    }
+
+    beginStorageRead(target);
+    File root = storageOpen(target, normalizedDirectory, "r");
+    if (!root || !root.isDirectory()) {
+        indexFile.close();
+        fs->remove(tempIndexPath);
+        endStorageWrite(target);
+        endStorageRead(target);
+        return false;
+    }
+
+    bool writeOk = true;
+    size_t entryCount = 0;
+    for (File entry = root.openNextFile(); entry; entry = root.openNextFile()) {
+        const String path = String(entry.path());
+        String name = storageBaseName(path);
+        if (name == ".index" || name == ".index.tmp") {
+            entry.close();
+            continue;
+        }
+        if (entry.isDirectory()) {
+            name += "/";
+        }
+        if (indexFile.print(name) != name.length() || indexFile.write('\n') != 1) {
+            writeOk = false;
+            entry.close();
+            break;
+        }
+        entry.close();
+        entryCount += 1;
+        if ((entryCount % 16U) == 0U) {
+            delay(0);
+        }
+    }
+
+    root.close();
+    endStorageRead(target);
+    indexFile.flush();
+    indexFile.close();
+    if (!writeOk) {
+        fs->remove(tempIndexPath);
+        endStorageWrite(target);
+        return false;
+    }
+    fs->remove(indexPath);
+    const bool renamed = fs->rename(tempIndexPath, indexPath);
+    if (!renamed) {
+        fs->remove(tempIndexPath);
+    }
+    endStorageWrite(target);
+    return renamed;
+}
+
+size_t countStorageDirectoryEntries(StorageTarget target, const String& directoryPath) {
+    if (!storageMounted(target)) {
+        return 0;
+    }
+
+    beginStorageRead(target);
+    File root = storageOpen(target, directoryPath, "r");
+    if (!root || !root.isDirectory()) {
+        if (root) {
+            root.close();
+        }
+        endStorageRead(target);
+        return 0;
+    }
+
+    size_t totalEntries = 0;
+    for (File entry = root.openNextFile(); entry; entry = root.openNextFile()) {
+        const String name = storageBaseName(String(entry.path()));
+        if (name == ".index" || name == ".index.tmp") {
+            entry.close();
+            continue;
+        }
+        totalEntries += 1;
+        entry.close();
+        if ((totalEntries % 32U) == 0U) {
+            delay(0);
+        }
+    }
+
+    root.close();
+    endStorageRead(target);
+    return totalEntries;
+}
+
+void appendStorageReindexStatusJson(JsonObject root, const StorageReindexStatus& status) {
+    root["active"] = status.active;
+    root["completed"] = status.completed;
+    root["success"] = status.success;
+    root["target"] = storageTargetId(status.target);
+    root["directoryPath"] = status.directoryPath;
+    root["stage"] = status.stage;
+    root["error"] = status.error;
+    root["processedEntries"] = status.processedEntries;
+    root["totalEntries"] = status.totalEntries;
+    root["startedAt"] = status.startedAt;
+    root["updatedAt"] = status.updatedAt;
+    const size_t total = status.totalEntries;
+    const size_t processed = min(status.processedEntries, total > 0 ? total : status.processedEntries);
+    root["percent"] = total > 0 ? static_cast<uint8_t>((processed * 100U) / total) : 0U;
+}
+
+void storageReindexTask(void* rawParams) {
+    std::unique_ptr<StorageReindexTaskParams> params(static_cast<StorageReindexTaskParams*>(rawParams));
+    const StorageTarget target = params ? params->target : StorageTarget::Sd;
+    const String directoryPath = params ? params->directoryPath : String("/");
+    bool success = false;
+    String error;
+
+    if (!storageMounted(target)) {
+        error = storageUnavailableMessage(target);
+    } else {
+        fs::FS* fs = getStorageFs(target);
+        const String normalizedDirectory = normalizeStoragePath(directoryPath, true);
+        const String indexPath = storageIndexPathForDirectory(normalizedDirectory);
+        const String tempIndexPath = indexPath + ".tmp";
+        if (fs == nullptr || normalizedDirectory.isEmpty() || indexPath.isEmpty()) {
+            error = "Invalid storage path.";
+        } else {
+            beginStorageRead(target);
+            File root = storageOpen(target, normalizedDirectory, "r");
+            if (!root || !root.isDirectory()) {
+                error = "Directory not found.";
+                if (root) {
+                    root.close();
+                }
+                endStorageRead(target);
+            } else {
+                size_t entryCount = 0;
+                for (File entry = root.openNextFile(); entry; entry = root.openNextFile()) {
+                    const String name = storageBaseName(String(entry.path()));
+                    if (name == ".index" || name == ".index.tmp") {
+                        entry.close();
+                        continue;
+                    }
+                    entryCount += 1;
+                    entry.close();
+                    if ((entryCount % 16U) == 0U) {
+                        updateStorageReindexStatus([entryCount](StorageReindexStatus& status) {
+                            status.processedEntries = entryCount;
+                        });
+                        delay(0);
+                    }
+                }
+                root.close();
+                endStorageRead(target);
+
+                updateStorageReindexStatus([entryCount](StorageReindexStatus& status) {
+                    status.totalEntries = max<size_t>(entryCount * 2U, 1U);
+                    status.processedEntries = entryCount;
+                    copyReindexText(status.stage, sizeof(status.stage), "writing");
+                });
+
+                fs->remove(tempIndexPath);
+                beginStorageWrite(target);
+                File indexFile = storageOpen(target, tempIndexPath, "w");
+                if (!indexFile) {
+                    error = "Unable to create index file.";
+                    endStorageWrite(target);
+                } else {
+                    beginStorageRead(target);
+                    root = storageOpen(target, normalizedDirectory, "r");
+                    if (!root || !root.isDirectory()) {
+                        error = "Directory not found.";
+                        if (root) {
+                            root.close();
+                        }
+                        indexFile.close();
+                        fs->remove(tempIndexPath);
+                        endStorageRead(target);
+                        endStorageWrite(target);
+                    } else {
+                        size_t writtenEntries = 0;
+                        bool writeOk = true;
+                        for (File entry = root.openNextFile(); entry; entry = root.openNextFile()) {
+                            String name = storageBaseName(String(entry.path()));
+                            if (name == ".index" || name == ".index.tmp") {
+                                entry.close();
+                                continue;
+                            }
+                            if (entry.isDirectory()) {
+                                name += "/";
+                            }
+                            if (indexFile.print(name) != name.length() || indexFile.write('\n') != 1) {
+                                writeOk = false;
+                                entry.close();
+                                break;
+                            }
+                            writtenEntries += 1;
+                            entry.close();
+                            if ((writtenEntries % 16U) == 0U) {
+                                updateStorageReindexStatus([entryCount, writtenEntries](StorageReindexStatus& status) {
+                                    status.processedEntries = entryCount + writtenEntries;
+                                });
+                                delay(0);
+                            }
+                        }
+
+                        root.close();
+                        endStorageRead(target);
+                        indexFile.flush();
+                        indexFile.close();
+
+                        if (!writeOk) {
+                            error = "Unable to write index file.";
+                            fs->remove(tempIndexPath);
+                            endStorageWrite(target);
+                        } else {
+                            fs->remove(indexPath);
+                            success = fs->rename(tempIndexPath, indexPath);
+                            if (!success) {
+                                error = "Unable to replace index file.";
+                                fs->remove(tempIndexPath);
+                            }
+                            endStorageWrite(target);
+                            updateStorageReindexStatus([entryCount, writtenEntries](StorageReindexStatus& status) {
+                                status.processedEntries = max<size_t>(entryCount * 2U, entryCount + writtenEntries);
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    updateStorageReindexStatus([&](StorageReindexStatus& status) {
+        status.active = false;
+        status.completed = true;
+        status.success = success;
+        copyReindexText(status.stage, sizeof(status.stage), success ? "complete" : "error");
+        copyReindexText(status.error, sizeof(status.error), error);
+    });
+    vTaskDelete(nullptr);
+}
+
+bool beginStorageReindexJob(StorageTarget target, const String& directoryPath, String& error) {
+    const StorageReindexStatus current = snapshotStorageReindexStatus();
+    if (current.active) {
+        error = "A storage reindex is already in progress.";
+        return false;
+    }
+
+    std::unique_ptr<StorageReindexTaskParams> params(new StorageReindexTaskParams());
+    if (!params) {
+        error = "Unable to allocate reindex task.";
+        return false;
+    }
+    params->target = target;
+    params->directoryPath = normalizeStoragePath(directoryPath, true);
+    resetStorageReindexStatus(target, params->directoryPath);
+
+    StorageReindexTaskParams* released = params.release();
+    const BaseType_t taskCreated = xTaskCreate(
+        storageReindexTask,
+        "storage_reindex",
+        8192,
+        released,
+        1,
+        nullptr);
+    if (taskCreated != pdPASS) {
+        delete released;
+        updateStorageReindexStatus([](StorageReindexStatus& status) {
+            status.active = false;
+            status.completed = true;
+            status.success = false;
+            copyReindexText(status.stage, sizeof(status.stage), "error");
+            copyReindexText(status.error, sizeof(status.error), "Unable to start reindex task.");
+        });
+        error = "Unable to start reindex task.";
+        return false;
+    }
+    return true;
 }
 
 bool removeStoragePathRecursive(StorageTarget target, const String& path) {
@@ -245,15 +803,35 @@ bool createStorageDirectory(StorageTarget target, const String& path) {
     return fs != nullptr && path != "/" && fs->mkdir(path);
 }
 
-void appendStorageDirectoryJson(StorageTarget target, const String& directoryPath, JsonDocument& response) {
+void appendStorageDirectoryJson(StorageTarget target, const String& directoryPath, JsonDocument& response, AsyncWebServerRequest* request = nullptr) {
     const String currentPath = normalizeStoragePath(directoryPath, true);
     response["target"] = storageTargetId(target);
     response["label"] = storageTargetLabel(target);
     response["currentPath"] = currentPath;
     response["parentPath"] = storageParentPath(currentPath);
+    const size_t offset = requestSizeParam(request, "offset", 0);
+    const size_t limit = requestSizeParam(request, "limit", kStorageDirectoryListBatchDefault);
+    const bool preferLiveScan = requestFlagParam(request, "live");
+    const bool rebuildIndex = requestFlagParam(request, "reindex");
     JsonObject storage = response["storage"].to<JsonObject>();
     appendStorageSummaryJson(target, storage);
-    appendStorageEntriesJson(target, currentPath, response["entries"].to<JsonArray>());
+    if (rebuildIndex) {
+        rebuildStorageDirectoryIndex(target, currentPath);
+    }
+    size_t nextOffset = 0;
+    bool hasMore = false;
+    size_t totalEntries = 0;
+    JsonArray entries = response["entries"].to<JsonArray>();
+    if (!preferLiveScan && !appendStorageEntriesFromIndex(target, currentPath, entries, offset, limit, nextOffset, hasMore, totalEntries)) {
+        appendStorageEntriesJson(target, currentPath, entries, offset, limit, nextOffset, hasMore, totalEntries);
+    } else if (preferLiveScan) {
+        appendStorageEntriesJson(target, currentPath, entries, offset, limit, nextOffset, hasMore, totalEntries, false);
+    }
+    response["offset"] = offset;
+    response["returned"] = nextOffset >= offset ? nextOffset - offset : 0;
+    response["nextOffset"] = nextOffset;
+    response["hasMore"] = hasMore;
+    response["totalEntries"] = totalEntries;
 }
 }  // namespace
 
@@ -302,6 +880,7 @@ void WebServerManager::begin(
     OtaHandler otaHandler,
     MqttHandler mqttHandler,
     SimpleHandler displayTriggerHandler,
+    SimpleHandler serverShutdownHandler,
     SimpleHandler rebootHandler,
     SimpleHandler factoryResetHandler) {
     appState_ = &appState;
@@ -316,6 +895,7 @@ void WebServerManager::begin(
     otaHandler_ = otaHandler;
     mqttHandler_ = mqttHandler;
     displayTriggerHandler_ = displayTriggerHandler;
+    serverShutdownHandler_ = serverShutdownHandler;
     rebootHandler_ = rebootHandler;
     factoryResetHandler_ = factoryResetHandler;
 
@@ -325,6 +905,9 @@ void WebServerManager::begin(
 }
 
 bool WebServerManager::ensureAuthorized(AsyncWebServerRequest* request) {
+    if (rejectIfWebUiLocked(request)) {
+        return false;
+    }
     const SettingsBundle settings = settingsGetter_();
     if (!settings.webAuth.enabled) {
         return true;
@@ -334,6 +917,29 @@ bool WebServerManager::ensureAuthorized(AsyncWebServerRequest* request) {
     }
     request->requestAuthentication();
     return false;
+}
+
+bool WebServerManager::rejectIfWebUiLocked(AsyncWebServerRequest* request) {
+    if (!webUiLocked_) {
+        return false;
+    }
+
+    if (request->url().startsWith("/api/")) {
+        JsonDocument doc;
+        doc["error"] = "Web interface is locked. Unlock it via MQTT command <baseTopic>/cmd/web_ui with payload unlock.";
+        sendJson(request, doc, 423);
+    } else {
+        request->send(423, "text/plain", "Web interface is locked. Unlock it via MQTT command <baseTopic>/cmd/web_ui with payload unlock.");
+    }
+    return true;
+}
+
+void WebServerManager::setWebUiLocked(bool locked) {
+    webUiLocked_ = locked;
+}
+
+bool WebServerManager::webUiLocked() const {
+    return webUiLocked_;
 }
 
 bool WebServerManager::redirectCaptivePortalIfNeeded(AsyncWebServerRequest* request) {
@@ -360,6 +966,7 @@ void WebServerManager::registerApiRoutes() {
         JsonObject root = doc.to<JsonObject>();
         appState_->toJson(root);
         appendSystemMetricsJson(root);
+        root["system"]["webUiLocked"] = webUiLocked_;
         JsonObject firmware = doc["firmware"].to<JsonObject>();
         firmware["version"] = APP_VERSION;
         firmware["buildDate"] = APP_BUILD_DATE;
@@ -409,26 +1016,18 @@ void WebServerManager::registerApiRoutes() {
         sendJson(request, doc);
     });
 
-    server_.on(
-        "/api/settings", HTTP_POST,
-        [](AsyncWebServerRequest* request) {
-            (void)request;
-        }, nullptr,
-        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-            if (index != 0 || len != total) {
-                return;
-            }
+    auto* settingsHandler = new AsyncCallbackJsonWebHandler(
+        "/api/settings",
+        [this](AsyncWebServerRequest* request, JsonVariant& json) {
             if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
                 return;
             }
-            JsonDocument doc;
-            const DeserializationError error = deserializeJson(doc, data, len);
-            if (error != DeserializationError::Ok) {
+            if (json.isNull()) {
                 request->send(400, "application/json", "{\"error\":\"invalid json\"}");
                 return;
             }
             String message;
-            if (!settingsSaver_(doc.as<JsonVariantConst>(), message)) {
+            if (!settingsSaver_(json.as<JsonVariantConst>(), message)) {
                 request->send(400, "application/json", String("{\"error\":\"") + message + "\"}");
                 return;
             }
@@ -436,27 +1035,22 @@ void WebServerManager::registerApiRoutes() {
             response["ok"] = true;
             sendJson(request, response);
         });
+    settingsHandler->setMethod(HTTP_POST);
+    server_.addHandler(settingsHandler);
 
-    server_.on(
-        "/api/play", HTTP_POST,
-        [](AsyncWebServerRequest* request) {
-            (void)request;
-        }, nullptr,
-        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-            if (index != 0 || len != total) {
-                return;
-            }
+    auto* playHandler = new AsyncCallbackJsonWebHandler(
+        "/api/play",
+        [this](AsyncWebServerRequest* request, JsonVariant& json) {
             if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
                 return;
             }
-            JsonDocument doc;
-            if (deserializeJson(doc, data, len) != DeserializationError::Ok) {
+            if (json.isNull()) {
                 request->send(400, "application/json", "{\"error\":\"invalid json\"}");
                 return;
             }
-            const String url = String(static_cast<const char*>(doc["url"] | ""));
-            const String label = String(static_cast<const char*>(doc["label"] | ""));
-            const String type = String(static_cast<const char*>(doc["type"] | "stream"));
+            const String url = String(static_cast<const char*>(json["url"] | ""));
+            const String label = String(static_cast<const char*>(json["label"] | ""));
+            const String type = String(static_cast<const char*>(json["type"] | "stream"));
             String message;
             if (!playHandler_(url, label, type, message)) {
                 request->send(400, "application/json", String("{\"error\":\"") + message + "\"}");
@@ -464,6 +1058,8 @@ void WebServerManager::registerApiRoutes() {
             }
             request->send(200, "application/json", "{\"ok\":true}");
         });
+    playHandler->setMethod(HTTP_POST);
+    server_.addHandler(playHandler);
 
     server_.on(
         "/api/volume", HTTP_POST,
@@ -646,17 +1242,6 @@ void WebServerManager::registerApiRoutes() {
             }
         });
 
-    server_.on("/api/storage", HTTP_GET, [this](AsyncWebServerRequest* request) {
-        if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
-            return;
-        }
-
-        const StorageTarget target = storageTargetFromRequest(request);
-        JsonDocument response;
-        appendStorageDirectoryJson(target, storageDirectoryFromRequest(request), response);
-        sendJson(request, response);
-    });
-
     server_.on("/api/storage/file", HTTP_GET, [this](AsyncWebServerRequest* request) {
         if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
             return;
@@ -689,12 +1274,17 @@ void WebServerManager::registerApiRoutes() {
             return;
         }
 
+        beginStorageRead(target);
         AsyncWebServerResponse* response = request->beginChunkedResponse(
             contentTypeForPath(path),
-            [this, file = std::move(file)](uint8_t* buffer, size_t maxLen, size_t) mutable -> size_t {
+            [this, target, file = std::move(file), released = false](uint8_t* buffer, size_t maxLen, size_t) mutable -> size_t {
                 if (!file || maxLen == 0) {
                     if (file) {
                         file.close();
+                    }
+                    if (!released) {
+                        endStorageRead(target);
+                        released = true;
                     }
                     return 0;
                 }
@@ -707,6 +1297,10 @@ void WebServerManager::registerApiRoutes() {
                 }
 
                 file.close();
+                if (!released) {
+                    endStorageRead(target);
+                    released = true;
+                }
                 return 0;
             });
         if (download) {
@@ -714,6 +1308,65 @@ void WebServerManager::registerApiRoutes() {
         }
         response->addHeader("Cache-Control", "no-store");
         request->send(response);
+    });
+
+    server_.on("/api/storage/reindex", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+            return;
+        }
+
+        JsonDocument response;
+        appendStorageReindexStatusJson(response["reindex"].to<JsonObject>(), snapshotStorageReindexStatus());
+        sendJson(request, response);
+    });
+
+    server_.on(
+        "/api/storage/reindex", HTTP_POST,
+        [](AsyncWebServerRequest* request) {
+            (void)request;
+        }, nullptr,
+        [this](AsyncWebServerRequest* request, uint8_t*, size_t, size_t, size_t) {
+            if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+                return;
+            }
+
+            const StorageTarget target = storageTargetFromRequest(request);
+            const String directoryPath = storageDirectoryFromRequest(request);
+            String error;
+            if (!beginStorageReindexJob(target, directoryPath, error)) {
+                request->send(409, "application/json", String("{\"error\":\"") + error + "\"}");
+                return;
+            }
+
+            JsonDocument response;
+            response["ok"] = true;
+            appendStorageReindexStatusJson(response["reindex"].to<JsonObject>(), snapshotStorageReindexStatus());
+            sendJson(request, response, 202);
+        });
+
+    server_.on("/api/storage/count", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+            return;
+        }
+
+        const StorageTarget target = storageTargetFromRequest(request);
+        const String directoryPath = storageDirectoryFromRequest(request);
+        JsonDocument response;
+        response["target"] = storageTargetId(target);
+        response["currentPath"] = directoryPath;
+        response["totalEntries"] = countStorageDirectoryEntries(target, directoryPath);
+        sendJson(request, response);
+    });
+
+    server_.on("/api/storage", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+            return;
+        }
+
+        const StorageTarget target = storageTargetFromRequest(request);
+        JsonDocument response;
+        appendStorageDirectoryJson(target, storageDirectoryFromRequest(request), response, request);
+        sendJson(request, response);
     });
 
     server_.on(
@@ -750,6 +1403,7 @@ void WebServerManager::registerApiRoutes() {
                 request->send(500, "application/json", "{\"error\":\"Unable to delete path.\"}");
                 return;
             }
+            rebuildStorageDirectoryIndex(target, storageParentPath(path));
 
             JsonDocument response;
             response["ok"] = true;
@@ -798,6 +1452,7 @@ void WebServerManager::registerApiRoutes() {
                 request->send(500, "application/json", "{\"error\":\"Unable to create folder.\"}");
                 return;
             }
+            rebuildStorageDirectoryIndex(target, directoryPath);
 
             JsonDocument response;
             response["ok"] = true;
@@ -858,7 +1513,7 @@ void WebServerManager::registerApiRoutes() {
                     return;
                 }
                 if (storageUploadPath_.isEmpty() || !isAllowedStoragePath(storageUploadPath_)) {
-                    storageUploadError_ = "Only audio files (.mp3, .wav, .aac, .m4a, .ogg, .opus, .flac) are allowed.";
+                    storageUploadError_ = "Only supported audio or artwork files (.mp3, .wav, .aac, .m4a, .ogg, .opus, .flac, .jpg, .jpeg, .png, .webp) are allowed.";
                     return;
                 }
 
@@ -916,6 +1571,7 @@ void WebServerManager::registerApiRoutes() {
                 storageUploadFile_.flush();
                 storageUploadFile_.close();
                 endStorageWrite(storageUploadTarget_);
+                rebuildStorageDirectoryIndex(storageUploadTarget_, storageParentPath(storageUploadPath_));
             }
         });
 
@@ -924,6 +1580,16 @@ void WebServerManager::registerApiRoutes() {
             return;
         }
         rebootHandler_();
+        request->send(200, "application/json", "{\"ok\":true}");
+    });
+
+    server_.on("/api/server-shutdown", HTTP_POST, [this](AsyncWebServerRequest* request) {
+        if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+            return;
+        }
+        if (serverShutdownHandler_) {
+            serverShutdownHandler_();
+        }
         request->send(200, "application/json", "{\"ok\":true}");
     });
 

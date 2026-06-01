@@ -1,11 +1,14 @@
 #include "audio_player.h"
 
 #include <Audio.h>
+#include <esp_heap_caps.h>
 #include <driver/gpio.h>
+#include <memory>
 
 #include "default_config.h"
 #include "playback_text.h"
 #include "psram_allocator.h"
+#include "storage_backend.h"
 
 namespace {
 AudioPlayer::Impl* g_impl = nullptr;
@@ -20,10 +23,60 @@ uint8_t percentToLibraryVolume(uint8_t volumePercent) {
     const long scaled = map(volumePercent, 0, 100, 0, DefaultConfig::AUDIO_MAX_HARDWARE_VOLUME);
     return constrain(static_cast<uint8_t>(scaled), static_cast<uint8_t>(0), DefaultConfig::AUDIO_MAX_HARDWARE_VOLUME);
 }
+
+String fallbackTitleFromPath(const String& path) {
+    if (path.isEmpty()) {
+        return "Local file";
+    }
+    const int slashIndex = path.lastIndexOf('/');
+    return slashIndex >= 0 ? path.substring(slashIndex + 1) : path;
+}
+
+uint16_t readLe16(const uint8_t* data) {
+    return static_cast<uint16_t>(data[0]) | (static_cast<uint16_t>(data[1]) << 8);
+}
+
+uint32_t readLe32(const uint8_t* data) {
+    return static_cast<uint32_t>(data[0]) | (static_cast<uint32_t>(data[1]) << 8) |
+        (static_cast<uint32_t>(data[2]) << 16) | (static_cast<uint32_t>(data[3]) << 24);
+}
+
+int16_t clampI16(int32_t sample) {
+    if (sample > 32767) {
+        return 32767;
+    }
+    if (sample < -32768) {
+        return -32768;
+    }
+    return static_cast<int16_t>(sample);
+}
 }  // namespace
 
 class AudioPlayer::Impl {
   public:
+    struct OverlayState {
+        int16_t* samples = nullptr;
+        uint32_t frameCount = 0;
+        uint32_t phaseQ16 = 0;
+        uint32_t stepQ16 = 0;
+        uint8_t duckPercent = 35;
+        uint8_t overlayPercent = 100;
+        bool active = false;
+        bool finished = false;
+
+        void clear() {
+            if (samples != nullptr) {
+                heap_caps_free(samples);
+                samples = nullptr;
+            }
+            frameCount = 0;
+            phaseQ16 = 0;
+            stepQ16 = 0;
+            active = false;
+            finished = false;
+        }
+    };
+
     Audio audio;
     AppState* appState = nullptr;
         uint8_t bclkPin = DefaultConfig::I2S_BCLK_PIN;
@@ -41,10 +94,13 @@ class AudioPlayer::Impl {
     String title = "Idle";
     String url;
     String source = "none";
+    bool storageLeaseActive = false;
+    StorageTarget storageTarget = StorageTarget::Flash;
     bool retryPending = false;
     uint8_t retryCount = 0;
     unsigned long retryAt = 0;
     bool stopRequested = false;
+    OverlayState overlay;
 
     void publish() {
         if (appState != nullptr) {
@@ -87,6 +143,165 @@ class AudioPlayer::Impl {
     }
 };
 
+namespace {
+void clearOverlay(AudioPlayer::Impl* impl) {
+    if (impl != nullptr) {
+        impl->overlay.clear();
+    }
+}
+
+void releaseStorageLease(AudioPlayer::Impl* impl) {
+    if (impl != nullptr && impl->storageLeaseActive) {
+        endStorageRead(impl->storageTarget);
+        impl->storageLeaseActive = false;
+    }
+}
+
+void acquireStorageLease(AudioPlayer::Impl* impl, StorageTarget target) {
+    if (impl == nullptr) {
+        return;
+    }
+    releaseStorageLease(impl);
+    beginStorageRead(target);
+    impl->storageTarget = target;
+    impl->storageLeaseActive = true;
+}
+
+bool loadWavOverlay(StorageTarget target, const String& path, AudioPlayer::Impl::OverlayState& overlay, uint32_t outputSampleRateHz) {
+    fs::FS* fs = getStorageFs(target);
+    if (fs == nullptr || !storageMounted(target)) {
+        return false;
+    }
+
+    beginStorageRead(target);
+    File file = storageOpen(target, path, "r");
+    if (!file || file.isDirectory()) {
+        endStorageRead(target);
+        return false;
+    }
+
+    if (file.size() < 44) {
+        file.close();
+        endStorageRead(target);
+        return false;
+    }
+
+    std::unique_ptr<uint8_t[]> header(new uint8_t[12]);
+    if (file.read(header.get(), 12) != 12 || memcmp(header.get(), "RIFF", 4) != 0 || memcmp(header.get() + 8, "WAVE", 4) != 0) {
+        file.close();
+        endStorageRead(target);
+        return false;
+    }
+
+    bool fmtFound = false;
+    bool dataFound = false;
+    uint16_t audioFormat = 0;
+    uint16_t channelCount = 0;
+    uint32_t sampleRate = 0;
+    uint16_t bitsPerSample = 0;
+    uint32_t dataOffset = 0;
+    uint32_t dataSize = 0;
+
+    while (file.available()) {
+        uint8_t chunkHeader[8];
+        if (file.read(chunkHeader, 8) != 8) {
+            break;
+        }
+        const uint32_t chunkSize = readLe32(chunkHeader + 4);
+        const uint32_t chunkDataPos = file.position();
+
+        if (memcmp(chunkHeader, "fmt ", 4) == 0 && chunkSize >= 16) {
+            std::unique_ptr<uint8_t[]> fmtData(new uint8_t[chunkSize]);
+            if (file.read(fmtData.get(), chunkSize) != static_cast<int>(chunkSize)) {
+                break;
+            }
+            audioFormat = readLe16(fmtData.get());
+            channelCount = readLe16(fmtData.get() + 2);
+            sampleRate = readLe32(fmtData.get() + 4);
+            bitsPerSample = readLe16(fmtData.get() + 14);
+            fmtFound = true;
+        } else if (memcmp(chunkHeader, "data", 4) == 0) {
+            dataOffset = chunkDataPos;
+            dataSize = chunkSize;
+            dataFound = true;
+            file.seek(chunkDataPos + chunkSize + (chunkSize & 1U));
+        } else {
+            file.seek(chunkDataPos + chunkSize + (chunkSize & 1U));
+        }
+
+        if (fmtFound && dataFound) {
+            break;
+        }
+    }
+
+    if (!fmtFound || !dataFound || audioFormat != 1 || (bitsPerSample != 8 && bitsPerSample != 16) ||
+        (channelCount != 1 && channelCount != 2) || sampleRate == 0) {
+        file.close();
+        endStorageRead(target);
+        return false;
+    }
+
+    const uint32_t bytesPerFrame = (bitsPerSample / 8U) * channelCount;
+    if (bytesPerFrame == 0 || dataSize < bytesPerFrame) {
+        file.close();
+        endStorageRead(target);
+        return false;
+    }
+
+    const uint32_t frameCount = dataSize / bytesPerFrame;
+    const size_t stereoSampleCount = static_cast<size_t>(frameCount) * 2U;
+    const size_t allocBytes = stereoSampleCount * sizeof(int16_t);
+    int16_t* samples = static_cast<int16_t*>(heap_caps_malloc(allocBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (samples == nullptr) {
+        samples = static_cast<int16_t*>(heap_caps_malloc(allocBytes, MALLOC_CAP_8BIT));
+    }
+    if (samples == nullptr) {
+        file.close();
+        endStorageRead(target);
+        return false;
+    }
+
+    file.seek(dataOffset);
+    const size_t rawBytes = static_cast<size_t>(frameCount) * bytesPerFrame;
+    std::unique_ptr<uint8_t[]> raw(new uint8_t[rawBytes]);
+    if (file.read(raw.get(), rawBytes) != static_cast<int>(rawBytes)) {
+        file.close();
+        endStorageRead(target);
+        heap_caps_free(samples);
+        return false;
+    }
+    file.close();
+    endStorageRead(target);
+
+    for (uint32_t frame = 0; frame < frameCount; ++frame) {
+        const size_t rawIndex = static_cast<size_t>(frame) * bytesPerFrame;
+        int16_t left = 0;
+        int16_t right = 0;
+        if (bitsPerSample == 16) {
+            left = static_cast<int16_t>(readLe16(raw.get() + rawIndex));
+            right = channelCount == 2 ? static_cast<int16_t>(readLe16(raw.get() + rawIndex + 2)) : left;
+        } else {
+            left = static_cast<int16_t>((static_cast<int>(raw[rawIndex]) - 128) << 8);
+            right = channelCount == 2 ? static_cast<int16_t>((static_cast<int>(raw[rawIndex + 1]) - 128) << 8) : left;
+        }
+        samples[frame * 2U] = left;
+        samples[frame * 2U + 1U] = right;
+    }
+
+    overlay.clear();
+    overlay.samples = samples;
+    overlay.frameCount = frameCount;
+    overlay.phaseQ16 = 0;
+    overlay.stepQ16 = static_cast<uint32_t>((static_cast<uint64_t>(sampleRate) << 16) / max<uint32_t>(1U, outputSampleRateHz));
+    if (overlay.stepQ16 == 0) {
+        overlay.stepQ16 = 1;
+    }
+    overlay.active = true;
+    overlay.finished = false;
+    return true;
+}
+}  // namespace
+
 void audio_info(const char* info) {
     if (info != nullptr) {
         Serial.printf("[audio] %s\n", info);
@@ -127,7 +342,27 @@ void audio_eof_stream(const char* info) {
 }
 
 void audio_process_i2s(uint32_t* sample, bool* continueI2S) {
-    (void)sample;
+    if (g_impl != nullptr && sample != nullptr && g_impl->overlay.active && g_impl->overlay.samples != nullptr) {
+        const uint32_t frameIndex = g_impl->overlay.phaseQ16 >> 16;
+        if (frameIndex >= g_impl->overlay.frameCount) {
+            g_impl->overlay.active = false;
+            g_impl->overlay.finished = true;
+        } else {
+            const int16_t baseLeft = static_cast<int16_t>((*sample) >> 16);
+            const int16_t baseRight = static_cast<int16_t>((*sample) & 0xffff);
+            const int16_t overlayLeft = g_impl->overlay.samples[frameIndex * 2U];
+            const int16_t overlayRight = g_impl->overlay.samples[frameIndex * 2U + 1U];
+            const int32_t mixedLeft =
+                (static_cast<int32_t>(baseLeft) * static_cast<int32_t>(g_impl->overlay.duckPercent)) / 100 +
+                (static_cast<int32_t>(overlayLeft) * static_cast<int32_t>(g_impl->overlay.overlayPercent)) / 100;
+            const int32_t mixedRight =
+                (static_cast<int32_t>(baseRight) * static_cast<int32_t>(g_impl->overlay.duckPercent)) / 100 +
+                (static_cast<int32_t>(overlayRight) * static_cast<int32_t>(g_impl->overlay.overlayPercent)) / 100;
+            *sample = (static_cast<uint32_t>(static_cast<uint16_t>(clampI16(mixedLeft))) << 16) |
+                static_cast<uint16_t>(clampI16(mixedRight));
+            g_impl->overlay.phaseQ16 += g_impl->overlay.stepQ16;
+        }
+    }
     if (continueI2S != nullptr) {
         *continueI2S = true;
     }
@@ -152,6 +387,15 @@ void audio_commercial(const char* info) {
 }
 
 void audio_eof_mp3(const char* info) {
+    if (g_impl != nullptr && g_impl->storageLeaseActive) {
+        releaseStorageLease(g_impl);
+        g_impl->state = "idle";
+        g_impl->type = "idle";
+        g_impl->title = "Idle";
+        g_impl->url = "";
+        g_impl->source = "manual";
+        g_impl->publish();
+    }
     Serial.printf("[audio] eof mp3 %s\n", info == nullptr ? "" : info);
 }
 
@@ -198,6 +442,15 @@ void AudioPlayer::loop() {
         return;
     }
     impl_->audio.loop();
+    if (impl_->storageLeaseActive && !impl_->audio.isRunning() && impl_->state == "playing") {
+        releaseStorageLease(impl_);
+        impl_->state = "idle";
+        impl_->type = "idle";
+        impl_->title = "Idle";
+        impl_->url = "";
+        impl_->source = "manual";
+        impl_->publish();
+    }
     if (impl_->retryPending && millis() >= impl_->retryAt) {
         impl_->retryPending = false;
         impl_->audio.stopSong();
@@ -220,6 +473,8 @@ bool AudioPlayer::play(const String& url, const String& title, const String& med
         impl_->audio.stopSong();
         delay(kSwitchQuietTimeMs);
     }
+    clearOverlay(impl_);
+    releaseStorageLease(impl_);
 
     impl_->stopRequested = false;
     impl_->retryPending = false;
@@ -259,6 +514,90 @@ bool AudioPlayer::play(const String& url, const String& title, const String& med
     return true;
 }
 
+bool AudioPlayer::playStorageFile(StorageTarget target, const String& path, const String& title, const String& mediaType, const String& source) {
+    if (impl_ == nullptr || path.isEmpty()) {
+        return false;
+    }
+
+    fs::FS* fs = getStorageFs(target);
+    if (fs == nullptr || !storageMounted(target) || !storageExists(target, path)) {
+        return false;
+    }
+
+    const String normalizedTitle = title.isEmpty() ? fallbackTitleFromPath(path) : title;
+    const String sourceUrl = String(storageTargetId(target)) + ":" + path;
+
+    if (impl_->audio.isRunning() || impl_->state == "playing" || impl_->state == "buffering") {
+        impl_->fadeToPercent(0, kSwitchFadeOutMs);
+        impl_->audio.stopSong();
+        delay(kSwitchQuietTimeMs);
+    }
+    clearOverlay(impl_);
+    acquireStorageLease(impl_, target);
+
+    impl_->stopRequested = false;
+    impl_->retryPending = false;
+    impl_->retryCount = 0;
+    impl_->url = sourceUrl;
+    impl_->title = normalizedTitle;
+    impl_->type = mediaType;
+    impl_->source = source;
+    impl_->state = "buffering";
+    impl_->publish();
+    impl_->applyHardwareVolumePercent(0);
+
+    bool connected = impl_->audio.connecttoFS(*fs, path.c_str());
+    if (!connected) {
+        delay(120);
+        connected = impl_->audio.connecttoFS(*fs, path.c_str());
+    }
+    if (!connected) {
+        releaseStorageLease(impl_);
+        impl_->applyHardwareVolumePercent(impl_->volume);
+        impl_->state = "error";
+        Serial.printf("[audio] connecttoFS failed target=%s path=%s\n", storageTargetId(target), path.c_str());
+        impl_->publish();
+        return false;
+    }
+
+    impl_->activeSampleRateHz = impl_->audio.getSampleRate();
+    impl_->bitsPerSample = impl_->audio.getBitsPerSample();
+    impl_->channelCount = impl_->audio.getChannels();
+    Serial.printf("[audio] connecttoFS ok target=%s path=%s\n", storageTargetId(target), path.c_str());
+    Serial.printf("[audio] local playback started rate=%lu bits=%u channels=%u lib_volume=%u\n",
+                  static_cast<unsigned long>(impl_->activeSampleRateHz),
+                  static_cast<unsigned>(impl_->bitsPerSample),
+                  static_cast<unsigned>(impl_->channelCount),
+                  static_cast<unsigned>(impl_->hardwareAudioVolume));
+    impl_->markPlaying();
+    impl_->fadeToPercent(impl_->volume, kStartFadeInMs);
+    return true;
+}
+
+bool AudioPlayer::playStorageOverlay(StorageTarget target, const String& path, uint8_t duckPercent, uint8_t overlayPercent) {
+    if (impl_ == nullptr || path.isEmpty() || !impl_->audio.isRunning() ||
+        !(impl_->state == "playing" || impl_->state == "buffering")) {
+        return false;
+    }
+
+    String lowered = path;
+    lowered.toLowerCase();
+    if (!lowered.endsWith(".wav")) {
+        return false;
+    }
+
+    AudioPlayer::Impl::OverlayState overlay;
+    overlay.duckPercent = constrain(duckPercent, static_cast<uint8_t>(0), static_cast<uint8_t>(100));
+    overlay.overlayPercent = constrain(overlayPercent, static_cast<uint8_t>(0), static_cast<uint8_t>(100));
+    if (!loadWavOverlay(target, path, overlay, max<uint32_t>(1U, impl_->audio.getSampleRate()))) {
+        return false;
+    }
+
+    clearOverlay(impl_);
+    impl_->overlay = overlay;
+    return true;
+}
+
 void AudioPlayer::stop() {
     if (impl_ == nullptr) {
         return;
@@ -271,6 +610,8 @@ void AudioPlayer::stop() {
         delay(kSwitchQuietTimeMs);
     }
     impl_->audio.stopSong();
+    clearOverlay(impl_);
+    releaseStorageLease(impl_);
     Serial.println("[audio] playback stopped");
     impl_->state = "idle";
     impl_->type = "idle";
@@ -371,6 +712,19 @@ String AudioPlayer::currentUrl() const {
 
 String AudioPlayer::currentState() const {
     return impl_ == nullptr ? String("idle") : impl_->state;
+}
+
+bool AudioPlayer::overlayActive() const {
+    return impl_ != nullptr && impl_->overlay.active;
+}
+
+bool AudioPlayer::consumeOverlayFinished() {
+    if (impl_ == nullptr || !impl_->overlay.finished) {
+        return false;
+    }
+    impl_->overlay.finished = false;
+    clearOverlay(impl_);
+    return true;
 }
 
 AudioPlayer::DiagnosticsSnapshot AudioPlayer::diagnostics() const {

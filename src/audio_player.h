@@ -3,6 +3,7 @@
 #include <Arduino.h>
 
 #include "app_state.h"
+#include "storage_backend.h"
 
 class AudioPlayer {
   public:
@@ -21,7 +22,11 @@ class AudioPlayer {
     void begin(uint8_t bclkPin, uint8_t wsPin, uint8_t doutPin, uint8_t initialVolumePercent, AppState& appState);
     void loop();
     bool play(const String& url, const String& title, const String& mediaType, const String& source);
+    bool playStorageFile(StorageTarget target, const String& path, const String& title, const String& mediaType, const String& source);
+    bool playStorageOverlay(StorageTarget target, const String& path, uint8_t duckPercent = 35, uint8_t overlayPercent = 100);
     void stop();
+    bool overlayActive() const;
+    bool consumeOverlayFinished();
     bool reconfigureOutputPins(uint8_t bclkPin, uint8_t wsPin, uint8_t doutPin);
     void setVolumePercent(uint8_t volumePercent);
     void setDirectLibraryVolume(uint8_t libraryVolume);

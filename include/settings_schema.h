@@ -43,7 +43,8 @@ struct OtaSettings {
     String assetTemplate;
     String manifestUrl;
     bool allowInsecureTls = true;
-    bool autoCheck = false;
+    bool autoCheck = true;
+    bool autoUpdate = true;
 };
 
 struct BatterySettings {
@@ -54,6 +55,7 @@ struct BatterySettings {
     float calibrationMultiplier = 3.866f;
     uint8_t adcPin = 36;
 #endif
+    float measuredVoltage = 0.0f;
     uint8_t chargingSensePin = 0;
     uint32_t updateIntervalMs = 10000;
     uint16_t movingAverageWindowSize = 10;
@@ -94,11 +96,22 @@ struct OledSettings {
 };
 
 struct SdSettings {
-    bool enabled = false;
+    bool enabled = true;
     uint8_t csPin = 4;
     uint8_t sckPin = 5;
     uint8_t mosiPin = 6;
     uint8_t misoPin = 7;
+};
+
+struct EffectSettings {
+    String startupFile;
+    String alarmFile;
+    String notificationFile;
+    String ambientSoundFile;
+    String lowBatteryFile;
+    String shutDownFile;
+    String updateAvailableFile;
+    String updateSuccessFile;
 };
 
 struct DeviceSettings {
@@ -127,6 +140,7 @@ struct SettingsBundle {
     AudioSettings audio;
     OledSettings oled;
     SdSettings sd;
+    EffectSettings effects;
     DeviceSettings device;
     bool usingSavedSettings = false;
 };

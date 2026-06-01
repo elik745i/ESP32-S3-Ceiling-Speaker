@@ -255,6 +255,9 @@ void MqttManager::handleConnected(bool sessionPresent) {
     client_.subscribe(HaBridge::commandTopic(settings_, "stop").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "volume").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "display_trigger").c_str(), 1);
+    client_.subscribe(HaBridge::commandTopic(settings_, "alarm").c_str(), 1);
+    client_.subscribe(HaBridge::commandTopic(settings_, "notify").c_str(), 1);
+    client_.subscribe(HaBridge::commandTopic(settings_, "web_ui").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "ota/check").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "ota/install").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "ota/select_version").c_str(), 1);
@@ -361,6 +364,36 @@ void MqttManager::handleMessage(char* topic, char* payload, AsyncMqttClientMessa
 
     if (topicValue == HaBridge::commandTopic(settings_, "display_trigger")) {
         command.action = "display_trigger";
+        command.payload = payloadValue;
+        commandHandler_(command);
+        return;
+    }
+
+    if (topicValue == HaBridge::commandTopic(settings_, "alarm")) {
+        String action = payloadValue;
+        action.trim();
+        action.toLowerCase();
+        command.action = (action == "stop" || action == "off" || action == "0") ? "alarm_stop" : "alarm_start";
+        commandHandler_(command);
+        return;
+    }
+
+    if (topicValue == HaBridge::commandTopic(settings_, "notify")) {
+        command.action = "notify";
+        command.payload = payloadValue;
+        commandHandler_(command);
+        return;
+    }
+
+    if (topicValue == HaBridge::commandTopic(settings_, "web_ui")) {
+        String action = payloadValue;
+        action.trim();
+        action.toLowerCase();
+        if (action == "unlock" || action == "on" || action == "start" || action == "enable") {
+            command.action = "web_ui_unlock";
+        } else {
+            command.action = "web_ui_lock";
+        }
         command.payload = payloadValue;
         commandHandler_(command);
         return;
@@ -637,6 +670,21 @@ void MqttManager::publishDiscovery() {
     client_.publish(
         HaBridge::discoveryTopic(settings_, "button", "display_trigger").c_str(), 1, true,
         HaBridge::discoveryPayloadButton(settings_, "display_trigger", "Display Trigger", HaBridge::commandTopic(settings_, "display_trigger").c_str(), "trigger", "mdi:gesture-tap-button", configurationUrl).c_str());
+    client_.publish(
+        HaBridge::discoveryTopic(settings_, "button", "alarm_trigger").c_str(), 1, true,
+        HaBridge::discoveryPayloadButton(settings_, "alarm_trigger", "Alarm Trigger", HaBridge::commandTopic(settings_, "alarm").c_str(), "trigger", "mdi:alarm-bell", configurationUrl).c_str());
+    client_.publish(
+        HaBridge::discoveryTopic(settings_, "button", "alarm_stop").c_str(), 1, true,
+        HaBridge::discoveryPayloadButton(settings_, "alarm_stop", "Alarm Stop", HaBridge::commandTopic(settings_, "alarm").c_str(), "stop", "mdi:alarm-off", configurationUrl).c_str());
+    client_.publish(
+        HaBridge::discoveryTopic(settings_, "button", "notify").c_str(), 1, true,
+        HaBridge::discoveryPayloadButton(settings_, "notify", "Play Notification Cue", HaBridge::commandTopic(settings_, "notify").c_str(), "notify", "mdi:message-badge", configurationUrl).c_str());
+    client_.publish(
+        HaBridge::discoveryTopic(settings_, "button", "web_ui_lock").c_str(), 1, true,
+        HaBridge::discoveryPayloadButton(settings_, "web_ui_lock", "Lock Web UI", HaBridge::commandTopic(settings_, "web_ui").c_str(), "lock", "mdi:web-off", configurationUrl).c_str());
+    client_.publish(
+        HaBridge::discoveryTopic(settings_, "button", "web_ui_unlock").c_str(), 1, true,
+        HaBridge::discoveryPayloadButton(settings_, "web_ui_unlock", "Unlock Web UI", HaBridge::commandTopic(settings_, "web_ui").c_str(), "unlock", "mdi:web-check", configurationUrl).c_str());
     client_.publish(
         HaBridge::discoveryTopic(settings_, "select", "firmware_version_select").c_str(), 1, true,
         HaBridge::discoveryPayloadSelect(settings_, "firmware_version_select", "Firmware Version", HaBridge::otaStateTopic(settings_).c_str(), HaBridge::commandTopic(settings_, "ota/select_version").c_str(), firmwareOptions, "mdi:format-list-bulleted-square", "{{ value_json.selectedOption if value_json.selectedOption else '' }}", configurationUrl).c_str());

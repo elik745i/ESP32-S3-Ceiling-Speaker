@@ -4,6 +4,7 @@ const state = {
   storageInfoByTarget: {},
   currentStorageEntriesByTarget: { flash: [], sd: [] },
   currentStoragePathByTarget: { flash: "/", sd: "/" },
+  currentStorageMetaByTarget: { flash: {}, sd: {} },
   activeStorageTarget: "flash",
   storageSelectionMode: false,
   storageSelectedPathsByTarget: { flash: [], sd: [] },
@@ -12,7 +13,31 @@ const state = {
   storagePreviewObjectUrl: "",
   storagePreviewArtworkUrl: "",
   storagePreviewRequestId: 0,
+  storageListRequestId: 0,
+  storagePreviewPlaybackMode: {
+    deviceActive: false,
+    previousDeviceActive: false,
+    suppressAutoAdvance: false,
+    loop: false,
+    shuffle: false,
+  },
   storageClickTimer: null,
+  storageInitialLoadRequested: false,
+  effectReindexInProgress: false,
+  storageReindexInProgressByTarget: { flash: false, sd: false },
+  headerActionsMenuOpen: false,
+  rebootOverlayArmed: false,
+  rebootOverlayTimer: null,
+  rebootOverlayPollTimer: null,
+  rebootOverlayCountdownRemaining: 0,
+  rebootOverlayStartedAt: 0,
+  rebootOverlayReconnectAllowedAt: 0,
+  rebootOverlaySawDisconnect: false,
+  effectFileOptions: [],
+  effectFilesLoading: false,
+  effectFileOptionsLoaded: false,
+  effectFileOptionsCacheKey: "",
+  batteryMeasuredVoltageInput: "",
   recentPlayback: loadRecentPlayback(),
   radioCountries: [],
   radioStations: [],
@@ -24,6 +49,7 @@ const state = {
   firmwareReloadTimer: null,
   statusRequestInFlight: false,
   settingsSaveTimer: null,
+  settingsSavePromise: null,
   settingsDirty: false,
   settingsLoading: false,
   settingsSaving: false,
@@ -33,6 +59,9 @@ const state = {
   firmwareReleases: [],
   firmwareLatestVersion: "",
   firmwareSelectedVersion: "",
+  updatePopupShownVersion: "",
+  deferredEffectsReload: false,
+  deferredStorageReload: false,
   awaitingFirmwareReboot: false,
   firmwareReloadPending: false,
   wifiSelectionPending: false,
@@ -50,12 +79,31 @@ const state = {
 const SETTINGS_AUTOSAVE_DELAY_MS = 900;
 const ACTIVE_TAB_STORAGE_KEY = "notifierActiveTab";
 const RADIO_SELECTION_STORAGE_KEY = "notifierRadioSelection";
+const EFFECT_FILES_CACHE_STORAGE_KEY = "notifierEffectFilesCache";
+const STORAGE_INITIAL_PAGE_SIZE = 20;
+const STORAGE_SCROLL_PAGE_SIZE = 20;
 const STORAGE_AUDIO_EXTENSIONS = new Set(["mp3", "wav", "aac", "m4a", "ogg", "opus", "flac"]);
 const DEFAULT_RADIO_SELECTION = {
   country: "Azerbaijan",
   stationName: "AvtoFM",
   stationUrl: "",
 };
+const EFFECT_FILE_SOURCES = [
+  { target: "sd", dir: "/media/wav", prefix: "SD" },
+  { target: "flash", dir: "/wav", prefix: "Flash" },
+];
+const EFFECT_FILE_PAGE_SIZE = 20;
+const EFFECT_SELECT_CONFIG = [
+  { id: "effectStartupFile", field: "startupFile", label: "Startup" },
+  { id: "effectAlarmFile", field: "alarmFile", label: "Alarm" },
+  { id: "effectNotificationFile", field: "notificationFile", label: "Notification" },
+  { id: "effectAmbientSoundFile", field: "ambientSoundFile", label: "Ambient Sound" },
+  { id: "effectLowBatteryFile", field: "lowBatteryFile", label: "Low Battery" },
+  { id: "effectShutDownFile", field: "shutDownFile", label: "Shut Down" },
+  { id: "effectUpdateAvailableFile", field: "updateAvailableFile", label: "Updates Available" },
+  { id: "effectUpdateSuccessFile", field: "updateSuccessFile", label: "Update Success" },
+];
+const STORAGE_PREVIEW_EMBEDDED_SCAN_MAX_BYTES = 256 * 1024;
 const GPIO_BOARD_PRESENTATION = {
   "esp32-s3-super-mini": {
     rotation: "rotate(90deg)",
@@ -561,6 +609,15 @@ const elements = {
   audioWsPin: document.getElementById("audioWsPin"),
   audioBclkPin: document.getElementById("audioBclkPin"),
   audioDoutPin: document.getElementById("audioDoutPin"),
+  effectStartupFile: document.getElementById("effectStartupFile"),
+  effectAlarmFile: document.getElementById("effectAlarmFile"),
+  effectNotificationFile: document.getElementById("effectNotificationFile"),
+  effectAmbientSoundFile: document.getElementById("effectAmbientSoundFile"),
+  effectLowBatteryFile: document.getElementById("effectLowBatteryFile"),
+  effectShutDownFile: document.getElementById("effectShutDownFile"),
+  effectUpdateAvailableFile: document.getElementById("effectUpdateAvailableFile"),
+  effectUpdateSuccessFile: document.getElementById("effectUpdateSuccessFile"),
+  effectsFileStatus: document.getElementById("effectsFileStatus"),
   audioWsSummary: document.getElementById("audioWsSummary"),
   audioBclkSummary: document.getElementById("audioBclkSummary"),
   audioDoutSummary: document.getElementById("audioDoutSummary"),
@@ -627,6 +684,20 @@ const elements = {
   otaProgressLabel: document.getElementById("otaProgressLabel"),
   firmwareList: document.getElementById("firmwareList"),
   firmwareSelectionLabel: document.getElementById("firmwareSelectionLabel"),
+  effectsReindexButton: document.getElementById("effectsReindexButton"),
+  headerActionsButton: document.getElementById("headerActionsButton"),
+  headerActionsMenu: document.getElementById("headerActionsMenu"),
+  headerRefreshButton: document.getElementById("headerRefreshButton"),
+  headerRebootButton: document.getElementById("headerRebootButton"),
+  headerShutdownButton: document.getElementById("headerShutdownButton"),
+  rebootOverlay: document.getElementById("rebootOverlay"),
+  rebootOverlayProgress: document.getElementById("rebootOverlayProgress"),
+  rebootOverlayCountdown: document.getElementById("rebootOverlayCountdown"),
+  rebootOverlayTitle: document.getElementById("rebootOverlayTitle"),
+  rebootOverlayStatus: document.getElementById("rebootOverlayStatus"),
+  updateAvailableDialog: document.getElementById("updateAvailableDialog"),
+  updateAvailableBody: document.getElementById("updateAvailableBody"),
+  updateAvailableCloseButton: document.getElementById("updateAvailableCloseButton"),
   uploadFirmwareButton: document.getElementById("uploadFirmwareButton"),
   localFirmwareFile: document.getElementById("localFirmwareFile"),
   localFirmwareLabel: document.getElementById("localFirmwareLabel"),
@@ -678,6 +749,7 @@ const elements = {
   storageUpButton: document.getElementById("storageUpButton"),
   storageBreadcrumbs: document.getElementById("storageBreadcrumbs"),
   storageNewFolderButton: document.getElementById("storageNewFolderButton"),
+  storageReindexButton: document.getElementById("storageReindexButton"),
   storageSelectModeButton: document.getElementById("storageSelectModeButton"),
   storageSelectAllButton: document.getElementById("storageSelectAllButton"),
   storageDeleteButton: document.getElementById("storageDeleteButton"),
@@ -693,10 +765,14 @@ const elements = {
   storagePreviewAlbum: document.getElementById("storagePreviewAlbum"),
   storagePreviewArtwork: document.getElementById("storagePreviewArtwork"),
   storagePreviewArtworkFallback: document.getElementById("storagePreviewArtworkFallback"),
+  storagePreviewArtworkStatus: document.getElementById("storagePreviewArtworkStatus"),
   storagePreviewProgressFill: document.getElementById("storagePreviewProgressFill"),
   storagePreviewProgressLabel: document.getElementById("storagePreviewProgressLabel"),
+  storagePreviewPrevButton: document.getElementById("storagePreviewPrevButton"),
   storagePreviewPlayButton: document.getElementById("storagePreviewPlayButton"),
-  storagePreviewStopButton: document.getElementById("storagePreviewStopButton"),
+  storagePreviewNextButton: document.getElementById("storagePreviewNextButton"),
+  storagePreviewLoopButton: document.getElementById("storagePreviewLoopButton"),
+  storagePreviewShuffleButton: document.getElementById("storagePreviewShuffleButton"),
   sdEnabled: document.getElementById("sdEnabled"),
   sdCsPin: document.getElementById("sdCsPin"),
   sdSckPin: document.getElementById("sdSckPin"),
@@ -1006,18 +1082,28 @@ function activeTabName() {
   return document.querySelector('.tab-button[aria-selected="true"]')?.dataset.tab || "";
 }
 
-async function refreshExternalStorageTab(directoryPath = state.currentStoragePathByTarget.sd || "/") {
+async function refreshExternalStorageTab(directoryPath = state.currentStoragePathByTarget.sd || "/", options = {}) {
+  state.storageInitialLoadRequested = true;
   state.activeStorageTarget = "sd";
   state.currentStoragePathByTarget.sd = normalizeStorageDirectoryPath(directoryPath);
+  if (shouldDeferSdReads() && activeStorageEntries("sd").length) {
+    state.deferredStorageReload = true;
+    setStorageStatus("Using cached folder view during playback. Stop playback or scroll later to refresh from SD.");
+    rerenderStorageManager("sd");
+    return { storage: state.storageInfoByTarget.sd || {}, entries: activeStorageEntries("sd"), hasMore: Boolean(activeStorageMeta("sd").hasMore) };
+  }
+  state.deferredStorageReload = false;
   setStorageStatus("Loading files...");
-  const payload = await refreshStorageManager("sd", directoryPath);
+  const payload = await refreshStorageManager("sd", directoryPath, options);
   if (elements.storageProgressFill) {
     elements.storageProgressFill.style.width = "0%";
   }
   if (elements.storageProgressLabel) {
     elements.storageProgressLabel.textContent = "Idle";
   }
-  setStorageStatus("Ready");
+  if (!payload?.hasMore) {
+    setStorageStatus("Ready");
+  }
   return payload;
 }
 
@@ -1060,7 +1146,7 @@ function updateStorageAvailabilityUi(status = state.status) {
 
 function currentSdPins(settings = state.settings, options = {}) {
   const { respectEnabled = true } = options;
-  const enabled = Boolean(elements.sdEnabled?.checked ?? settings?.sd?.enabled ?? false);
+  const enabled = true;
   if (respectEnabled && !enabled) {
     return [];
   }
@@ -1924,6 +2010,156 @@ function normalizeDecimalField(field) {
   }
 }
 
+function setHeaderActionsMenuOpen(open) {
+  state.headerActionsMenuOpen = Boolean(open);
+  if (elements.headerActionsMenu) {
+    elements.headerActionsMenu.dataset.open = String(state.headerActionsMenuOpen);
+    elements.headerActionsMenu.setAttribute("aria-hidden", String(!state.headerActionsMenuOpen));
+  }
+  if (elements.headerActionsButton) {
+    elements.headerActionsButton.setAttribute("aria-expanded", String(state.headerActionsMenuOpen));
+  }
+}
+
+function rebootOverlayCircumference() {
+  return 2 * Math.PI * 52;
+}
+
+function updateRebootOverlayProgress(remainingSeconds, totalSeconds) {
+  if (elements.rebootOverlayCountdown) {
+    elements.rebootOverlayCountdown.textContent = String(Math.max(0, Math.ceil(remainingSeconds)));
+  }
+  if (elements.rebootOverlayProgress) {
+    const clampedTotal = Math.max(1, Number(totalSeconds || 30));
+    const clampedRemaining = Math.max(0, Math.min(clampedTotal, Number(remainingSeconds || 0)));
+    const progress = 1 - (clampedRemaining / clampedTotal);
+    const circumference = rebootOverlayCircumference();
+    elements.rebootOverlayProgress.style.strokeDasharray = `${circumference}`;
+    elements.rebootOverlayProgress.style.strokeDashoffset = `${circumference * (1 - progress)}`;
+  }
+}
+
+function hideRebootOverlay() {
+  if (state.rebootOverlayTimer) {
+    window.clearInterval(state.rebootOverlayTimer);
+    state.rebootOverlayTimer = null;
+  }
+  if (state.rebootOverlayPollTimer) {
+    window.clearInterval(state.rebootOverlayPollTimer);
+    state.rebootOverlayPollTimer = null;
+  }
+  state.rebootOverlayCountdownRemaining = 0;
+  state.rebootOverlayStartedAt = 0;
+  state.rebootOverlayReconnectAllowedAt = 0;
+  state.rebootOverlaySawDisconnect = false;
+  state.rebootOverlayArmed = false;
+  if (elements.rebootOverlay) {
+    elements.rebootOverlay.hidden = true;
+  }
+}
+
+function clearFirmwareReconnectState() {
+  state.awaitingFirmwareReboot = false;
+  state.firmwareReloadPending = false;
+  if (state.firmwareReloadTimer) {
+    window.clearTimeout(state.firmwareReloadTimer);
+    state.firmwareReloadTimer = null;
+  }
+  hideRebootOverlay();
+}
+
+function resetTransientOverlays() {
+  hideRebootOverlay();
+  setHeaderActionsMenuOpen(false);
+}
+
+function performFrontendHardRefresh() {
+  try {
+    if ("caches" in window) {
+      caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(key)))).catch(() => {});
+    }
+  } catch {
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.set("ts", String(Date.now()));
+  window.location.replace(url.toString());
+}
+
+function showRebootOverlay(title = "Rebooting device...", totalSeconds = 30) {
+  if (!state.rebootOverlayArmed) {
+    hideRebootOverlay();
+    return;
+  }
+  const overlayArmed = state.rebootOverlayArmed;
+  hideRebootOverlay();
+  state.rebootOverlayArmed = overlayArmed;
+  setHeaderActionsMenuOpen(false);
+  const reconnectGraceMs = Math.min(6000, Math.max(1500, Math.round(Number(totalSeconds || 30) * 250)));
+  state.rebootOverlayStartedAt = Date.now();
+  state.rebootOverlayReconnectAllowedAt = state.rebootOverlayStartedAt + reconnectGraceMs;
+  state.rebootOverlaySawDisconnect = false;
+  state.rebootOverlayCountdownRemaining = totalSeconds;
+  if (elements.rebootOverlayTitle) {
+    elements.rebootOverlayTitle.textContent = title;
+  }
+  if (elements.rebootOverlayStatus) {
+    elements.rebootOverlayStatus.textContent = "Waiting for device to come back online.";
+  }
+  updateRebootOverlayProgress(totalSeconds, totalSeconds);
+  if (elements.rebootOverlay) {
+    elements.rebootOverlay.hidden = false;
+  }
+
+  const startedAt = state.rebootOverlayStartedAt;
+  let reloadTriggered = false;
+  const tryReconnect = async () => {
+    try {
+      await fetch(`/api/status?ts=${Date.now()}`, { cache: "no-store" });
+      if (!state.rebootOverlaySawDisconnect && Date.now() < state.rebootOverlayReconnectAllowedAt) {
+        return;
+      }
+      if (elements.rebootOverlayStatus) {
+        elements.rebootOverlayStatus.textContent = "Device is back online. Refreshing page...";
+      }
+      if (!reloadTriggered) {
+        reloadTriggered = true;
+        hideRebootOverlay();
+        window.setTimeout(() => performFrontendHardRefresh(), 250);
+      }
+    } catch {
+      state.rebootOverlaySawDisconnect = true;
+      const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+      if (elapsedSeconds >= totalSeconds && elements.rebootOverlayStatus) {
+        elements.rebootOverlayStatus.textContent = "Still waiting for reconnect...";
+      }
+    }
+  };
+
+  state.rebootOverlayTimer = window.setInterval(() => {
+    const elapsed = (Date.now() - startedAt) / 1000;
+    const remaining = Math.max(0, totalSeconds - elapsed);
+    state.rebootOverlayCountdownRemaining = remaining;
+    updateRebootOverlayProgress(remaining, totalSeconds);
+  }, 250);
+
+  state.rebootOverlayPollTimer = window.setInterval(() => {
+    tryReconnect().catch(() => {});
+  }, 1500);
+}
+
+function parseDecimalFieldValue(field, fallback = 0) {
+  if (!field) {
+    return Number(fallback || 0);
+  }
+  normalizeDecimalField(field);
+  const normalized = String(field.value || "").trim();
+  if (!normalized) {
+    return Number(fallback || 0);
+  }
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : Number(fallback || 0);
+}
+
 function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -1956,6 +2192,18 @@ function normalizeStorageDirectoryPath(path) {
   return normalized || "/";
 }
 
+function storageBaseName(path) {
+  const normalized = String(path || "").trim().replaceAll("\\", "/");
+  if (!normalized) {
+    return "";
+  }
+  const trimmed = normalized.endsWith("/") && normalized.length > 1
+    ? normalized.slice(0, -1)
+    : normalized;
+  const parts = trimmed.split("/").filter(Boolean);
+  return parts[parts.length - 1] || trimmed;
+}
+
 function storageParentPath(path) {
   const normalized = normalizeStorageDirectoryPath(path);
   if (normalized === "/") {
@@ -1980,6 +2228,51 @@ function activeStorageEntries(target = state.activeStorageTarget) {
   return Array.isArray(state.currentStorageEntriesByTarget[target]) ? state.currentStorageEntriesByTarget[target] : [];
 }
 
+function activeStorageMeta(target = state.activeStorageTarget) {
+  const meta = state.currentStorageMetaByTarget[target];
+  return meta && typeof meta === "object" ? meta : {};
+}
+
+function setStorageMeta(meta, target = state.activeStorageTarget) {
+  state.currentStorageMetaByTarget[target] = { ...activeStorageMeta(target), ...(meta || {}) };
+}
+
+function formatLoadProgress(loaded, total) {
+  const safeLoaded = Math.max(0, Number(loaded || 0));
+  const safeTotal = Math.max(0, Number(total || 0));
+  if (!safeTotal) {
+    return `${safeLoaded} loaded`;
+  }
+  const percent = Math.max(0, Math.min(100, Math.round((safeLoaded * 100) / safeTotal)));
+  return `${safeLoaded}/${safeTotal} (${percent}%)`;
+}
+
+function mergeStorageEntries(existingEntries, incomingEntries) {
+  const merged = [...(Array.isArray(existingEntries) ? existingEntries : [])];
+  const seenPaths = new Set(merged.map((entry) => String(entry?.path || "")));
+  for (const entry of Array.isArray(incomingEntries) ? incomingEntries : []) {
+    const path = String(entry?.path || "");
+    if (!path || seenPaths.has(path)) {
+      continue;
+    }
+    seenPaths.add(path);
+    merged.push(entry);
+  }
+  return merged;
+}
+
+function activeStorageAudioEntries(target = state.activeStorageTarget) {
+  return activeStorageEntries(target).filter((entry) => !entry?.isDirectory && isAudioStoragePath(entry.path));
+}
+
+function currentStoragePreviewQueueIndex(target = state.activeStorageTarget) {
+  const currentPath = String(state.storagePreviewItem?.path || "");
+  if (!currentPath) {
+    return -1;
+  }
+  return activeStorageAudioEntries(target).findIndex((entry) => entry.path === currentPath);
+}
+
 function activeStorageSelection(target = state.activeStorageTarget) {
   return Array.isArray(state.storageSelectedPathsByTarget[target]) ? state.storageSelectedPathsByTarget[target] : [];
 }
@@ -1999,6 +2292,7 @@ function rerenderStorageManager(target = state.activeStorageTarget) {
     storage: state.storageInfoByTarget[target] || {},
     currentPath: state.currentStoragePathByTarget[target] || "/",
     entries: activeStorageEntries(target),
+    ...activeStorageMeta(target),
   });
 }
 
@@ -2037,24 +2331,58 @@ function updateStorageToolbar(storage = state.storageInfoByTarget[state.activeSt
   const entries = activeStorageEntries();
   const selectedPaths = activeStorageSelection();
   const allVisibleSelected = entries.length > 0 && entries.every((entry) => selectedPaths.includes(entry.path));
+  const setButtonLabel = (button, label) => {
+    if (!button) {
+      return;
+    }
+    const labelNode = button.querySelector("span");
+    if (labelNode) {
+      labelNode.textContent = label;
+    }
+  };
 
   if (elements.storageSelectModeButton) {
     elements.storageSelectModeButton.classList.toggle("active", state.storageSelectionMode);
-    elements.storageSelectModeButton.querySelector("span").textContent = state.storageSelectionMode ? "Done" : "Select";
+    setButtonLabel(elements.storageSelectModeButton, state.storageSelectionMode ? "Done" : "Select");
   }
   if (elements.storageSelectAllButton) {
     elements.storageSelectAllButton.disabled = !storage.mounted || entries.length === 0;
-    elements.storageSelectAllButton.querySelector("span").textContent = allVisibleSelected ? "Clear" : "All";
+    setButtonLabel(elements.storageSelectAllButton, allVisibleSelected ? "Clear" : "All");
   }
   if (elements.storageDeleteButton) {
     elements.storageDeleteButton.disabled = selectedPaths.length === 0;
-    elements.storageDeleteButton.querySelector("span").textContent = selectedPaths.length > 1 ? `Delete (${selectedPaths.length})` : "Delete";
+    setButtonLabel(elements.storageDeleteButton, selectedPaths.length > 1 ? `Delete (${selectedPaths.length})` : "Delete");
   }
   if (elements.storageUploadButton) {
     elements.storageUploadButton.disabled = !storage.mounted || state.storageUploadInProgress;
   }
   if (elements.storageNewFolderButton) {
     elements.storageNewFolderButton.disabled = !storage.mounted;
+  }
+}
+
+function updateStoragePreviewPlaybackControls() {
+  const audioEntries = activeStorageAudioEntries();
+  const queueIndex = currentStoragePreviewQueueIndex();
+  const deviceActive = Boolean(state.storagePreviewPlaybackMode.deviceActive);
+  const hasPreviewItem = Boolean(state.storagePreviewItem);
+
+  if (elements.storagePreviewPlayButton) {
+    elements.storagePreviewPlayButton.textContent = deviceActive ? "Stop" : "Play";
+    elements.storagePreviewPlayButton.classList.toggle("secondary", deviceActive);
+    elements.storagePreviewPlayButton.disabled = !hasPreviewItem;
+  }
+  if (elements.storagePreviewPrevButton) {
+    elements.storagePreviewPrevButton.disabled = audioEntries.length <= 1 || queueIndex < 0;
+  }
+  if (elements.storagePreviewNextButton) {
+    elements.storagePreviewNextButton.disabled = audioEntries.length <= 1 || queueIndex < 0;
+  }
+  if (elements.storagePreviewLoopButton) {
+    elements.storagePreviewLoopButton.setAttribute("aria-pressed", String(Boolean(state.storagePreviewPlaybackMode.loop)));
+  }
+  if (elements.storagePreviewShuffleButton) {
+    elements.storagePreviewShuffleButton.setAttribute("aria-pressed", String(Boolean(state.storagePreviewPlaybackMode.shuffle)));
   }
 }
 
@@ -2092,6 +2420,9 @@ function ensureStoragePreviewAudio() {
   audio.addEventListener("timeupdate", syncProgress);
   audio.addEventListener("ended", syncProgress);
   audio.addEventListener("pause", syncProgress);
+  audio.addEventListener("ended", () => {
+    advanceStoragePreviewTrack(1, { autoplayDevice: true, autoplayBrowser: true, respectModes: true }).catch(handleError);
+  });
   state.storagePreviewAudio = audio;
   return audio;
 }
@@ -2203,6 +2534,226 @@ function parseId3Metadata(arrayBuffer) {
   return metadata;
 }
 
+function filenameStem(value) {
+  return String(value || "")
+    .replace(/^.*[\\/]/, "")
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizedArtworkSearchTerm(value) {
+  return String(value || "")
+    .replace(/\.[^.]+$/, "")
+    .replace(/^\s*\d+\s*[\].\-_:)]*\s*/i, "")
+    .replace(/\bfeat\.?\b.*$/i, "")
+    .replace(/\bft\.?\b.*$/i, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function setStoragePreviewArtworkStatus(message) {
+  if (elements.storagePreviewArtworkStatus) {
+    elements.storagePreviewArtworkStatus.textContent = message || "";
+  }
+}
+
+function storageFilenameStem(value) {
+  return String(value || "")
+    .replace(/^.*[\\/]/, "")
+    .replace(/\.[^.]+$/, "");
+}
+
+function storageParentDirectoryPath(path) {
+  const normalized = normalizeStorageDirectoryPath(path);
+  if (normalized === "/") {
+    return "/";
+  }
+  const lastSlash = normalized.lastIndexOf("/");
+  return lastSlash <= 0 ? "/" : normalized.slice(0, lastSlash);
+}
+
+function artworkExtensionFromType(contentType = "") {
+  const normalized = String(contentType || "").toLowerCase();
+  if (normalized.includes("png")) {
+    return "png";
+  }
+  if (normalized.includes("webp")) {
+    return "webp";
+  }
+  if (normalized.includes("jpeg") || normalized.includes("jpg")) {
+    return "jpg";
+  }
+  return "jpg";
+}
+
+function localArtworkCandidatePaths(path) {
+  const directoryPath = storageParentDirectoryPath(path);
+  const stem = storageFilenameStem(path);
+  const extensions = ["jpg", "jpeg", "png", "webp"];
+  const candidates = [];
+
+  for (const extension of extensions) {
+    candidates.push(storageJoinPath(directoryPath, `${stem}.cover.${extension}`));
+  }
+  for (const basename of ["cover", "folder", "front", "album"]) {
+    for (const extension of extensions) {
+      candidates.push(storageJoinPath(directoryPath, `${basename}.${extension}`));
+    }
+  }
+
+  return candidates.filter(Boolean);
+}
+
+async function applyStoragePreviewArtworkSource(sourceUrl) {
+  if (!sourceUrl || !elements.storagePreviewArtwork) {
+    return false;
+  }
+
+  const image = elements.storagePreviewArtwork;
+  const loaded = await new Promise((resolve) => {
+    const cleanup = () => {
+      image.onload = null;
+      image.onerror = null;
+    };
+    image.onload = () => {
+      cleanup();
+      resolve(true);
+    };
+    image.onerror = () => {
+      cleanup();
+      resolve(false);
+    };
+    image.src = sourceUrl;
+    image.hidden = false;
+  });
+
+  if (loaded && elements.storagePreviewArtworkFallback) {
+    elements.storagePreviewArtworkFallback.hidden = true;
+  }
+  if (!loaded) {
+    image.hidden = true;
+    image.removeAttribute("src");
+    if (elements.storagePreviewArtworkFallback) {
+      elements.storagePreviewArtworkFallback.hidden = false;
+    }
+  }
+  return loaded;
+}
+
+async function fetchRemoteArtworkUrl({ title = "", artist = "", album = "", fileName = "" } = {}) {
+  const searchTerms = [
+    [artist, album].filter(Boolean).join(" "),
+    [artist, title].filter(Boolean).join(" "),
+    [album, title].filter(Boolean).join(" "),
+    title,
+    album,
+    normalizedArtworkSearchTerm(fileName),
+    filenameStem(fileName),
+  ].map((term) => normalizedArtworkSearchTerm(term)).filter(Boolean);
+
+  const uniqueTerms = [...new Set(searchTerms)];
+
+  for (const term of uniqueTerms) {
+    try {
+      const response = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&entity=song&limit=10`, {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        continue;
+      }
+      const payload = await response.json();
+      const results = Array.isArray(payload?.results) ? payload.results : [];
+      const artworkUrl = results
+        .map((item) => item?.artworkUrl100 || item?.artworkUrl60 || item?.artworkUrl30 || "")
+        .find(Boolean);
+      if (artworkUrl) {
+        return artworkUrl.replace(/\/[0-9]+x[0-9]+bb\./, "/600x600bb.");
+      }
+    } catch {
+    }
+  }
+
+  return "";
+}
+
+async function findLocalArtworkUrl(entry) {
+  if (!entry?.path) {
+    return "";
+  }
+
+  const availableEntries = activeStorageEntries()
+    .filter((candidate) => !candidate?.isDirectory)
+    .map((candidate) => String(candidate.path || ""));
+  for (const candidatePath of localArtworkCandidatePaths(entry.path)) {
+    if (availableEntries.includes(candidatePath)) {
+      return storageStreamUrl(candidatePath, state.activeStorageTarget);
+    }
+  }
+
+  const directoryPath = storageParentDirectoryPath(entry.path);
+  try {
+    const payload = await request(`/api/storage?target=${encodeURIComponent(state.activeStorageTarget)}&dir=${encodeURIComponent(directoryPath)}`);
+    const remoteEntries = Array.isArray(payload?.entries) ? payload.entries : [];
+    const remotePaths = new Set(remoteEntries.filter((candidate) => !candidate?.isDirectory).map((candidate) => String(candidate.path || "")));
+    for (const candidatePath of localArtworkCandidatePaths(entry.path)) {
+      if (remotePaths.has(candidatePath)) {
+        return storageStreamUrl(candidatePath, state.activeStorageTarget);
+      }
+    }
+  } catch {
+  }
+
+  return "";
+}
+
+async function uploadArtworkToStorage(entry, artworkBlob, contentType = "") {
+  if (!entry?.path || !(artworkBlob instanceof Blob) || artworkBlob.size <= 0) {
+    return "";
+  }
+
+  const directoryPath = storageParentDirectoryPath(entry.path);
+  const filename = `${storageFilenameStem(entry.path)}.cover.${artworkExtensionFromType(contentType || artworkBlob.type)}`;
+  const formData = new FormData();
+  formData.append("file", artworkBlob, filename);
+
+  const response = await fetch(`/api/storage/upload?target=${encodeURIComponent(state.activeStorageTarget)}&dir=${encodeURIComponent(directoryPath)}`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Artwork upload failed.");
+  }
+
+  try {
+    const payload = await response.json();
+    return String(payload?.path || storageJoinPath(directoryPath, filename));
+  } catch {
+    return storageJoinPath(directoryPath, filename);
+  }
+}
+
+async function cacheRemoteArtworkForEntry(entry, remoteArtworkUrl) {
+  if (!entry?.path || !remoteArtworkUrl) {
+    return "";
+  }
+
+  try {
+    const response = await fetch(remoteArtworkUrl, { cache: "no-store" });
+    if (!response.ok) {
+      return "";
+    }
+    const artworkBlob = await response.blob();
+    const cachedPath = await uploadArtworkToStorage(entry, artworkBlob, response.headers.get("content-type") || artworkBlob.type);
+    return cachedPath;
+  } catch {
+    return "";
+  }
+}
+
 function resetStoragePreviewUi() {
   if (elements.storagePreviewArtwork) {
     elements.storagePreviewArtwork.hidden = true;
@@ -2217,6 +2768,25 @@ function resetStoragePreviewUi() {
   if (elements.storagePreviewProgressLabel) {
     elements.storagePreviewProgressLabel.textContent = "00:00 / 00:00";
   }
+  setStoragePreviewArtworkStatus("Waiting for artwork lookup.");
+}
+
+
+function setStoragePreviewSummary({ title, artist, album, fileName, sizeBytes, path } = {}) {
+  const resolvedTitle = title || fileName || path || "Track Preview";
+  const resolvedArtist = artist || "Unknown artist";
+  const resolvedAlbum = album || "Unknown album";
+  const resolvedFileName = fileName || path || resolvedTitle;
+
+  if (elements.storagePreviewTitle) {
+    elements.storagePreviewTitle.textContent = resolvedTitle;
+  }
+  if (elements.storagePreviewMeta) {
+    elements.storagePreviewMeta.textContent = `${resolvedArtist} • ${resolvedAlbum} • ${formatBytes(sizeBytes || 0)}`;
+  }
+  if (elements.storagePreviewAlbum) {
+    elements.storagePreviewAlbum.textContent = `${resolvedTitle}\n${resolvedArtist}\n${resolvedAlbum || resolvedFileName}`;
+  }
 }
 
 function storageJoinPath(directoryPath, name) {
@@ -2226,6 +2796,10 @@ function storageJoinPath(directoryPath, name) {
   }
   const dir = normalizeStorageDirectoryPath(directoryPath);
   return dir === "/" ? `/${leaf}` : `${dir}/${leaf}`;
+}
+
+function storagePlaybackRef(path, target = state.activeStorageTarget) {
+  return `${resolveStorageTarget(target)}:${normalizeStorageDirectoryPath(path)}`;
 }
 
 function renderStorageBreadcrumbs(currentPath) {
@@ -2242,9 +2816,13 @@ function renderStorageBreadcrumbs(currentPath) {
     crumbs.push({ label: segment, path: runningPath });
   }
 
-  elements.storageBreadcrumbs.innerHTML = crumbs.map((crumb, index) => (
-    `<button type="button" class="storage-crumb" data-storage-nav="${escapeHtml(crumb.path)}">${escapeHtml(crumb.label)}</button>${index < crumbs.length - 1 ? '<span class="storage-crumb-sep">/</span>' : ''}`
-  )).join("");
+  elements.storageBreadcrumbs.innerHTML = `
+    <div class="storage-crumb-trail">
+      ${crumbs.map((crumb, index) => (
+        `<button type="button" class="storage-crumb storage-crumb-inline" data-storage-nav="${escapeHtml(crumb.path)}">${escapeHtml(crumb.label)}</button>${index < crumbs.length - 1 ? '<span class="storage-crumb-sep">/</span>' : ''}`
+      )).join("")}
+    </div>
+  `;
   elements.storageUpButton.disabled = normalized === "/";
 }
 
@@ -2349,9 +2927,13 @@ function closeStoragePreview() {
   const audio = ensureStoragePreviewAudio();
   audio.pause();
   audio.currentTime = 0;
+  state.storagePreviewPlaybackMode.deviceActive = false;
+  state.storagePreviewPlaybackMode.previousDeviceActive = false;
+  state.storagePreviewPlaybackMode.suppressAutoAdvance = false;
   releaseStoragePreviewUrls();
   state.storagePreviewItem = null;
   resetStoragePreviewUi();
+  updateStoragePreviewPlaybackControls();
   if (elements.storagePreviewMeta) {
     elements.storagePreviewMeta.textContent = "Select a track to preview it.";
   }
@@ -2371,11 +2953,12 @@ async function playStoragePreviewOnDevice() {
 
   const audio = ensureStoragePreviewAudio();
   const payload = {
-    url: `${window.location.origin}${storageStreamUrl(entry.path, state.activeStorageTarget, false)}`,
+    url: storagePlaybackRef(entry.path, state.activeStorageTarget),
     label: normalizePlaybackTitle(entry.name || entry.path, entry.path),
     type: "media",
   };
 
+  state.storagePreviewPlaybackMode.suppressAutoAdvance = false;
   await request("/api/play", { method: "POST", body: JSON.stringify(payload) });
   state.recentPlayback.unshift(payload);
   state.recentPlayback = state.recentPlayback.filter((item, index, array) => index === array.findIndex((candidate) => candidate.url === item.url && candidate.type === item.type));
@@ -2390,6 +2973,8 @@ async function playStoragePreviewOnDevice() {
   } catch {
   }
 
+  state.storagePreviewPlaybackMode.deviceActive = true;
+  updateStoragePreviewPlaybackControls();
   setMessage(`Playing ${payload.label}`);
   setStorageStatus(`Playing ${payload.label}`);
   await loadStatus();
@@ -2399,9 +2984,212 @@ async function stopStoragePreviewPlayback() {
   const audio = ensureStoragePreviewAudio();
   audio.pause();
   audio.currentTime = 0;
+  state.storagePreviewPlaybackMode.suppressAutoAdvance = true;
   await request("/api/stop", { method: "POST", body: JSON.stringify({}) });
+  state.storagePreviewPlaybackMode.deviceActive = false;
+  updateStoragePreviewPlaybackControls();
   await loadStatus();
   setStorageStatus("Playback stopped");
+}
+
+async function toggleStoragePreviewPlayback() {
+  if (state.storagePreviewPlaybackMode.deviceActive) {
+    await stopStoragePreviewPlayback();
+    return;
+  }
+  await playStoragePreviewOnDevice();
+}
+
+async function activateStoragePreviewEntry(entry, { autoplayDevice = false, autoplayBrowser = false } = {}) {
+  await openStoragePreview(entry);
+  if (autoplayBrowser) {
+    const audio = ensureStoragePreviewAudio();
+    try {
+      await audio.play();
+    } catch {
+    }
+  }
+  if (autoplayDevice) {
+    await playStoragePreviewOnDevice();
+  } else {
+    state.storagePreviewPlaybackMode.deviceActive = false;
+    updateStoragePreviewPlaybackControls();
+  }
+}
+
+async function hydrateStoragePreviewMetadataAndArtwork(entry, requestId) {
+  if (!entry || requestId !== state.storagePreviewRequestId) {
+    return;
+  }
+
+  let title = entry.name || entry.path || "Track Preview";
+  let artist = "Unknown artist";
+  let album = "Unknown album";
+  let artworkApplied = false;
+  const extension = storageFileExtension(entry.path);
+  const canScanEmbedded = extension === "mp3" && Number(entry.sizeBytes || 0) > 0 &&
+    Number(entry.sizeBytes || 0) <= STORAGE_PREVIEW_EMBEDDED_SCAN_MAX_BYTES;
+
+  if (canScanEmbedded) {
+    setStoragePreviewArtworkStatus("Checking embedded artwork...");
+    try {
+      const response = await fetch(storageStreamUrl(entry.path, state.activeStorageTarget), { cache: "no-store" });
+      const blob = await response.blob();
+      if (requestId !== state.storagePreviewRequestId) {
+        return;
+      }
+
+      const metadata = parseId3Metadata(await blob.arrayBuffer());
+      if (requestId !== state.storagePreviewRequestId) {
+        return;
+      }
+
+      title = metadata.title || title;
+      artist = metadata.artist || artist;
+      album = metadata.album || album;
+      setStoragePreviewSummary({
+        title,
+        artist,
+        album,
+        fileName: entry.name,
+        sizeBytes: entry.sizeBytes || blob.size,
+        path: entry.path,
+      });
+
+      if (metadata.artworkBytes?.length) {
+        const artworkType = String(metadata.artworkType || "image/jpeg").startsWith("image/")
+          ? metadata.artworkType
+          : "image/jpeg";
+        state.storagePreviewArtworkUrl = URL.createObjectURL(new Blob([metadata.artworkBytes], { type: artworkType }));
+        artworkApplied = await applyStoragePreviewArtworkSource(state.storagePreviewArtworkUrl);
+        if (artworkApplied) {
+          setStoragePreviewArtworkStatus("Loaded embedded artwork from file.");
+        }
+      }
+    } catch (error) {
+      console.warn("Embedded artwork scan failed", error);
+    }
+  }
+
+  if (requestId !== state.storagePreviewRequestId) {
+    return;
+  }
+
+  if (!artworkApplied) {
+    setStoragePreviewArtworkStatus(canScanEmbedded
+      ? "Checking cached artwork in this folder..."
+      : "Skipping heavy embedded scan. Checking cached artwork in this folder...");
+    const localArtworkUrl = await findLocalArtworkUrl(entry);
+    if (requestId !== state.storagePreviewRequestId) {
+      return;
+    }
+    if (localArtworkUrl) {
+      artworkApplied = await applyStoragePreviewArtworkSource(localArtworkUrl);
+      if (artworkApplied) {
+        setStoragePreviewArtworkStatus("Loaded cached artwork from storage.");
+      }
+    }
+  }
+
+  if (requestId !== state.storagePreviewRequestId) {
+    return;
+  }
+
+  if (!artworkApplied && navigator.onLine !== false) {
+    setStoragePreviewArtworkStatus("Searching online artwork...");
+    const remoteArtworkUrl = await fetchRemoteArtworkUrl({
+      title,
+      artist: artist === "Unknown artist" ? "" : artist,
+      album: album === "Unknown album" ? "" : album,
+      fileName: entry.name || entry.path,
+    });
+    if (requestId !== state.storagePreviewRequestId) {
+      return;
+    }
+    if (remoteArtworkUrl) {
+      artworkApplied = await applyStoragePreviewArtworkSource(remoteArtworkUrl);
+      if (artworkApplied) {
+        setStoragePreviewArtworkStatus("Loaded online artwork. Saving cache for offline use...");
+        const cachedPath = await cacheRemoteArtworkForEntry(entry, remoteArtworkUrl);
+        if (requestId !== state.storagePreviewRequestId) {
+          return;
+        }
+        setStoragePreviewArtworkStatus(cachedPath
+          ? "Loaded online artwork and cached it for offline use."
+          : "Loaded online artwork.");
+        if (cachedPath && storageParentPath(cachedPath) === normalizeStorageDirectoryPath(state.currentStoragePathByTarget[state.activeStorageTarget] || "/")) {
+          injectVisibleStorageEntry(state.activeStorageTarget, {
+            path: cachedPath,
+            name: storageBaseName(cachedPath),
+            isDirectory: false,
+            sizeBytes: 0,
+            url: storageStreamUrl(cachedPath, state.activeStorageTarget),
+          });
+        }
+      }
+    }
+  }
+
+  if (requestId !== state.storagePreviewRequestId) {
+    return;
+  }
+
+  if (!artworkApplied) {
+    setStoragePreviewArtworkStatus(navigator.onLine === false
+      ? "No embedded or cached artwork found. Device is offline."
+      : "No artwork found in file, folder cache, or online search.");
+  }
+
+  setStoragePreviewSummary({
+    title,
+    artist,
+    album,
+    fileName: entry.name,
+    sizeBytes: entry.sizeBytes,
+    path: entry.path,
+  });
+}
+
+async function advanceStoragePreviewTrack(delta, options = {}) {
+  const { autoplayDevice = false, autoplayBrowser = false, respectModes = false } = options;
+  const entries = activeStorageAudioEntries();
+  if (!entries.length) {
+    return;
+  }
+
+  const currentIndex = currentStoragePreviewQueueIndex();
+  if (currentIndex < 0) {
+    await activateStoragePreviewEntry(entries[0], { autoplayDevice, autoplayBrowser });
+    return;
+  }
+
+  let nextIndex = currentIndex;
+  if (respectModes && state.storagePreviewPlaybackMode.shuffle && entries.length > 1) {
+    do {
+      nextIndex = Math.floor(Math.random() * entries.length);
+    } while (nextIndex === currentIndex);
+  } else {
+    nextIndex = currentIndex + delta;
+    if (nextIndex < 0 || nextIndex >= entries.length) {
+      if (!state.storagePreviewPlaybackMode.loop && !respectModes) {
+        nextIndex = Math.max(0, Math.min(entries.length - 1, nextIndex));
+      } else if (!state.storagePreviewPlaybackMode.loop && respectModes) {
+        state.storagePreviewPlaybackMode.deviceActive = false;
+        updateStoragePreviewPlaybackControls();
+        return;
+      } else {
+        nextIndex = nextIndex < 0 ? entries.length - 1 : 0;
+      }
+    }
+  }
+
+  if (nextIndex === currentIndex && entries.length === 1 && !state.storagePreviewPlaybackMode.loop && respectModes) {
+    state.storagePreviewPlaybackMode.deviceActive = false;
+    updateStoragePreviewPlaybackControls();
+    return;
+  }
+
+  await activateStoragePreviewEntry(entries[nextIndex], { autoplayDevice, autoplayBrowser });
 }
 
 async function openStoragePreview(entry) {
@@ -2422,53 +3210,24 @@ async function openStoragePreview(entry) {
     elements.storagePreviewMeta.textContent = `${formatBytes(entry.sizeBytes || 0)} • ${storageBadgeLabel(entry)} • ${entry.path}`;
   }
   if (elements.storagePreviewAlbum) {
-    elements.storagePreviewAlbum.textContent = "Reading metadata and album art...";
+    elements.storagePreviewAlbum.textContent = `${entry.name || entry.path}\nUnknown artist\nUnknown album`;
   }
+  setStoragePreviewArtworkStatus("Playback can start immediately. Artwork is loading in the background.");
   elements.storagePreviewModal?.showModal();
 
-  const response = await fetch(storageStreamUrl(entry.path, state.activeStorageTarget), { cache: "no-store" });
-  const blob = await response.blob();
-  if (requestId !== state.storagePreviewRequestId) {
-    return;
-  }
-
-  state.storagePreviewObjectUrl = URL.createObjectURL(blob);
   const audio = ensureStoragePreviewAudio();
   audio.pause();
   audio.currentTime = 0;
-  audio.src = state.storagePreviewObjectUrl;
+  audio.src = storageStreamUrl(entry.path, state.activeStorageTarget);
   audio.load();
 
-  let albumSummary = `File: ${entry.name || entry.path}`;
-  if (blob.type.includes("mpeg") || storageFileExtension(entry.path) === "mp3") {
-    const metadata = parseId3Metadata(await blob.arrayBuffer());
-    const title = metadata.title || entry.name || entry.path;
-    const artist = metadata.artist || "Unknown artist";
-    const album = metadata.album || "Unknown album";
-    albumSummary = `${title}\n${artist}\n${album}`;
-
-    if (metadata.artworkBytes?.length) {
-      state.storagePreviewArtworkUrl = URL.createObjectURL(new Blob([metadata.artworkBytes], { type: metadata.artworkType || "image/jpeg" }));
-      if (elements.storagePreviewArtwork) {
-        elements.storagePreviewArtwork.src = state.storagePreviewArtworkUrl;
-        elements.storagePreviewArtwork.hidden = false;
-      }
-      if (elements.storagePreviewArtworkFallback) {
-        elements.storagePreviewArtworkFallback.hidden = true;
-      }
+  updateStoragePreviewPlaybackControls();
+  hydrateStoragePreviewMetadataAndArtwork(entry, requestId).catch((error) => {
+    if (requestId === state.storagePreviewRequestId) {
+      console.warn("Preview metadata/artwork load failed", error);
+      setStoragePreviewArtworkStatus("Artwork lookup failed.");
     }
-
-    if (elements.storagePreviewTitle) {
-      elements.storagePreviewTitle.textContent = title;
-    }
-    if (elements.storagePreviewMeta) {
-      elements.storagePreviewMeta.textContent = `${artist} • ${album} • ${formatBytes(entry.sizeBytes || blob.size || 0)}`;
-    }
-  }
-
-  if (elements.storagePreviewAlbum) {
-    elements.storagePreviewAlbum.textContent = albumSummary;
-  }
+  });
 }
 
 function renderStorageManager(payload) {
@@ -2476,31 +3235,48 @@ function renderStorageManager(payload) {
   const label = storageTargetLabel(target);
   const storage = payload?.storage || state.storageInfoByTarget[target] || {};
   const currentPath = normalizeStorageDirectoryPath(payload?.currentPath || state.currentStoragePathByTarget[target] || "/");
-  const entries = Array.isArray(payload?.entries) ? payload.entries : (Array.isArray(payload?.files) ? payload.files : []);
+  const incomingEntries = Array.isArray(payload?.entries) ? payload.entries : (Array.isArray(payload?.files) ? payload.files : []);
+  const appendEntries = Boolean(payload?.append) && currentPath === state.currentStoragePathByTarget[target];
+  const entries = appendEntries ? mergeStorageEntries(activeStorageEntries(target), incomingEntries) : incomingEntries;
+  const meta = {
+    offset: Number(payload?.offset || 0),
+    returned: Number(payload?.returned || incomingEntries.length || 0),
+    nextOffset: Number(payload?.nextOffset || entries.length || 0),
+    hasMore: Boolean(payload?.hasMore),
+    totalEntries: Number(payload?.totalEntries || activeStorageMeta(target).totalEntries || entries.length || 0),
+    loadingMore: Boolean(payload?.loadingMore),
+    requestId: Number(payload?.requestId || activeStorageMeta(target).requestId || 0),
+  };
   state.activeStorageTarget = target;
   state.storageInfoByTarget[target] = storage;
   state.currentStorageEntriesByTarget[target] = entries;
   state.currentStoragePathByTarget[target] = currentPath;
+  setStorageMeta(meta, target);
 
   if (elements.storageTitle) {
     elements.storageTitle.textContent = `${label} File Manager`;
   }
-  if (elements.storageSdConfig) {
-    elements.storageSdConfig.hidden = target !== "sd";
-  }
   renderStorageBreadcrumbs(currentPath);
 
   if (elements.storageSummary) {
+    const loadedCount = entries.length;
+    const progressSummary = formatLoadProgress(loadedCount, meta.totalEntries || loadedCount);
+    const progressLabel = meta.loadingMore || meta.hasMore
+      ? ` • showing ${progressSummary}${meta.loadingMore ? ", loading more..." : ""}`
+      : "";
+    const cardLabel = target === "sd" && Number(storage.cardSizeBytes || 0) > 0
+      ? ` • card ${formatBytes(storage.cardSizeBytes || 0)}`
+      : "";
     elements.storageSummary.textContent = storage.mounted
-      ? `${formatBytes(storage.usedBytes || 0)} used of ${formatBytes(storage.totalBytes || 0)} • ${formatBytes(storage.freeBytes || 0)} free • ${currentPath}`
+      ? `${formatBytes(storage.usedBytes || 0)} used of ${formatBytes(storage.totalBytes || 0)} filesystem • ${formatBytes(storage.freeBytes || 0)} free${cardLabel} • ${currentPath}${progressLabel}`
       : (target === "sd"
-        ? (state.settings?.sd?.enabled ? "SD card is not mounted." : "SD card support is disabled.")
+        ? "SD card is not mounted or not wired."
         : "Flash filesystem is not mounted.");
   }
   if (elements.storageLimit) {
     elements.storageLimit.textContent = storage.mounted
       ? `Max upload: ${formatBytes(storage.maxUploadBytes || 0)}`
-      : (target === "sd" && !state.settings?.sd?.enabled ? "Enable SD card storage to mount it" : "Uploads unavailable");
+      : "Uploads unavailable";
   }
   if (elements.storageUploadButton) {
     elements.storageUploadButton.disabled = !storage.mounted || state.storageUploadInProgress;
@@ -2520,21 +3296,192 @@ function renderStorageManager(payload) {
   if (!entries.length) {
     clearStorageSelection(target);
     updateStorageToolbar(storage);
-    elements.storageFileList.innerHTML = `<div class="storage-empty-note">This folder is empty.</div>`;
+    elements.storageFileList.innerHTML = `<div class="storage-empty-note">${meta.loadingMore ? "Loading files..." : "This folder is empty."}</div>`;
     return;
   }
 
   const visiblePaths = entries.map((entry) => entry.path).filter(Boolean);
   setStorageSelection(activeStorageSelection(target).filter((path) => visiblePaths.includes(path)), target);
   const selectedPaths = activeStorageSelection(target);
-  elements.storageFileList.innerHTML = entries.map((entry) => renderStorageRow(entry, state.storageSelectionMode, selectedPaths)).join("");
+  const loadingRow = meta.loadingMore
+    ? '<div class="storage-empty-note">Loading more files...</div>'
+    : "";
+  elements.storageFileList.innerHTML = `${entries.map((entry) => renderStorageRow(entry, state.storageSelectionMode, selectedPaths)).join("")}${loadingRow}`;
   updateStorageToolbar(storage);
 }
 
-async function refreshStorageManager(target = state.activeStorageTarget, directoryPath = state.currentStoragePathByTarget[target] || "/") {
-  const payload = await request(`/api/storage?target=${encodeURIComponent(target)}&dir=${encodeURIComponent(normalizeStorageDirectoryPath(directoryPath))}`);
-  renderStorageManager(payload);
+async function loadMoreStorageEntries(target = state.activeStorageTarget) {
+  const meta = activeStorageMeta(target);
+  if (meta.loadingMore || !meta.hasMore) {
+    return;
+  }
+  if (target === "sd" && shouldDeferSdReads()) {
+    state.deferredStorageReload = true;
+    setStorageStatus("Playback is active, so loading more SD files is paused to avoid audio interruptions.");
+    return;
+  }
+
+  const requestId = Number(meta.requestId || state.storageListRequestId || 0);
+  const directoryPath = state.currentStoragePathByTarget[target] || "/";
+  setStorageMeta({ loadingMore: true }, target);
+  rerenderStorageManager(target);
+  const currentEntries = activeStorageEntries(target).length;
+  const currentTotal = Number(meta.totalEntries || 0);
+  setStorageStatus(`Loading files... ${formatLoadProgress(currentEntries, currentTotal)}`);
+  try {
+    const payload = await request(`/api/storage?target=${encodeURIComponent(target)}&dir=${encodeURIComponent(normalizeStorageDirectoryPath(directoryPath))}&offset=${encodeURIComponent(Number(meta.nextOffset || 0))}&limit=${encodeURIComponent(STORAGE_SCROLL_PAGE_SIZE)}`);
+    if (requestId !== state.storageListRequestId) {
+      return;
+    }
+
+    renderStorageManager({ ...payload, append: true, loadingMore: false, requestId });
+    const loadedEntries = activeStorageEntries(target).length;
+    const totalEntries = Number(payload?.totalEntries || activeStorageMeta(target).totalEntries || loadedEntries);
+    if (!payload?.hasMore) {
+      setStorageStatus("Ready");
+    } else {
+      setStorageStatus(`Loading files... ${formatLoadProgress(loadedEntries, totalEntries)}`);
+    }
+  } catch (error) {
+    if (requestId === state.storageListRequestId) {
+      setStorageMeta({ loadingMore: false }, target);
+      rerenderStorageManager(target);
+      setStorageStatus(`Unable to load more files: ${error.message}`, true);
+    }
+    throw error;
+  }
+}
+
+async function refreshStorageManager(target = state.activeStorageTarget, directoryPath = state.currentStoragePathByTarget[target] || "/", options = {}) {
+  const resolvedTarget = resolveStorageTarget(target);
+  const normalizedDirectoryPath = normalizeStorageDirectoryPath(directoryPath);
+  const requestId = state.storageListRequestId + 1;
+  state.storageListRequestId = requestId;
+  setStorageMeta({ loadingMore: false, requestId, hasMore: false, nextOffset: 0 }, resolvedTarget);
+  const payload = await request(`/api/storage?${storageQueryParams({
+    target: resolvedTarget,
+    dir: normalizedDirectoryPath,
+    offset: 0,
+    limit: STORAGE_INITIAL_PAGE_SIZE,
+    live: Boolean(options.live),
+    reindex: Boolean(options.reindex),
+  })}`);
+  if (requestId !== state.storageListRequestId) {
+    return payload;
+  }
+
+  renderStorageManager({ ...payload, append: false, loadingMore: false, requestId });
+  if (payload?.hasMore) {
+    setStorageStatus(`Loading files... ${formatLoadProgress(activeStorageEntries(resolvedTarget).length, Number(payload?.totalEntries || 0))}`);
+  } else {
+    setStorageMeta({ loadingMore: false, requestId }, resolvedTarget);
+    rerenderStorageManager(resolvedTarget);
+    setStorageStatus(`Ready • ${formatLoadProgress(activeStorageEntries(resolvedTarget).length, Number(payload?.totalEntries || activeStorageEntries(resolvedTarget).length))}`);
+  }
+  queueMicrotask(() => ensureStorageListFilled(resolvedTarget).catch((error) => console.error(error)));
   return payload;
+}
+
+function maybeRefreshVisibleStorageTab(force = false) {
+  if (activeTabName() !== "storage-external") {
+    return;
+  }
+  const storage = state.storageInfoByTarget.sd || {};
+  const entries = activeStorageEntries("sd");
+  const meta = activeStorageMeta("sd");
+  const needsRefresh = force
+    || (!state.storageInitialLoadRequested && !meta.loadingMore)
+    || (!entries.length && !storage.mounted && !meta.loadingMore);
+  if (!needsRefresh) {
+    return;
+  }
+  refreshExternalStorageTab(state.currentStoragePathByTarget.sd || "/").catch(handleError);
+}
+
+async function reindexEffectsFiles() {
+  if (state.effectReindexInProgress) {
+    const message = "Effect-file reindex is already in progress.";
+    if (elements.effectsFileStatus) {
+      elements.effectsFileStatus.textContent = message;
+    }
+    toast(message);
+    return;
+  }
+  state.effectReindexInProgress = true;
+  if (elements.effectsReindexButton) {
+    elements.effectsReindexButton.disabled = true;
+  }
+  clearEffectFileOptionsCache();
+  try {
+    if (elements.effectsFileStatus) {
+      elements.effectsFileStatus.textContent = "Starting effect-file reindex...";
+    }
+    const source = EFFECT_FILE_SOURCES.find((entry) => entry.target === "sd") || EFFECT_FILE_SOURCES[0];
+    await rebuildStorageIndexFromBrowser(source.target, source.dir, (progress) => {
+      if (elements.effectsFileStatus) {
+        elements.effectsFileStatus.textContent = formatBrowserReindexStatus(progress, "Reindexing effect files...");
+      }
+    });
+    if (elements.effectsFileStatus) {
+      elements.effectsFileStatus.textContent = "Reindex complete. Reloading effect files...";
+    }
+    await loadEffectFileOptions();
+  } finally {
+    state.effectReindexInProgress = false;
+    if (elements.effectsReindexButton) {
+      elements.effectsReindexButton.disabled = false;
+    }
+  }
+}
+
+async function reindexStorageDirectory(target = state.activeStorageTarget, directoryPath = state.currentStoragePathByTarget[target] || "/") {
+  const resolvedTarget = resolveStorageTarget(target);
+  if (state.storageReindexInProgressByTarget[resolvedTarget]) {
+    const message = "Storage reindex is already in progress.";
+    setStorageStatus(message);
+    toast(message);
+    return;
+  }
+  state.storageReindexInProgressByTarget[resolvedTarget] = true;
+  if (elements.storageReindexButton) {
+    elements.storageReindexButton.disabled = true;
+  }
+  try {
+    setStorageStatus("Starting reindex...");
+    await rebuildStorageIndexFromBrowser(resolvedTarget, directoryPath, (progress) => {
+      setStorageStatus(formatBrowserReindexStatus(progress, "Reindexing files..."));
+    });
+    setStorageStatus("Reindex complete. Reloading...");
+    if (resolvedTarget === "sd") {
+      await refreshExternalStorageTab(directoryPath);
+    } else {
+      await refreshStorageManager(resolvedTarget, directoryPath);
+    }
+  } finally {
+    state.storageReindexInProgressByTarget[resolvedTarget] = false;
+    if (elements.storageReindexButton) {
+      elements.storageReindexButton.disabled = false;
+    }
+  }
+}
+
+async function ensureStorageListFilled(target = state.activeStorageTarget) {
+  if (!elements.storageFileList) {
+    return;
+  }
+  let attempts = 0;
+  while (attempts < 6) {
+    const meta = activeStorageMeta(target);
+    if (!meta?.hasMore || meta.loadingMore) {
+      return;
+    }
+    if (elements.storageFileList.scrollHeight > elements.storageFileList.clientHeight + 12) {
+      return;
+    }
+    attempts += 1;
+    await loadMoreStorageEntries(target);
+    await delay(30);
+  }
 }
 
 async function openStorageManager(target = "flash", directoryPath = state.currentStoragePathByTarget[target] || "/") {
@@ -2633,7 +3580,21 @@ async function uploadStorageFile() {
     xhr.send(formData);
   }).then(async (payload) => {
     renderStorageManager(payload);
+    injectVisibleStorageEntry(state.activeStorageTarget, {
+      path: payload.path,
+      name: storageBaseName(payload.path || file.name),
+      isDirectory: false,
+      sizeBytes: file.size,
+      url: `/api/storage/file?target=${encodeURIComponent(state.activeStorageTarget)}&path=${encodeURIComponent(payload.path || "")}`,
+    });
     await loadStatus();
+    if (state.activeStorageTarget === "sd" && normalizeStorageDirectoryPath(storageParentPath(payload.path || "")) === "/media/wav") {
+      mergeEffectFileOptions([{
+        value: `sd:${payload.path}`,
+        label: `SD: ${storageBaseName(payload.path || file.name)}`,
+      }]);
+      renderEffectFileOptions(state.settings);
+    }
     setStorageStatus(payload.message || `Uploaded ${file.name}`);
     toast(payload.message || `Uploaded ${file.name}`);
   }).catch(async (error) => {
@@ -3397,7 +4358,7 @@ function renderHardwareSummary(status) {
   const sdLabel = !sd.enabled
     ? "Disabled"
     : sdSystem.mounted && Number(sdSystem.totalBytes || 0) > 0
-      ? `${formatBytes(sdSystem.freeBytes || 0)} free • GPIO${sd.csPin}/${sd.sckPin}/${sd.mosiPin}/${sd.misoPin}`
+      ? `${formatBytes(sdSystem.freeBytes || 0)} free of ${formatBytes(sdSystem.totalBytes || 0)} fs • ${Number(sdSystem.cardSizeBytes || 0) > 0 ? formatBytes(sdSystem.cardSizeBytes || 0) : "card size unknown"} card • GPIO${sd.csPin}/${sd.sckPin}/${sd.mosiPin}/${sd.misoPin}`
       : `Configured • GPIO${sd.csPin}/${sd.sckPin}/${sd.mosiPin}/${sd.misoPin}`;
 
   if (elements.deviceHardwareBoard) {
@@ -3429,7 +4390,7 @@ function renderDeviceResources(status) {
   const psram = system.psram || {};
   const spiffs = system.spiffs || {};
   const sd = system.sd || {};
-  const sdEnabled = Boolean(state.settings?.sd?.enabled);
+  const sdEnabled = true;
   const systemReady = Boolean(system.cpuLoadPercent || system.freeHeap || sram.totalBytes || psram.totalBytes || spiffs.totalBytes || sd.totalBytes || sdEnabled);
 
   if (!systemReady) {
@@ -3544,13 +4505,14 @@ function renderDeviceResources(status) {
 
   if (sd.available && Number(sd.totalBytes || 0) > 0 && sd.mounted) {
     const sdUsedPercent = (Number(sd.usedBytes || 0) * 100) / Number(sd.totalBytes || 0);
+    const cardLabel = Number(sd.cardSizeBytes || 0) > 0 ? ` • card ${formatBytes(sd.cardSizeBytes || 0)}` : "";
     updateResourceCard(
       elements.deviceSdValue,
       elements.deviceSdBar,
       elements.deviceSdMeta,
       formatBytes(sd.freeBytes || 0),
       sdUsedPercent,
-      `${formatBytes(sd.usedBytes || 0)} used of ${formatBytes(sd.totalBytes || 0)}`
+      `${formatBytes(sd.usedBytes || 0)} used of ${formatBytes(sd.totalBytes || 0)} filesystem${cardLabel}`
     );
   } else if (sdEnabled) {
     const configuredPins = [state.settings?.sd?.csPin, state.settings?.sd?.sckPin, state.settings?.sd?.mosiPin, state.settings?.sd?.misoPin]
@@ -3571,7 +4533,7 @@ function renderDeviceResources(status) {
       elements.deviceSdMeta,
       "Disabled",
       0,
-      "SD card support is disabled. Use External Storage tab to configure pins and enable it."
+      "SD card is not mounted or not wired."
     );
   }
 }
@@ -3589,8 +4551,501 @@ async function request(path, options = {}) {
   return contentType.includes("application/json") ? response.json() : response.text();
 }
 
+function formatReindexProgress(reindex) {
+  const processed = Number(reindex?.processedEntries || 0);
+  const total = Number(reindex?.totalEntries || 0);
+  const stage = String(reindex?.stage || "working");
+  return `${stage} ${formatLoadProgress(processed, total)}`;
+}
+
+async function fetchStorageEntryCount(target, directoryPath) {
+  const payload = await request(`/api/storage/count?target=${encodeURIComponent(target)}&dir=${encodeURIComponent(normalizeStorageDirectoryPath(directoryPath))}`);
+  return Number(payload?.totalEntries || 0);
+}
+
+async function uploadGeneratedStorageIndex(target, directoryPath, contents, onProgress) {
+  await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/storage/upload?target=${encodeURIComponent(target)}&dir=${encodeURIComponent(normalizeStorageDirectoryPath(directoryPath))}`);
+    xhr.upload.addEventListener("progress", (event) => {
+      if (!event.lengthComputable) {
+        return;
+      }
+      onProgress?.(Math.max(0, Math.min(100, Math.round((event.loaded * 100) / event.total))));
+    });
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(xhr.responseText || xhr.statusText || "Index upload failed."));
+      }
+    });
+    xhr.addEventListener("error", () => reject(new Error("Index upload failed.")));
+
+    const formData = new FormData();
+    formData.append("file", new Blob([contents], { type: "text/plain" }), ".index");
+    xhr.send(formData);
+  });
+}
+
+async function rebuildStorageIndexFromBrowser(target, directoryPath, onProgress) {
+  const normalizedDirectoryPath = normalizeStorageDirectoryPath(directoryPath);
+  const totalEntries = Math.max(0, await fetchStorageEntryCount(target, normalizedDirectoryPath));
+  const pageSize = 10;
+  let offset = 0;
+  let processedEntries = 0;
+  let hasMore = true;
+  const lines = [];
+
+  onProgress?.({ stage: "counting", processedEntries: 0, totalEntries });
+  while (hasMore) {
+    const payload = await request(`/api/storage?${storageQueryParams({
+      target,
+      dir: normalizedDirectoryPath,
+      offset,
+      limit: pageSize,
+      live: true,
+      reindex: false,
+    })}`);
+    for (const entry of payload?.entries || []) {
+      const name = String(entry?.name || "");
+      if (!name || name === ".index" || name === ".index.tmp") {
+        continue;
+      }
+      lines.push(entry.isDirectory ? `${name}/` : name);
+      processedEntries += 1;
+      onProgress?.({ stage: "counting", processedEntries, totalEntries: Math.max(totalEntries, processedEntries) });
+    }
+    offset = Number(payload?.nextOffset || offset + (payload?.entries?.length || 0));
+    hasMore = Boolean(payload?.hasMore);
+  }
+
+  onProgress?.({ stage: "writing", processedEntries: Math.max(totalEntries, processedEntries), totalEntries: Math.max(totalEntries, processedEntries) });
+  await uploadGeneratedStorageIndex(target, normalizedDirectoryPath, `${lines.join("\n")}\n`, (percent) => {
+    onProgress?.({
+      stage: "writing",
+      processedEntries: Math.max(totalEntries, processedEntries),
+      totalEntries: Math.max(totalEntries, processedEntries),
+      uploadPercent: percent,
+    });
+  });
+  onProgress?.({ stage: "complete", processedEntries: Math.max(totalEntries, processedEntries), totalEntries: Math.max(totalEntries, processedEntries), uploadPercent: 100 });
+  return { totalEntries: Math.max(totalEntries, processedEntries) };
+}
+
+function formatBrowserReindexStatus(progress, labelPrefix) {
+  const stage = String(progress?.stage || "counting");
+  if (stage === "writing") {
+    return `${labelPrefix} writing index... ${Math.max(0, Math.min(100, Math.round(Number(progress?.uploadPercent || 0))))}%`;
+  }
+  if (stage === "complete") {
+    return `${labelPrefix} 100%`;
+  }
+  return `${labelPrefix} ${formatLoadProgress(Number(progress?.processedEntries || 0), Number(progress?.totalEntries || 0))}`;
+}
+
+function shouldDeferSdReads() {
+  return isPlaybackActive(state.status);
+}
+
+function mergeEffectFileOptions(options) {
+  const byValue = new Map();
+  for (const option of state.effectFileOptions || []) {
+    byValue.set(option.value, option);
+  }
+  for (const option of options || []) {
+    byValue.set(option.value, option);
+  }
+  state.effectFileOptions = sortEffectFileOptions([...byValue.values()]);
+}
+
+function injectVisibleStorageEntry(target, entry) {
+  if (!entry?.path) {
+    return;
+  }
+  const entries = activeStorageEntries(target);
+  if (entries.some((item) => item.path === entry.path)) {
+    setStorageSelection([entry.path], target);
+    rerenderStorageManager(target);
+    elements.storageFileList?.scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
+  state.currentStorageEntriesByTarget[target] = [entry, ...entries];
+  setStorageSelection([entry.path], target);
+  rerenderStorageManager(target);
+  elements.storageFileList?.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function showUpdateAvailablePopup(status) {
+  const latestVersion = String(status?.ota?.latestVersion || "");
+  if (!latestVersion || state.updatePopupShownVersion === latestVersion) {
+    return;
+  }
+  state.updatePopupShownVersion = latestVersion;
+  const autoUpdateEnabled = Boolean(state.settings?.ota?.autoUpdate);
+  if (elements.updateAvailableBody) {
+    elements.updateAvailableBody.textContent = autoUpdateEnabled
+      ? `A newer firmware ${latestVersion} is available. Auto-update is enabled, so the device will start installing it after the update-available sound finishes.`
+      : `A newer firmware ${latestVersion} is available. Auto-update is disabled, so the device is waiting for a manual install.`;
+  }
+  if (elements.updateAvailableDialog?.showModal) {
+    elements.updateAvailableDialog.showModal();
+  }
+}
+
+function closeUpdateAvailablePopup() {
+  if (elements.updateAvailableDialog?.open) {
+    elements.updateAvailableDialog.close();
+  }
+}
+
+function effectSelectElements() {
+  return EFFECT_SELECT_CONFIG
+    .map((item) => ({ ...item, element: elements[item.id] }))
+    .filter((item) => item.element);
+}
+
+function isSupportedAudioFilename(name) {
+  return STORAGE_AUDIO_EXTENSIONS.has(storageFileExtension(name));
+}
+
+function effectFileLabelFromEntry(source, entry) {
+  return `${source.prefix}: ${entry.name}`;
+}
+
+function storageQueryParams({ target, dir, offset = 0, limit = 20, live = false, reindex = false }) {
+  const params = new URLSearchParams();
+  params.set("target", target);
+  params.set("dir", dir);
+  params.set("offset", String(offset));
+  params.set("limit", String(limit));
+  if (live) {
+    params.set("live", "1");
+  }
+  if (reindex) {
+    params.set("reindex", "1");
+  }
+  return params.toString();
+}
+
+function effectFileLabelFromValue(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return "None";
+  }
+  const separatorIndex = normalized.indexOf(":");
+  if (separatorIndex <= 0) {
+    return normalized;
+  }
+  const target = normalized.slice(0, separatorIndex).toLowerCase();
+  const path = normalized.slice(separatorIndex + 1);
+  const prefix = target === "sd" ? "SD" : (target === "flash" ? "Flash" : target.toUpperCase());
+  return `${prefix}: ${storageBaseName(path)}`;
+}
+
+function configuredEffectValue(settings, field, element) {
+  const configuredValue = settings?.effects?.[field];
+  if (configuredValue !== undefined && configuredValue !== null && String(configuredValue).trim()) {
+    return String(configuredValue).trim();
+  }
+  const savedValue = String(element?.dataset?.savedEffectValue || "").trim();
+  if (savedValue) {
+    return savedValue;
+  }
+  return String(element?.value || "").trim();
+}
+
+function sortEffectFileOptions(options) {
+  return [...options].sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
+}
+
+function sdSettingsChanged(previousSettings, nextSettings) {
+  const previous = previousSettings?.sd || {};
+  const next = nextSettings?.sd || {};
+  return Boolean(previous.enabled) !== Boolean(next.enabled)
+    || Number(previous.csPin || 0) !== Number(next.csPin || 0)
+    || Number(previous.sckPin || 0) !== Number(next.sckPin || 0)
+    || Number(previous.mosiPin || 0) !== Number(next.mosiPin || 0)
+    || Number(previous.misoPin || 0) !== Number(next.misoPin || 0);
+}
+
+function effectFilesCacheKey(settings = state.settings) {
+  const sd = settings?.sd || {};
+  const flashEnabled = true;
+  return JSON.stringify({
+    sdEnabled: true,
+    sdCsPin: Number(sd.csPin || 0),
+    sdSckPin: Number(sd.sckPin || 0),
+    sdMosiPin: Number(sd.mosiPin || 0),
+    sdMisoPin: Number(sd.misoPin || 0),
+    flashEnabled,
+    sources: EFFECT_FILE_SOURCES.map((source) => `${source.target}:${source.dir}`).join("|"),
+  });
+}
+
+function persistEffectFileOptionsCache() {
+  if (!state.effectFileOptionsLoaded || !state.effectFileOptions.length || !state.effectFileOptionsCacheKey) {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(EFFECT_FILES_CACHE_STORAGE_KEY, JSON.stringify({
+      key: state.effectFileOptionsCacheKey,
+      options: state.effectFileOptions,
+    }));
+  } catch {
+  }
+}
+
+function clearEffectFileOptionsCache() {
+  state.effectFileOptions = [];
+  state.effectFileOptionsLoaded = false;
+  state.effectFileOptionsCacheKey = "";
+  try {
+    window.sessionStorage.removeItem(EFFECT_FILES_CACHE_STORAGE_KEY);
+  } catch {
+  }
+}
+
+function effectFilesReadyMessage() {
+  return "Changing a selection previews that audio file on the device.";
+}
+
+function effectFilesUnavailableMessage() {
+  return "No supported audio files found in SD /media/wav or flash /wav.";
+}
+
+function restoreEffectFileOptionsFromCache(settings = state.settings) {
+  const cacheKey = effectFilesCacheKey(settings);
+  try {
+    const raw = window.sessionStorage.getItem(EFFECT_FILES_CACHE_STORAGE_KEY);
+    if (!raw) {
+      return false;
+    }
+    const parsed = JSON.parse(raw);
+    if (parsed?.key !== cacheKey || !Array.isArray(parsed?.options)) {
+      return false;
+    }
+    state.effectFileOptions = sortEffectFileOptions(parsed.options
+      .filter((option) => option && typeof option.value === "string" && typeof option.label === "string"));
+    state.effectFileOptionsLoaded = true;
+    state.effectFileOptionsCacheKey = cacheKey;
+    return state.effectFileOptions.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function renderEffectFileOptions(settings = state.settings) {
+  for (const { field, element } of effectSelectElements()) {
+    const currentValue = configuredEffectValue(settings, field, element);
+    const currentOptionExists = state.effectFileOptions.some((option) => option.value === currentValue);
+    element.dataset.savedEffectValue = currentValue;
+    element.innerHTML = "";
+
+    const noneOption = document.createElement("option");
+    noneOption.value = "";
+    noneOption.textContent = "None";
+    element.append(noneOption);
+
+    for (const optionData of state.effectFileOptions) {
+      const option = document.createElement("option");
+      option.value = optionData.value;
+      option.textContent = optionData.label;
+      element.append(option);
+    }
+
+    if (currentValue && !currentOptionExists) {
+      const savedOption = document.createElement("option");
+      savedOption.value = currentValue;
+      savedOption.textContent = state.effectFileOptionsLoaded
+        ? `${effectFileLabelFromValue(currentValue)} (unavailable)`
+        : effectFileLabelFromValue(currentValue);
+      savedOption.selected = true;
+      element.append(savedOption);
+    }
+
+    element.value = [...element.options].some((option) => option.value === currentValue) ? currentValue : "";
+  }
+}
+
+async function loadEffectFileOptions(options = {}) {
+  const { reindex = false } = options;
+  if (!state.settings) {
+    return;
+  }
+  const cacheKey = effectFilesCacheKey(state.settings);
+  if (!reindex && state.effectFileOptionsLoaded && state.effectFileOptionsCacheKey === cacheKey && state.effectFileOptions.length) {
+    renderEffectFileOptions(state.settings);
+    if (elements.effectsFileStatus) {
+      elements.effectsFileStatus.textContent = effectFilesReadyMessage();
+    }
+    return;
+  }
+  if (!reindex && !state.effectFilesLoading && restoreEffectFileOptionsFromCache(state.settings)) {
+    renderEffectFileOptions(state.settings);
+    if (elements.effectsFileStatus) {
+      elements.effectsFileStatus.textContent = "Loaded effect files from this browser session cache.";
+    }
+    return;
+  }
+  if (shouldDeferSdReads()) {
+    state.deferredEffectsReload = true;
+    renderEffectFileOptions(state.settings);
+    if (elements.effectsFileStatus) {
+      elements.effectsFileStatus.textContent = "Playback is active, so SD effect-file scanning is deferred to avoid audio interruptions.";
+    }
+    return;
+  }
+
+  state.effectFilesLoading = true;
+  state.deferredEffectsReload = false;
+  state.effectFileOptionsLoaded = false;
+  state.effectFileOptionsCacheKey = cacheKey;
+  if (elements.effectsFileStatus) {
+    elements.effectsFileStatus.textContent = "Loading effect files...";
+  }
+  const previousOptions = Array.isArray(state.effectFileOptions) ? [...state.effectFileOptions] : [];
+  let loadedAnySource = false;
+  let loadedAnyOptions = false;
+  let processedEntries = 0;
+  let totalEntries = 0;
+  state.effectFileOptions = [];
+  try {
+    for (const source of EFFECT_FILE_SOURCES) {
+      try {
+        let offset = 0;
+        let hasMore = true;
+        let sourceTotalCounted = false;
+        while (hasMore) {
+          const payload = await request(`/api/storage?${storageQueryParams({
+            target: source.target,
+            dir: source.dir,
+            offset,
+            limit: EFFECT_FILE_PAGE_SIZE,
+            live: false,
+            reindex: reindex && source.target === "sd" && offset === 0,
+          })}`);
+          loadedAnySource = true;
+          if (!sourceTotalCounted) {
+            totalEntries += Number(payload?.totalEntries || 0);
+            sourceTotalCounted = true;
+          }
+          processedEntries += Number(payload?.returned || (payload?.entries?.length || 0));
+          if (elements.effectsFileStatus) {
+            elements.effectsFileStatus.textContent = `Loading effect files... ${formatLoadProgress(processedEntries, totalEntries)}`;
+          }
+          const pageOptions = [];
+          for (const entry of payload.entries || []) {
+            if (entry.isDirectory) {
+              continue;
+            }
+            if (!isSupportedAudioFilename(entry.name || entry.path || "")) {
+              continue;
+            }
+            pageOptions.push({
+              value: `${source.target}:${entry.path}`,
+              label: effectFileLabelFromEntry(source, entry),
+            });
+          }
+          if (pageOptions.length) {
+            loadedAnyOptions = true;
+          }
+          mergeEffectFileOptions(pageOptions);
+          renderEffectFileOptions(state.settings);
+          offset = Number(payload?.nextOffset || offset + (payload?.entries?.length || 0));
+          hasMore = Boolean(payload?.hasMore);
+          if (hasMore) {
+            await delay(20);
+          }
+        }
+      } catch (error) {
+        console.warn(`Skipping effect file source ${source.target}:${source.dir}`, error);
+      }
+    }
+  } finally {
+    if (!loadedAnyOptions && previousOptions.length && !loadedAnySource) {
+      state.effectFileOptions = previousOptions;
+      state.effectFileOptionsLoaded = true;
+      renderEffectFileOptions(state.settings);
+      if (elements.effectsFileStatus) {
+        elements.effectsFileStatus.textContent = "Keeping the cached effect-file list because storage could not be refreshed right now.";
+      }
+      state.effectFilesLoading = false;
+      return;
+    }
+    if (elements.effectsFileStatus) {
+      elements.effectsFileStatus.textContent = state.effectFileOptions.length
+        ? effectFilesReadyMessage()
+        : (loadedAnySource
+          ? effectFilesUnavailableMessage()
+          : "Unable to refresh effect files right now. Try again in a moment.");
+    }
+    state.effectFilesLoading = false;
+    state.effectFileOptionsLoaded = true;
+    if (state.effectFileOptions.length) {
+      persistEffectFileOptionsCache();
+    }
+    renderEffectFileOptions(state.settings);
+  }
+}
+
+async function previewEffectFile(effectRef, effectLabel) {
+  if (!effectRef) {
+    return;
+  }
+  await request("/api/play", {
+    method: "POST",
+    body: JSON.stringify({
+      url: effectRef,
+      label: effectLabel,
+      type: "effect-preview",
+    }),
+  });
+  setMessage(`Previewing ${effectLabel}`);
+}
+
+function syncEffectsPage(settings = state.settings) {
+  if (!state.effectFileOptionsLoaded) {
+    restoreEffectFileOptionsFromCache(settings);
+  }
+  renderEffectFileOptions(settings);
+}
+
+function syncBatteryPage(settings = state.settings) {
+  const derivedMeasuredVoltage = settings?.battery?.calibrationMultiplier && state.status?.battery?.rawAdcVoltage
+    ? settings.battery.calibrationMultiplier * state.status.battery.rawAdcVoltage
+    : "";
+  const savedMeasuredVoltage = Number(settings?.battery?.measuredVoltage || 0);
+  const measuredVoltage = state.batteryMeasuredVoltageInput
+    || (savedMeasuredVoltage > 0 ? savedMeasuredVoltage.toFixed(3) : "")
+    || (derivedMeasuredVoltage ? Number(derivedMeasuredVoltage).toFixed(3) : "");
+
+  state.batteryMeasuredVoltageInput = measuredVoltage;
+  if (elements.batteryMeasuredVoltage) {
+    elements.batteryMeasuredVoltage.value = measuredVoltage;
+  }
+
+  updateDerivedBatteryCalibration();
+  updateBatteryUi();
+}
+
+function syncPageSections(settings = state.settings) {
+  syncEffectsPage(settings);
+  syncBatteryPage(settings);
+  updateAudioI2sUi();
+  updateAudioUiState();
+  updateLowBatterySleepUi();
+  updateConditionalVisibility();
+  updateDisplayModeUi();
+  renderHardwareSummary(state.status || {});
+  renderDeviceResources(state.status || {});
+  renderOledPreview();
+}
+
 function fillForm(data) {
   state.settingsLoading = true;
+  data.sd ||= {};
+  data.sd.enabled = true;
   populateAudioI2sPinOptions(data);
   populateSdPinOptions(data);
   populateStatusLedPinOptions(data);
@@ -3660,22 +5115,7 @@ function fillForm(data) {
     elements.volumeSlider.value = String(data.device.savedVolumePercent);
   }
   populateButtonActionSelects();
-  const measuredVoltage = state.status?.battery?.voltage ?? (data.battery?.calibrationMultiplier && state.status?.battery?.rawAdcVoltage
-    ? data.battery.calibrationMultiplier * state.status.battery.rawAdcVoltage
-    : "");
-  if (elements.batteryMeasuredVoltage && measuredVoltage) {
-    elements.batteryMeasuredVoltage.value = Number(measuredVoltage).toFixed(3);
-  }
-  updateDerivedBatteryCalibration();
-  updateBatteryUi();
-  updateAudioI2sUi();
-  updateAudioUiState();
-  updateLowBatterySleepUi();
-  updateConditionalVisibility();
-  updateDisplayModeUi();
-  renderHardwareSummary(state.status || {});
-  renderDeviceResources(state.status || {});
-  renderOledPreview();
+  syncPageSections(data);
   state.settingsDirty = false;
   state.settingsLoading = false;
 }
@@ -3835,7 +5275,7 @@ function updateBatteryUi() {
 }
 
 function currentBatteryCalibrationMultiplier() {
-  const measuredVoltage = Number(elements.batteryMeasuredVoltage?.value || 0);
+  const measuredVoltage = parseDecimalFieldValue(elements.batteryMeasuredVoltage, state.settings?.battery?.measuredVoltage || 0);
   const rawAdcVoltage = Number(state.status?.battery?.rawAdcVoltage || 0);
   const savedMultiplierField = elements.settingsForm.elements.namedItem("battery.calibrationMultiplier");
   const savedMultiplier = Number(savedMultiplierField?.value || 0);
@@ -3851,7 +5291,7 @@ function updateDerivedBatteryCalibration() {
     return;
   }
   const rawAdcVoltage = Number(state.status?.battery?.rawAdcVoltage || 0);
-  const measuredVoltage = Number(elements.batteryMeasuredVoltage?.value || 0);
+  const measuredVoltage = parseDecimalFieldValue(elements.batteryMeasuredVoltage, state.settings?.battery?.measuredVoltage || 0);
   if (measuredVoltage > 0 && rawAdcVoltage > 0) {
     elements.batteryDerivedMultiplier.textContent = currentBatteryCalibrationMultiplier().toFixed(3);
     return;
@@ -3879,6 +5319,7 @@ function collectForm() {
   payload.battery ||= {};
   payload.oled ||= {};
   payload.sd ||= {};
+  payload.effects ||= {};
 
   payload.mqtt.port = Number(payload.mqtt.port || 1883);
   payload.device.savedVolumePercent = Number(elements.volumeSlider?.value || payload.device.savedVolumePercent || 5);
@@ -3889,6 +5330,7 @@ function collectForm() {
   payload.audio.doutPin = Number(elements.audioDoutPin?.value || payload.audio.doutPin || DEFAULT_ESP32S3_AUDIO_PINS.dout);
   payload.audio.wsPin = Number(elements.audioWsPin?.value || payload.audio.wsPin || DEFAULT_ESP32S3_AUDIO_PINS.ws);
   payload.audio.bclkPin = Number(elements.audioBclkPin?.value || payload.audio.bclkPin || DEFAULT_ESP32S3_AUDIO_PINS.bclk);
+  payload.battery.measuredVoltage = parseDecimalFieldValue(elements.batteryMeasuredVoltage, payload.battery.measuredVoltage || 0);
   payload.battery.calibrationMultiplier = currentBatteryCalibrationMultiplier();
   payload.battery.updateIntervalMs = Number(payload.battery.updateIntervalMs || 10000);
   payload.battery.movingAverageWindowSize = Number(payload.battery.movingAverageWindowSize || 10);
@@ -3904,11 +5346,19 @@ function collectForm() {
   payload.oled.wapeTriggerPin = Number(elements.wapeTriggerPin?.value || payload.oled.wapeTriggerPin || 0);
   payload.oled.displayType = String(elements.displayType?.value || payload.oled.displayType || "oled");
   payload.oled.wapeTriggerEvent = String(elements.wapeTriggerEvent?.value || payload.oled.wapeTriggerEvent || "play_start");
-  payload.sd.enabled = Boolean(elements.sdEnabled?.checked ?? payload.sd.enabled ?? false);
+  payload.sd.enabled = true;
   payload.sd.csPin = Number(elements.sdCsPin?.value || payload.sd.csPin || DEFAULT_SD_GPIO_PINS.cs);
   payload.sd.sckPin = Number(elements.sdSckPin?.value || payload.sd.sckPin || DEFAULT_SD_GPIO_PINS.sck);
   payload.sd.mosiPin = Number(elements.sdMosiPin?.value || payload.sd.mosiPin || DEFAULT_SD_GPIO_PINS.mosi);
   payload.sd.misoPin = Number(elements.sdMisoPin?.value || payload.sd.misoPin || DEFAULT_SD_GPIO_PINS.miso);
+  payload.effects.startupFile = String(elements.effectStartupFile?.value || elements.effectStartupFile?.dataset?.savedEffectValue || payload.effects.startupFile || "");
+  payload.effects.alarmFile = String(elements.effectAlarmFile?.value || elements.effectAlarmFile?.dataset?.savedEffectValue || payload.effects.alarmFile || "");
+  payload.effects.notificationFile = String(elements.effectNotificationFile?.value || elements.effectNotificationFile?.dataset?.savedEffectValue || payload.effects.notificationFile || "");
+  payload.effects.ambientSoundFile = String(elements.effectAmbientSoundFile?.value || elements.effectAmbientSoundFile?.dataset?.savedEffectValue || payload.effects.ambientSoundFile || "");
+  payload.effects.lowBatteryFile = String(elements.effectLowBatteryFile?.value || elements.effectLowBatteryFile?.dataset?.savedEffectValue || payload.effects.lowBatteryFile || "");
+  payload.effects.shutDownFile = String(elements.effectShutDownFile?.value || elements.effectShutDownFile?.dataset?.savedEffectValue || payload.effects.shutDownFile || "");
+  payload.effects.updateAvailableFile = String(elements.effectUpdateAvailableFile?.value || elements.effectUpdateAvailableFile?.dataset?.savedEffectValue || payload.effects.updateAvailableFile || "");
+  payload.effects.updateSuccessFile = String(elements.effectUpdateSuccessFile?.value || elements.effectUpdateSuccessFile?.dataset?.savedEffectValue || payload.effects.updateSuccessFile || "");
   return payload;
 }
 
@@ -3930,6 +5380,13 @@ function queueSettingsSave(delayMs = SETTINGS_AUTOSAVE_DELAY_MS) {
   state.settingsSaveTimer = window.setTimeout(() => {
     saveSettings({ silent: true }).catch(handleError);
   }, delayMs);
+}
+
+async function awaitPendingSettingsSave() {
+  if (!state.settingsSavePromise) {
+    return;
+  }
+  await state.settingsSavePromise;
 }
 
 async function saveAudioPinMapping(options = {}) {
@@ -4133,7 +5590,34 @@ function renderWifiHero(connected, ipAddress, rssi) {
 }
 
 function renderStatus(status) {
+  const previousStatus = state.status;
   state.status = status;
+  const previewRef = state.storagePreviewItem ? storagePlaybackRef(state.storagePreviewItem.path, state.activeStorageTarget) : "";
+  const currentPlaybackUrl = String(status?.playback?.url || "");
+  const wasDeviceActive = Boolean(state.storagePreviewPlaybackMode.deviceActive);
+  const isDeviceActive = Boolean(previewRef && currentPlaybackUrl === previewRef && isPlaybackActive(status));
+  state.storagePreviewPlaybackMode.previousDeviceActive = wasDeviceActive;
+  state.storagePreviewPlaybackMode.deviceActive = isDeviceActive;
+  if (wasDeviceActive && !isDeviceActive && previewRef && !state.storagePreviewPlaybackMode.suppressAutoAdvance) {
+    advanceStoragePreviewTrack(1, { autoplayDevice: true, autoplayBrowser: true, respectModes: true }).catch(handleError);
+  }
+  if (!isDeviceActive && state.storagePreviewPlaybackMode.suppressAutoAdvance) {
+    state.storagePreviewPlaybackMode.suppressAutoAdvance = false;
+  }
+  const playbackWasActive = isPlaybackActive(previousStatus);
+  const playbackIsActive = isPlaybackActive(status);
+  if (playbackWasActive && !playbackIsActive) {
+    if (state.deferredStorageReload && activeTabName() === "storage-external") {
+      window.setTimeout(() => {
+        refreshExternalStorageTab().catch(handleError);
+      }, 50);
+    }
+    if (state.deferredEffectsReload && activeTabName() === "effects") {
+      window.setTimeout(() => {
+        loadEffectFileOptions().catch(handleError);
+      }, 50);
+    }
+  }
   updateGpioBoardSelectorMode(status);
   updateStorageAvailabilityUi(status);
   const device = status?.device || {};
@@ -4190,7 +5674,14 @@ function renderStatus(status) {
   renderBatteryHero(battery.voltage || 0);
   renderHardwareSummary(status);
   renderDeviceResources(status);
+  maybeRefreshVisibleStorageTab();
   renderGpioOverview();
+
+  const previousUpdateVersion = String(previousStatus?.ota?.latestVersion || previousStatus?.otaManager?.latestVersion || "");
+  const currentUpdateVersion = String(status?.ota?.latestVersion || ota.latestVersion || "");
+  if (Boolean(status?.ota?.updateAvailable) && currentUpdateVersion && currentUpdateVersion !== previousUpdateVersion) {
+    showUpdateAvailablePopup(status);
+  }
 
   elements.otaStatusLabel.textContent = ota.message || ota.lastResult || "Idle";
   elements.latestVersion.textContent = ota.latestVersion || status.ota.latestVersion || "-";
@@ -4246,6 +5737,7 @@ function renderStatus(status) {
 
   updateWifiActionButton();
   updateMqttActionButton();
+  updateStoragePreviewPlaybackControls();
   populateButtonActionSelects();
   renderOledPreview();
 }
@@ -4331,8 +5823,12 @@ function setupTabs() {
       refreshFirmwareInfo(true).catch(handleError);
     }
 
-    if (resolvedTabName === "storage-external") {
-      refreshExternalStorageTab().catch(handleError);
+    if (resolvedTabName === "effects" && state.settings) {
+      syncEffectsPage(state.settings);
+    }
+
+  if (resolvedTabName === "storage-external") {
+      maybeRefreshVisibleStorageTab(true);
     }
   };
 
@@ -4376,6 +5872,16 @@ async function loadStatus() {
   try {
     const status = await request(`/api/status?ts=${Date.now()}`);
     renderStatus(status);
+    if (elements.rebootOverlay && !elements.rebootOverlay.hidden) {
+      if (!state.rebootOverlayArmed) {
+        hideRebootOverlay();
+        return status;
+      }
+      const reconnectGraceElapsed = !state.rebootOverlayReconnectAllowedAt || Date.now() >= state.rebootOverlayReconnectAllowedAt;
+      if (state.rebootOverlaySawDisconnect || reconnectGraceElapsed) {
+        clearFirmwareReconnectState();
+      }
+    }
     return status;
   } finally {
     state.statusRequestInFlight = false;
@@ -4674,15 +6180,28 @@ async function connectMqtt() {
 
 async function loadSettings() {
   state.settings = await request("/api/settings");
+  state.settings.sd ||= {};
+  state.settings.sd.enabled = true;
+  state.batteryMeasuredVoltageInput = Number(state.settings?.battery?.measuredVoltage || 0) > 0
+    ? Number(state.settings.battery.measuredVoltage).toFixed(3)
+    : "";
   fillForm(state.settings);
   setFirmwareAuthorLink(state.settings);
   renderGpioOverview();
   resetWifiNetworkList();
+  maybeRefreshVisibleStorageTab();
 }
 
 async function saveSettings(options = {}) {
   const { silent = false } = options;
-  if (state.settingsLoading || state.settingsSaving) {
+  if (state.settingsLoading) {
+    return;
+  }
+  if (state.settingsSaving) {
+    await awaitPendingSettingsSave();
+    if (state.settingsDirty) {
+      return saveSettings(options);
+    }
     return;
   }
   if (state.settingsSaveTimer) {
@@ -4690,49 +6209,65 @@ async function saveSettings(options = {}) {
     state.settingsSaveTimer = null;
   }
   normalizeDecimalField(elements.batteryMeasuredVoltage);
-  state.settingsSaving = true;
+  const previousSettings = state.settings;
   const submittedSettings = collectForm();
   if (oledPinsConflictInternally(submittedSettings)) {
-    state.settingsSaving = false;
     throw new Error("OLED SDA, SCL, and RESET must use different GPIOs.");
   }
   if (oledPinsConflictWithAudio(submittedSettings)) {
-    state.settingsSaving = false;
     throw new Error("OLED SDA, SCL, and RESET cannot reuse the active MAX98357A I2S pins. Change the display pins or disable OLED first.");
   }
   if (sdPinsConflictInternally(submittedSettings)) {
-    state.settingsSaving = false;
     throw new Error("SD card CS, SCK, MOSI, and MISO must use four different GPIOs.");
   }
   if (sdPinsConflictWithReservedFunctions(submittedSettings)) {
-    state.settingsSaving = false;
     throw new Error("SD card pins cannot reuse the active audio, battery, status LED, or Wape trigger GPIOs.");
   }
   if (!silent) {
     setMessage("Saving settings...");
   }
-  try {
-    await request("/api/settings", {
-      method: "POST",
-      body: JSON.stringify(submittedSettings),
-    });
+  state.settingsSaving = true;
+  const savePromise = (async () => {
+    try {
+      await request("/api/settings", {
+        method: "POST",
+        body: JSON.stringify(submittedSettings),
+      });
 
-    state.settings = submittedSettings;
-    fillForm(submittedSettings);
-    state.settingsDirty = false;
-    setMessage(silent ? "Settings auto-saved" : "Settings saved");
-    if (!silent) {
-      toast("Settings saved");
-    }
+      state.settings = submittedSettings;
+      state.batteryMeasuredVoltageInput = submittedSettings.battery?.measuredVoltage > 0
+        ? Number(submittedSettings.battery.measuredVoltage).toFixed(3)
+        : "";
+      fillForm(submittedSettings);
+      renderEffectFileOptions(submittedSettings);
+      state.settingsDirty = false;
+      setMessage(silent ? "Settings auto-saved" : "Settings saved");
+      if (!silent) {
+        toast("Settings saved");
+      }
 
-    await loadStatus();
-    await refreshSettingsAfterSave(submittedSettings);
-    if (activeTabName() === "storage-external") {
-      await refreshStorageManager(state.activeStorageTarget);
+      loadStatus().catch((error) => console.error(error));
+      refreshSettingsAfterSave(submittedSettings).catch((error) => console.error(error));
+      if (sdSettingsChanged(previousSettings, submittedSettings)) {
+        clearEffectFileOptionsCache();
+        renderEffectFileOptions(submittedSettings);
+      }
+      if (activeTabName() === "storage-external") {
+        if (state.activeStorageTarget === "sd") {
+          refreshExternalStorageTab(state.currentStoragePathByTarget.sd || "/").catch((error) => console.error(error));
+        } else {
+          refreshStorageManager(state.activeStorageTarget).catch((error) => console.error(error));
+        }
+      }
+    } finally {
+      state.settingsSaving = false;
+      if (state.settingsSavePromise === savePromise) {
+        state.settingsSavePromise = null;
+      }
     }
-  } finally {
-    state.settingsSaving = false;
-  }
+  })();
+  state.settingsSavePromise = savePromise;
+  await savePromise;
 }
 
 async function submitPlay(event) {
@@ -4944,6 +6479,37 @@ async function postSimple(path, message) {
   toast(message);
 }
 
+async function shutdownServer() {
+  await request("/api/server-shutdown", { method: "POST", body: JSON.stringify({}) });
+  setMessage("Web UI locked. Use MQTT payload 'unlock' on <baseTopic>/cmd/web_ui to restore access.");
+  toast("Web UI locked");
+}
+
+async function requestDeviceRestart(path, {
+  title = "Rebooting device...",
+  message = "Reboot requested",
+  totalSeconds = 30,
+} = {}) {
+  if (state.settingsDirty) {
+    await saveSettings({ silent: true });
+  }
+  await awaitPendingSettingsSave();
+  state.rebootOverlayArmed = true;
+  showRebootOverlay(title, totalSeconds);
+  try {
+    await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+      cache: "no-store",
+    });
+  } catch {
+    // The device may drop the HTTP response while rebooting.
+  }
+  setMessage(message);
+  toast(message);
+}
+
 async function copyCurrentUrl() {
   const value = elements.currentUrl.value;
   if (!value) {
@@ -4979,6 +6545,11 @@ document.getElementById("copyUrlButton").addEventListener("click", () => copyCur
 document.getElementById("checkOtaButton").addEventListener("click", () => checkOta().catch(handleError));
 document.getElementById("applyOtaButton").addEventListener("click", () => installSelectedFirmware().catch(handleError));
 elements.mqttConnectButton?.addEventListener("click", () => connectMqtt().catch(handleError));
+elements.updateAvailableCloseButton?.addEventListener("click", closeUpdateAvailablePopup);
+elements.updateAvailableDialog?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeUpdateAvailablePopup();
+});
 elements.displayTriggerButton?.addEventListener("click", () => triggerDisplay().catch(handleError));
 elements.saveDeviceButton?.addEventListener("click", () => saveSettings({ silent: false }).catch(handleError));
 elements.deviceSpiffsCard?.addEventListener("click", () => {
@@ -4992,12 +6563,22 @@ document.getElementById("uploadFirmwareButton").addEventListener("click", () => 
   updateLocalFirmwareLabel();
   elements.localFirmwareFile.click();
 });
-document.getElementById("rebootButton").addEventListener("click", () => postSimple("/api/reboot", "Reboot requested").catch(handleError));
+document.getElementById("rebootButton").addEventListener("click", async () => {
+  await requestDeviceRestart("/api/reboot", {
+    title: "Rebooting device...",
+    message: "Reboot requested",
+    totalSeconds: 30,
+  });
+});
 document.getElementById("factoryResetButton").addEventListener("click", async () => {
   if (!window.confirm("Erase saved settings and reboot?")) {
     return;
   }
-  await postSimple("/api/factory-reset", "Factory reset requested");
+  await requestDeviceRestart("/api/factory-reset", {
+    title: "Factory reset in progress...",
+    message: "Factory reset requested",
+    totalSeconds: 35,
+  });
 });
 elements.localFirmwareFile?.addEventListener("change", () => {
   updateLocalFirmwareLabel();
@@ -5010,6 +6591,12 @@ elements.storageUpButton?.addEventListener("click", () => {
   if (parentPath) {
     openStorageManager(state.activeStorageTarget, parentPath).catch(handleError);
   }
+});
+elements.storageReindexButton?.addEventListener("click", () => {
+  reindexStorageDirectory(
+    state.activeStorageTarget,
+    state.currentStoragePathByTarget[state.activeStorageTarget] || "/"
+  ).catch(handleError);
 });
 elements.storageSelectModeButton?.addEventListener("click", () => {
   setStorageSelectionMode(!state.storageSelectionMode);
@@ -5032,6 +6619,67 @@ elements.storageFileInput?.addEventListener("change", () => {
   if (elements.storageFileInput.files && elements.storageFileInput.files[0]) {
     uploadStorageFile().catch(handleError);
   }
+});
+elements.headerActionsButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  setHeaderActionsMenuOpen(!state.headerActionsMenuOpen);
+});
+elements.headerRefreshButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  setHeaderActionsMenuOpen(false);
+  performFrontendHardRefresh();
+});
+elements.headerRebootButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  requestDeviceRestart("/api/reboot", {
+    title: "Rebooting device...",
+    message: "Reboot requested",
+    totalSeconds: 30,
+  }).catch(handleError);
+});
+elements.headerShutdownButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  setHeaderActionsMenuOpen(false);
+  const mqttConfigured = Boolean(state.settings?.mqtt?.host && String(state.settings.mqtt.host).trim());
+  const mqttConnected = Boolean(state.status?.network?.mqttConnected);
+  if (!mqttConfigured || !mqttConnected) {
+    const reason = !mqttConfigured
+      ? "MQTT is not configured."
+      : "MQTT is not connected right now.";
+    const message = `${reason} Web UI lock is blocked because you would not be able to unlock the device remotely. Configure and connect MQTT first.`;
+    setMessage(message, true);
+    toast(message);
+    return;
+  }
+  if (!window.confirm("Lock the web interface now?\n\nThis device is remote. Once locked, the web UI will become unavailable until you either unlock it over MQTT with payload 'unlock' on <baseTopic>/cmd/web_ui, or physically reboot/reset the device.\n\nWi-Fi and MQTT will stay running.")) {
+    return;
+  }
+  shutdownServer().catch(handleError);
+});
+document.addEventListener("click", (event) => {
+  if (!state.headerActionsMenuOpen) {
+    return;
+  }
+  const target = event.target;
+  if (elements.headerActionsButton?.contains(target) || elements.headerActionsMenu?.contains(target)) {
+    return;
+  }
+  setHeaderActionsMenuOpen(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.headerActionsMenuOpen) {
+    setHeaderActionsMenuOpen(false);
+  }
+});
+window.addEventListener("pageshow", () => {
+  resetTransientOverlays();
+});
+window.addEventListener("load", () => {
+  resetTransientOverlays();
+});
+window.addEventListener("beforeunload", () => {
+  hideRebootOverlay();
 });
 elements.storageFileList?.addEventListener("click", (event) => {
   const checkbox = event.target.closest("[data-storage-checkbox]");
@@ -5092,6 +6740,15 @@ elements.storageFileList?.addEventListener("dblclick", (event) => {
 
   openStoragePreview(entry).catch(handleError);
 });
+elements.storageFileList?.addEventListener("scroll", () => {
+  const node = elements.storageFileList;
+  if (!node) {
+    return;
+  }
+  if (node.scrollTop + node.clientHeight >= node.scrollHeight - 160) {
+    loadMoreStorageEntries(state.activeStorageTarget).catch(handleError);
+  }
+});
 elements.storageBreadcrumbs?.addEventListener("click", (event) => {
   const crumbButton = event.target.closest("[data-storage-nav]");
   if (!crumbButton) {
@@ -5101,10 +6758,29 @@ elements.storageBreadcrumbs?.addEventListener("click", (event) => {
   openStorageManager(state.activeStorageTarget, crumbButton.dataset.storageNav).catch(handleError);
 });
 elements.storagePreviewPlayButton?.addEventListener("click", () => {
-  playStoragePreviewOnDevice().catch(handleError);
+  toggleStoragePreviewPlayback().catch(handleError);
 });
-elements.storagePreviewStopButton?.addEventListener("click", () => {
-  stopStoragePreviewPlayback().catch(handleError);
+elements.storagePreviewPrevButton?.addEventListener("click", () => {
+  advanceStoragePreviewTrack(-1, {
+    autoplayDevice: state.storagePreviewPlaybackMode.deviceActive,
+    autoplayBrowser: true,
+    respectModes: false,
+  }).catch(handleError);
+});
+elements.storagePreviewNextButton?.addEventListener("click", () => {
+  advanceStoragePreviewTrack(1, {
+    autoplayDevice: state.storagePreviewPlaybackMode.deviceActive,
+    autoplayBrowser: true,
+    respectModes: false,
+  }).catch(handleError);
+});
+elements.storagePreviewLoopButton?.addEventListener("click", () => {
+  state.storagePreviewPlaybackMode.loop = !state.storagePreviewPlaybackMode.loop;
+  updateStoragePreviewPlaybackControls();
+});
+elements.storagePreviewShuffleButton?.addEventListener("click", () => {
+  state.storagePreviewPlaybackMode.shuffle = !state.storagePreviewPlaybackMode.shuffle;
+  updateStoragePreviewPlaybackControls();
 });
 elements.storagePreviewCloseButton?.addEventListener("click", () => {
   closeStoragePreview();
@@ -5159,6 +6835,32 @@ for (const field of [elements.audioWsPin, elements.audioBclkPin, elements.audioD
     state.settingsDirty = true;
   });
 }
+for (const { label, element } of effectSelectElements()) {
+  const ensureEffectOptionsLoaded = () => {
+    if (state.effectFilesLoading || state.effectFileOptionsLoaded) {
+      return;
+    }
+    loadEffectFileOptions().catch(handleError);
+  };
+  element?.addEventListener("pointerdown", ensureEffectOptionsLoaded);
+  element?.addEventListener("focus", ensureEffectOptionsLoaded);
+  element?.addEventListener("change", async () => {
+    const selectedValue = String(element.value || "").trim();
+    element.dataset.savedEffectValue = selectedValue;
+    state.settingsDirty = true;
+    try {
+      if (selectedValue) {
+        await previewEffectFile(selectedValue, `${label} preview`);
+      }
+      await saveSettings({ silent: true });
+    } catch (error) {
+      handleError(error);
+    }
+  });
+}
+elements.effectsReindexButton?.addEventListener("click", () => {
+  reindexEffectsFiles().catch(handleError);
+});
 for (const field of [elements.sdEnabled, elements.sdCsPin, elements.sdSckPin, elements.sdMosiPin, elements.sdMisoPin]) {
   field?.addEventListener("change", () => {
     populateSdPinOptions();
@@ -5223,15 +6925,28 @@ elements.lowBatterySleepThreshold?.addEventListener("input", () => {
 });
 elements.batteryMeasuredVoltage?.addEventListener("input", (event) => {
   normalizeDecimalField(event.target);
+  state.batteryMeasuredVoltageInput = event.target.value;
   updateDerivedBatteryCalibration();
   queueSettingsSave();
 });
 elements.batteryMeasuredVoltage?.addEventListener("blur", (event) => {
   normalizeDecimalField(event.target);
+  state.batteryMeasuredVoltageInput = event.target.value;
   updateDerivedBatteryCalibration();
   if (state.settingsDirty) {
     saveSettings({ silent: true }).catch(handleError);
   }
+});
+elements.batteryMeasuredVoltage?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") {
+    return;
+  }
+  event.preventDefault();
+  normalizeDecimalField(event.target);
+  state.batteryMeasuredVoltageInput = event.target.value;
+  updateDerivedBatteryCalibration();
+  state.settingsDirty = true;
+  saveSettings({ silent: true }).catch(handleError);
 });
 elements.useStaticIpToggle.addEventListener("change", updateConditionalVisibility);
 
@@ -5324,6 +7039,7 @@ function handleError(error) {
   toast(`Error: ${error.message}`);
 }
 
+resetTransientOverlays();
 setupTabs();
 setupPasswordToggles();
 renderRecentPlayback();

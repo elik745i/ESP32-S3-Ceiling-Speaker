@@ -6,9 +6,10 @@
 struct ResourceMetricSnapshot {
     bool available = false;
     bool mounted = false;
-    uint32_t totalBytes = 0;
-    uint32_t usedBytes = 0;
-    uint32_t freeBytes = 0;
+    uint64_t cardSizeBytes = 0;
+    uint64_t totalBytes = 0;
+    uint64_t usedBytes = 0;
+    uint64_t freeBytes = 0;
 };
 
 struct HardwareInfoSnapshot {

@@ -37,7 +37,7 @@ bool idleHookCpu1() {
 #endif
 #endif
 
-uint32_t clampUsedBytes(uint32_t totalBytes, uint32_t freeBytes) {
+uint64_t clampUsedBytes(uint64_t totalBytes, uint64_t freeBytes) {
     return totalBytes > freeBytes ? totalBytes - freeBytes : 0;
 }
 
@@ -82,6 +82,7 @@ void populateStaticHardwareInfo(HardwareInfoSnapshot& hardware) {
 void assignResourceSummary(ResourceMetricSnapshot& destination, const StorageBackendSummary& source) {
     destination.available = source.available;
     destination.mounted = source.mounted;
+    destination.cardSizeBytes = source.cardSizeBytes;
     destination.totalBytes = source.totalBytes;
     destination.usedBytes = source.usedBytes;
     destination.freeBytes = source.freeBytes;
@@ -167,6 +168,7 @@ void appendSystemMetricsJson(JsonObject root) {
     JsonObject sram = system["sram"].to<JsonObject>();
     sram["available"] = snapshot.sram.available;
     sram["mounted"] = snapshot.sram.mounted;
+    sram["cardSizeBytes"] = snapshot.sram.cardSizeBytes;
     sram["totalBytes"] = snapshot.sram.totalBytes;
     sram["usedBytes"] = snapshot.sram.usedBytes;
     sram["freeBytes"] = snapshot.sram.freeBytes;
@@ -174,6 +176,7 @@ void appendSystemMetricsJson(JsonObject root) {
     JsonObject psram = system["psram"].to<JsonObject>();
     psram["available"] = snapshot.psram.available;
     psram["mounted"] = snapshot.psram.mounted;
+    psram["cardSizeBytes"] = snapshot.psram.cardSizeBytes;
     psram["totalBytes"] = snapshot.psram.totalBytes;
     psram["usedBytes"] = snapshot.psram.usedBytes;
     psram["freeBytes"] = snapshot.psram.freeBytes;
@@ -181,6 +184,7 @@ void appendSystemMetricsJson(JsonObject root) {
     JsonObject spiffs = system["spiffs"].to<JsonObject>();
     spiffs["available"] = snapshot.spiffs.available;
     spiffs["mounted"] = snapshot.spiffs.mounted;
+    spiffs["cardSizeBytes"] = snapshot.spiffs.cardSizeBytes;
     spiffs["totalBytes"] = snapshot.spiffs.totalBytes;
     spiffs["usedBytes"] = snapshot.spiffs.usedBytes;
     spiffs["freeBytes"] = snapshot.spiffs.freeBytes;
@@ -188,6 +192,7 @@ void appendSystemMetricsJson(JsonObject root) {
     JsonObject sd = system["sd"].to<JsonObject>();
     sd["available"] = snapshot.sd.available;
     sd["mounted"] = snapshot.sd.mounted;
+    sd["cardSizeBytes"] = snapshot.sd.cardSizeBytes;
     sd["totalBytes"] = snapshot.sd.totalBytes;
     sd["usedBytes"] = snapshot.sd.usedBytes;
     sd["freeBytes"] = snapshot.sd.freeBytes;

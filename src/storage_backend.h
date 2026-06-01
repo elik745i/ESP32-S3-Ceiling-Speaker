@@ -13,9 +13,10 @@ enum class StorageTarget {
 struct StorageBackendSummary {
     bool available = false;
     bool mounted = false;
-    uint32_t totalBytes = 0;
-    uint32_t usedBytes = 0;
-    uint32_t freeBytes = 0;
+    uint64_t cardSizeBytes = 0;
+    uint64_t totalBytes = 0;
+    uint64_t usedBytes = 0;
+    uint64_t freeBytes = 0;
 };
 
 void beginStorageBackends(const SettingsBundle& settings);
@@ -27,6 +28,8 @@ const char* storageTargetLabel(StorageTarget target);
 StorageBackendSummary getStorageSummary(StorageTarget target);
 void beginStorageWrite(StorageTarget target);
 void endStorageWrite(StorageTarget target);
+void beginStorageRead(StorageTarget target);
+void endStorageRead(StorageTarget target);
 bool storageBusy(StorageTarget target);
 fs::FS* getStorageFs(StorageTarget target);
 bool storageMounted(StorageTarget target);

@@ -9,9 +9,12 @@
 
 class OtaManager {
   public:
+    using RestartHandler = void (*)(const String& reason);
+
     void begin(const SettingsBundle& settings, AppState& appState);
     void applySettings(const SettingsBundle& settings);
     void setProgressCallback(void (*callback)());
+    void setRestartHandler(RestartHandler handler);
     void setRollbackState(bool pendingVerify, const String& pendingVersion, const String& rolledBackVersion, const String& rollbackReason);
     void loop();
     bool triggerCheck(bool applyAfterCheck);
@@ -90,6 +93,7 @@ class OtaManager {
     std::vector<ReleaseInfo> releaseCache_;
     unsigned long releasesFetchedAtMs_ = 0;
     void (*progressCallback_)() = nullptr;
+    RestartHandler restartHandler_ = nullptr;
     uint8_t localUploadHeader_[24] = {0};
 
     void runTask(bool applyAfterCheck);

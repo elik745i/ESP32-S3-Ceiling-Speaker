@@ -14,6 +14,7 @@ struct PlaybackCommand {
     String version;
     String assetName;
     String payload;
+    bool skipNotificationCue = false;
     uint8_t volumePercent = 0;
 };
 

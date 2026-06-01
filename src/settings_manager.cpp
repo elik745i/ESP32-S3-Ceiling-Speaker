@@ -299,6 +299,44 @@ String normalizeButtonAction(String value, const char* fallback) {
 
     return String(fallback);
 }
+
+String normalizeEffectFileRef(String value) {
+    value.trim();
+    value.replace('\\', '/');
+
+    if (value.isEmpty()) {
+        return "";
+    }
+
+    const int separatorIndex = value.indexOf(':');
+    if (separatorIndex <= 0) {
+        return "";
+    }
+
+    String target = value.substring(0, separatorIndex);
+    target.trim();
+    target.toLowerCase();
+    if (target != "sd" && target != "flash") {
+        return "";
+    }
+
+    String path = value.substring(separatorIndex + 1);
+    path.trim();
+    if (path.isEmpty()) {
+        return "";
+    }
+    if (!path.startsWith("/")) {
+        path = "/" + path;
+    }
+    while (path.indexOf("//") >= 0) {
+        path.replace("//", "/");
+    }
+    if (path.indexOf("..") >= 0) {
+        return "";
+    }
+
+    return target + ":" + path;
+}
 }  // namespace
 
 bool SettingsManager::begin() {
@@ -329,9 +367,12 @@ SettingsBundle SettingsManager::defaults() const {
     settings.ota.assetTemplate = defaultOtaAssetTemplate();
     settings.ota.manifestUrl = DefaultConfig::OTA_MANIFEST_URL;
     settings.ota.allowInsecureTls = DefaultConfig::OTA_ALLOW_INSECURE_TLS;
+    settings.ota.autoCheck = true;
+    settings.ota.autoUpdate = true;
 
     settings.battery.calibrationMultiplier = DefaultConfig::BATTERY_CALIBRATION;
     settings.battery.adcPin = DefaultConfig::BATTERY_ADC_PIN;
+    settings.battery.measuredVoltage = 0.0f;
     settings.battery.chargingSensePin = 0;
     settings.battery.updateIntervalMs = DefaultConfig::BATTERY_UPDATE_INTERVAL_MS;
     settings.battery.movingAverageWindowSize = DefaultConfig::BATTERY_MOVING_AVERAGE_WINDOW;
@@ -343,6 +384,15 @@ SettingsBundle SettingsManager::defaults() const {
     settings.audio.doutPin = DefaultConfig::I2S_DOUT_PIN;
     settings.audio.wsPin = DefaultConfig::I2S_WS_PIN;
     settings.audio.bclkPin = DefaultConfig::I2S_BCLK_PIN;
+
+    settings.effects.startupFile = "";
+    settings.effects.alarmFile = "";
+    settings.effects.notificationFile = "";
+    settings.effects.ambientSoundFile = "";
+    settings.effects.lowBatteryFile = "";
+    settings.effects.shutDownFile = "";
+    settings.effects.updateAvailableFile = "";
+    settings.effects.updateSuccessFile = "";
 
     settings.oled.enabled = DefaultConfig::OLED_ENABLED;
     settings.oled.displayType = "oled";
@@ -433,9 +483,18 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     }
     settings.device.button1Action = normalizeButtonAction(settings.device.button1Action, DefaultConfig::BUTTON1_DEFAULT_ACTION);
     settings.device.button2Action = normalizeButtonAction(settings.device.button2Action, DefaultConfig::BUTTON2_DEFAULT_ACTION);
+    settings.effects.startupFile = normalizeEffectFileRef(settings.effects.startupFile);
+    settings.effects.alarmFile = normalizeEffectFileRef(settings.effects.alarmFile);
+    settings.effects.notificationFile = normalizeEffectFileRef(settings.effects.notificationFile);
+    settings.effects.ambientSoundFile = normalizeEffectFileRef(settings.effects.ambientSoundFile);
+    settings.effects.lowBatteryFile = normalizeEffectFileRef(settings.effects.lowBatteryFile);
+    settings.effects.shutDownFile = normalizeEffectFileRef(settings.effects.shutDownFile);
+    settings.effects.updateAvailableFile = normalizeEffectFileRef(settings.effects.updateAvailableFile);
+    settings.effects.updateSuccessFile = normalizeEffectFileRef(settings.effects.updateSuccessFile);
     settings.device.lowBatterySleepThresholdPercent = clampValue<uint8_t>(settings.device.lowBatterySleepThresholdPercent, static_cast<uint8_t>(1), static_cast<uint8_t>(100));
     settings.device.lowBatteryWakeIntervalMinutes = clampValue<uint16_t>(settings.device.lowBatteryWakeIntervalMinutes, static_cast<uint16_t>(0), static_cast<uint16_t>(1440));
     settings.battery.calibrationMultiplier = clampValue<float>(settings.battery.calibrationMultiplier, 0.1f, 10.0f);
+    settings.battery.measuredVoltage = clampValue<float>(settings.battery.measuredVoltage, 0.0f, 20.0f);
     if (!isValidI2sPin(settings.audio.bclkPin)) {
         settings.audio.bclkPin = DefaultConfig::I2S_BCLK_PIN;
     }
@@ -537,9 +596,11 @@ SettingsBundle SettingsManager::load() {
     settings.ota.manifestUrl = readString("ota_manifest", settings.ota.manifestUrl);
     settings.ota.allowInsecureTls = readBool("ota_tls", settings.ota.allowInsecureTls);
     settings.ota.autoCheck = readBool("ota_auto", settings.ota.autoCheck);
+    settings.ota.autoUpdate = readBool("ota_upd", settings.ota.autoUpdate);
 
     settings.battery.calibrationMultiplier = readFloat("bat_cal", settings.battery.calibrationMultiplier);
     settings.battery.adcPin = readUInt("bat_pin", settings.battery.adcPin);
+    settings.battery.measuredVoltage = readFloat("bat_meas", settings.battery.measuredVoltage);
     settings.battery.chargingSensePin = readUInt("bat_chg", settings.battery.chargingSensePin);
     settings.battery.updateIntervalMs = readUInt("bat_int", settings.battery.updateIntervalMs);
     settings.battery.movingAverageWindowSize = readUInt("bat_win", readUInt("bat_samp", settings.battery.movingAverageWindowSize));
@@ -551,6 +612,15 @@ SettingsBundle SettingsManager::load() {
     settings.audio.doutPin = readUInt("aud_dout", settings.audio.doutPin);
     settings.audio.wsPin = readUInt("aud_ws", settings.audio.wsPin);
     settings.audio.bclkPin = readUInt("aud_bclk", settings.audio.bclkPin);
+
+    settings.effects.startupFile = readString("eff_start", settings.effects.startupFile);
+    settings.effects.alarmFile = readString("eff_alarm", settings.effects.alarmFile);
+    settings.effects.notificationFile = readString("eff_note", settings.effects.notificationFile);
+    settings.effects.ambientSoundFile = readString("eff_amb", settings.effects.ambientSoundFile);
+    settings.effects.lowBatteryFile = readString("eff_low", settings.effects.lowBatteryFile);
+    settings.effects.shutDownFile = readString("eff_down", settings.effects.shutDownFile);
+    settings.effects.updateAvailableFile = readString("eff_up_av", settings.effects.updateAvailableFile);
+    settings.effects.updateSuccessFile = readString("eff_up_ok", settings.effects.updateSuccessFile);
 
     settings.oled.enabled = readBool("oled_en", settings.oled.enabled);
     settings.oled.displayType = readString("oled_mode", settings.oled.displayType);
@@ -619,9 +689,11 @@ bool SettingsManager::save(const SettingsBundle& settings) {
     changed |= writeStringIfChanged("ota_manifest", sanitized.ota.manifestUrl);
     changed |= writeBoolIfChanged("ota_tls", sanitized.ota.allowInsecureTls);
     changed |= writeBoolIfChanged("ota_auto", sanitized.ota.autoCheck);
+    changed |= writeBoolIfChanged("ota_upd", sanitized.ota.autoUpdate);
 
     changed |= writeFloatIfChanged("bat_cal", sanitized.battery.calibrationMultiplier);
     changed |= writeUIntIfChanged("bat_pin", sanitized.battery.adcPin);
+    changed |= writeFloatIfChanged("bat_meas", sanitized.battery.measuredVoltage);
     changed |= writeUIntIfChanged("bat_chg", sanitized.battery.chargingSensePin);
     changed |= writeUIntIfChanged("bat_int", sanitized.battery.updateIntervalMs);
     changed |= writeUIntIfChanged("bat_win", sanitized.battery.movingAverageWindowSize);
@@ -633,6 +705,15 @@ bool SettingsManager::save(const SettingsBundle& settings) {
     changed |= writeUIntIfChanged("aud_dout", sanitized.audio.doutPin);
     changed |= writeUIntIfChanged("aud_ws", sanitized.audio.wsPin);
     changed |= writeUIntIfChanged("aud_bclk", sanitized.audio.bclkPin);
+
+    changed |= writeStringIfChanged("eff_start", sanitized.effects.startupFile);
+    changed |= writeStringIfChanged("eff_alarm", sanitized.effects.alarmFile);
+    changed |= writeStringIfChanged("eff_note", sanitized.effects.notificationFile);
+    changed |= writeStringIfChanged("eff_amb", sanitized.effects.ambientSoundFile);
+    changed |= writeStringIfChanged("eff_low", sanitized.effects.lowBatteryFile);
+    changed |= writeStringIfChanged("eff_down", sanitized.effects.shutDownFile);
+    changed |= writeStringIfChanged("eff_up_av", sanitized.effects.updateAvailableFile);
+    changed |= writeStringIfChanged("eff_up_ok", sanitized.effects.updateSuccessFile);
 
     changed |= writeBoolIfChanged("oled_en", sanitized.oled.enabled);
     changed |= writeStringIfChanged("oled_mode", sanitized.oled.displayType);
@@ -703,10 +784,12 @@ void SettingsManager::toJson(const SettingsBundle& settings, JsonObject root) co
     ota["manifestUrl"] = settings.ota.manifestUrl;
     ota["allowInsecureTls"] = settings.ota.allowInsecureTls;
     ota["autoCheck"] = settings.ota.autoCheck;
+    ota["autoUpdate"] = settings.ota.autoUpdate;
 
     JsonObject battery = root["battery"].to<JsonObject>();
     battery["calibrationMultiplier"] = settings.battery.calibrationMultiplier;
     battery["adcPin"] = settings.battery.adcPin;
+    battery["measuredVoltage"] = settings.battery.measuredVoltage;
     battery["chargingSensePin"] = settings.battery.chargingSensePin;
     battery["updateIntervalMs"] = settings.battery.updateIntervalMs;
     battery["movingAverageWindowSize"] = settings.battery.movingAverageWindowSize;
@@ -720,6 +803,16 @@ void SettingsManager::toJson(const SettingsBundle& settings, JsonObject root) co
     audio["doutPin"] = settings.audio.doutPin;
     audio["wsPin"] = settings.audio.wsPin;
     audio["bclkPin"] = settings.audio.bclkPin;
+
+    JsonObject effects = root["effects"].to<JsonObject>();
+    effects["startupFile"] = settings.effects.startupFile;
+    effects["alarmFile"] = settings.effects.alarmFile;
+    effects["notificationFile"] = settings.effects.notificationFile;
+    effects["ambientSoundFile"] = settings.effects.ambientSoundFile;
+    effects["lowBatteryFile"] = settings.effects.lowBatteryFile;
+    effects["shutDownFile"] = settings.effects.shutDownFile;
+    effects["updateAvailableFile"] = settings.effects.updateAvailableFile;
+    effects["updateSuccessFile"] = settings.effects.updateSuccessFile;
 
     JsonObject oled = root["oled"].to<JsonObject>();
     oled["enabled"] = settings.oled.enabled;
@@ -805,12 +898,14 @@ bool SettingsManager::updateFromJson(SettingsBundle& settings, JsonVariantConst 
         copyString(ota, "manifestUrl", settings.ota.manifestUrl);
         if (ota["allowInsecureTls"].is<bool>()) settings.ota.allowInsecureTls = ota["allowInsecureTls"].as<bool>();
         if (ota["autoCheck"].is<bool>()) settings.ota.autoCheck = ota["autoCheck"].as<bool>();
+        if (ota["autoUpdate"].is<bool>()) settings.ota.autoUpdate = ota["autoUpdate"].as<bool>();
     }
 
     JsonObjectConst battery = object["battery"];
     if (!battery.isNull()) {
         if (battery["calibrationMultiplier"].is<float>()) settings.battery.calibrationMultiplier = battery["calibrationMultiplier"].as<float>();
         if (battery["adcPin"].is<uint8_t>()) settings.battery.adcPin = battery["adcPin"].as<uint8_t>();
+        if (battery["measuredVoltage"].is<float>()) settings.battery.measuredVoltage = battery["measuredVoltage"].as<float>();
         if (battery["chargingSensePin"].is<uint8_t>()) settings.battery.chargingSensePin = battery["chargingSensePin"].as<uint8_t>();
         if (battery["updateIntervalMs"].is<uint32_t>()) settings.battery.updateIntervalMs = battery["updateIntervalMs"].as<uint32_t>();
         if (battery["movingAverageWindowSize"].is<uint16_t>()) settings.battery.movingAverageWindowSize = battery["movingAverageWindowSize"].as<uint16_t>();
@@ -829,6 +924,18 @@ bool SettingsManager::updateFromJson(SettingsBundle& settings, JsonVariantConst 
         if (audio["doutPin"].is<uint8_t>()) settings.audio.doutPin = audio["doutPin"].as<uint8_t>();
         if (audio["wsPin"].is<uint8_t>()) settings.audio.wsPin = audio["wsPin"].as<uint8_t>();
         if (audio["bclkPin"].is<uint8_t>()) settings.audio.bclkPin = audio["bclkPin"].as<uint8_t>();
+    }
+
+    JsonObjectConst effects = object["effects"];
+    if (!effects.isNull()) {
+        copyString(effects, "startupFile", settings.effects.startupFile);
+        copyString(effects, "alarmFile", settings.effects.alarmFile);
+        copyString(effects, "notificationFile", settings.effects.notificationFile);
+        copyString(effects, "ambientSoundFile", settings.effects.ambientSoundFile);
+        copyString(effects, "lowBatteryFile", settings.effects.lowBatteryFile);
+        copyString(effects, "shutDownFile", settings.effects.shutDownFile);
+        copyString(effects, "updateAvailableFile", settings.effects.updateAvailableFile);
+        copyString(effects, "updateSuccessFile", settings.effects.updateSuccessFile);
     }
 
     JsonObjectConst oled = object["oled"];

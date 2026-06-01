@@ -10,6 +10,25 @@
   <div class="wrap">
     <section class="hero">
       <div class="hero-header">
+        <div class="hero-actions">
+          <button id="headerActionsButton" type="button" class="secondary hero-actions-button" aria-label="Device actions" title="Device actions" aria-expanded="false" aria-controls="headerActionsMenu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.7 2.8h2.6l.5 2.1c.5.2 1 .5 1.5.9l2-.8 1.9 1.9-.8 2c.4.5.7 1 .9 1.5l2.1.5v2.6l-2.1.5c-.2.5-.5 1-.9 1.5l.8 2-1.9 1.9-2-.8c-.5.4-1 .7-1.5.9l-.5 2.1h-2.6l-.5-2.1c-.5-.2-1-.5-1.5-.9l-2 .8-1.9-1.9.8-2c-.4-.5-.7-1-.9-1.5l-2.1-.5v-2.6l2.1-.5c.2-.5.5-1 .9-1.5l-.8-2 1.9-1.9 2 .8c.5-.4 1-.7 1.5-.9l.5-2.1zm1.3 5.1a4.1 4.1 0 1 0 0 8.2 4.1 4.1 0 0 0 0-8.2z"></path></svg>
+          </button>
+          <div id="headerActionsMenu" class="hero-actions-menu" aria-hidden="true" data-open="false">
+            <button id="headerRefreshButton" type="button" class="secondary hero-actions-menu-button" title="Refresh frontend" aria-label="Refresh frontend">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path></svg>
+              <span>Refresh</span>
+            </button>
+            <button id="headerRebootButton" type="button" class="secondary hero-actions-menu-button" title="Reboot device" aria-label="Reboot device">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v8"></path><path d="M7.75 4.75a8 8 0 1 0 8.5 0"></path></svg>
+              <span>Reboot</span>
+            </button>
+            <button id="headerShutdownButton" type="button" class="secondary hero-actions-menu-button hero-actions-menu-button-danger" title="Shut down server" aria-label="Shut down server">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v8"></path><path d="M5 7.5A10 10 0 1 0 19 7.5"></path></svg>
+              <span>Shut Down</span>
+            </button>
+          </div>
+        </div>
         <h1 id="deviceTitle">ESP32 Notifier</h1>
         <div class="hero-firmware" aria-label="Current firmware version">
           <div class="hero-firmware-line">
@@ -62,6 +81,9 @@
           <button class="tab-button tab-button-icon tab-audio" type="button" role="tab" aria-label="Audio" data-tooltip="Audio" title="Audio" aria-selected="false" aria-controls="tab-playback" data-tab="playback">
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15h4l5 4V5l-5 4H5z"></path><path d="M18 9a4 4 0 0 1 0 6"></path><path d="M20.5 6.5a7.5 7.5 0 0 1 0 11"></path></svg>
           </button>
+          <button class="tab-button tab-button-icon tab-effects" type="button" role="tab" aria-label="Audio Effects" data-tooltip="Audio Effects" title="Audio Effects" aria-selected="false" aria-controls="tab-effects" data-tab="effects">
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18h3"></path><path d="M4 12h8"></path><path d="M4 6h13"></path><path d="M18 18h2"></path><path d="M15 12h5"></path><path d="M12 6h8"></path></svg>
+          </button>
           <button class="tab-button tab-button-icon tab-wifi" type="button" role="tab" aria-label="Wi-Fi" data-tooltip="Wi-Fi" title="Wi-Fi" aria-selected="false" aria-controls="tab-wifi" data-tab="wifi">
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 8.5C7.5 4.2 16.5 4.2 22 8.5"></path><path d="M5 12c4-3 10-3 14 0"></path><path d="M8.5 15.5c2-1.5 5-1.5 7 0"></path><path d="M12 19h.01"></path></svg>
           </button>
@@ -77,7 +99,7 @@
           <button class="tab-button tab-button-icon tab-display" type="button" role="tab" aria-label="DISPLAY" data-tooltip="DISPLAY" title="DISPLAY" aria-selected="false" aria-controls="tab-oled" data-tab="oled">
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2"></rect><path d="M9 20h6"></path><path d="M12 17v3"></path></svg>
           </button>
-          <button class="tab-button tab-button-icon tab-hardware" type="button" role="tab" aria-label="Hardware" data-tooltip="Hardware" title="Hardware" aria-selected="false" aria-controls="tab-hardware" data-tab="hardware">
+          <button class="tab-button tab-button-icon tab-hardware" type="button" role="tab" aria-label="Hardware Monitor" data-tooltip="Hardware Monitor" title="Hardware Monitor" aria-selected="false" aria-controls="tab-hardware" data-tab="hardware">
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"></rect><path d="M9 1v3"></path><path d="M15 1v3"></path><path d="M9 20v3"></path><path d="M15 20v3"></path><path d="M1 9h3"></path><path d="M1 15h3"></path><path d="M20 9h3"></path><path d="M20 15h3"></path></svg>
           </button>
           <button class="tab-button tab-button-icon tab-gpio" type="button" role="tab" aria-label="GPIO Info" data-tooltip="GPIO Info" title="GPIO Info" aria-selected="false" aria-controls="tab-gpio" data-tab="gpio">
@@ -161,11 +183,6 @@
               <label for="volumeSlider">Volume <span id="volumeValue">0%</span></label>
               <input id="volumeSlider" name="device.savedVolumePercent" form="settingsForm" type="range" min="0" max="100" step="1">
             </div>
-            <div class="status-grid compact-status-grid">
-              <div class="status-item"><span>I2S LRC / WS</span><strong id="audioWsSummary">-</strong></div>
-              <div class="status-item"><span>I2S BCLK</span><strong id="audioBclkSummary">-</strong></div>
-              <div class="status-item"><span>I2S DIN</span><strong id="audioDoutSummary">-</strong></div>
-            </div>
             <div class="row gpio-remap-source">
               <label>I2S LRC / WS
                 <select id="audioWsPin" name="audio.wsPin" form="settingsForm"></select>
@@ -186,6 +203,50 @@
           </form>
 
           <div class="firmware-list" id="recentPlaybackList"></div>
+        </div>
+
+        <div id="tab-effects" class="tab-panel" role="tabpanel">
+          <div class="panel-head panel-head-inline">
+            <h2>Audio Effects</h2>
+            <button id="effectsReindexButton" type="button" class="secondary icon-only-button" aria-label="Reindex files" title="Reindex files">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path><path d="M12 7v5l3 3"></path></svg>
+            </button>
+          </div>
+          <form>
+            <div class="row">
+              <label>Startup
+                <select id="effectStartupFile" name="effects.startupFile" form="settingsForm"></select>
+              </label>
+              <label>Alarm
+                <select id="effectAlarmFile" name="effects.alarmFile" form="settingsForm"></select>
+              </label>
+            </div>
+            <div class="row">
+              <label>Notification
+                <select id="effectNotificationFile" name="effects.notificationFile" form="settingsForm"></select>
+              </label>
+              <label>Ambient Sound
+                <select id="effectAmbientSoundFile" name="effects.ambientSoundFile" form="settingsForm"></select>
+              </label>
+            </div>
+            <div class="row">
+              <label>Low Battery
+                <select id="effectLowBatteryFile" name="effects.lowBatteryFile" form="settingsForm"></select>
+              </label>
+              <label>Shut Down
+                <select id="effectShutDownFile" name="effects.shutDownFile" form="settingsForm"></select>
+              </label>
+            </div>
+            <div class="row">
+              <label>Updates Available
+                <select id="effectUpdateAvailableFile" name="effects.updateAvailableFile" form="settingsForm"></select>
+              </label>
+              <label>Update Success
+                <select id="effectUpdateSuccessFile" name="effects.updateSuccessFile" form="settingsForm"></select>
+              </label>
+            </div>
+            <p id="effectsFileStatus" class="note">Choose supported audio files from SD <code>/media/wav</code> or flash <code>/wav</code>. Changing a selection previews that file on the device.</p>
+          </form>
         </div>
 
         <div id="tab-wifi" class="tab-panel" role="tabpanel">
@@ -299,7 +360,7 @@
                 <select id="batteryAdcPin" form="settingsForm" name="battery.adcPin"></select>
               </label>
               <label>Measured Battery Voltage
-                <input id="batteryMeasuredVoltage" type="number" min="0" step="0.001" placeholder="Measure at battery terminals">
+                <input id="batteryMeasuredVoltage" form="settingsForm" name="battery.measuredVoltage" type="text" inputmode="decimal" placeholder="Measure at battery terminals">
               </label>
             </div>
             <div class="row">
@@ -380,7 +441,7 @@
         </div>
 
         <div id="tab-hardware" class="tab-panel" role="tabpanel">
-          <h2>Hardware</h2>
+          <h2>Hardware Monitor</h2>
           <div class="device-health-grid">
             <div class="resource-card">
               <div class="resource-head"><span>CPU Load</span><strong id="deviceCpuLoadValue">-</strong></div>
@@ -595,28 +656,7 @@
                 <div id="storageSummary" class="scan-status">Loading storage info...</div>
               </div>
             </div>
-            <div id="storageSdConfig" class="storage-sd-config">
-              <label class="check"><input id="sdEnabled" form="settingsForm" name="sd.enabled" type="checkbox"> Enable SD card storage</label>
-              <div class="row storage-sd-pin-grid gpio-remap-source">
-                <label>CS
-                  <select id="sdCsPin" form="settingsForm" name="sd.csPin"></select>
-                </label>
-                <label>SCK
-                  <select id="sdSckPin" form="settingsForm" name="sd.sckPin"></select>
-                </label>
-              </div>
-              <div class="row storage-sd-pin-grid gpio-remap-source">
-                <label>MOSI
-                  <select id="sdMosiPin" form="settingsForm" name="sd.mosiPin"></select>
-                </label>
-                <label>MISO
-                  <select id="sdMisoPin" form="settingsForm" name="sd.misoPin"></select>
-                </label>
-              </div>
-              <p class="note">Default SD SPI mapping is CS GPIO4, SCK GPIO5, MOSI GPIO6, and MISO GPIO7. When SD storage is enabled, OLED, fixed touch-button inputs, and the documented buzzer GPIO reservation are gated away from those same pins.</p>
-            </div>
             <div class="storage-path-bar">
-              <button id="storageUpButton" type="button" class="secondary">Up</button>
               <div id="storageBreadcrumbs" class="storage-breadcrumbs" aria-label="Current folder"></div>
             </div>
             <div class="storage-command-deck" aria-label="Storage instruments">
@@ -625,25 +665,26 @@
                 <span id="storageLimit" class="scan-status">-</span>
               </div>
               <div class="storage-command-actions">
-                <button id="storageSelectModeButton" type="button" class="secondary storage-tool-button" title="Toggle multi-select mode" aria-label="Toggle multi-select mode">
+                <button id="storageUpButton" type="button" class="secondary storage-tool-button icon-only-button" title="Go up one folder" aria-label="Go up one folder">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5"></path><path d="m7 10 5-5 5 5"></path></svg>
+                </button>
+                <button id="storageSelectModeButton" type="button" class="secondary storage-tool-button icon-only-button" title="Toggle multi-select mode" aria-label="Toggle multi-select mode">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
-                  <span>Select</span>
                 </button>
-                <button id="storageSelectAllButton" type="button" class="secondary storage-tool-button" title="Select all visible items" aria-label="Select all visible items">
+                <button id="storageSelectAllButton" type="button" class="secondary storage-tool-button icon-only-button" title="Select all visible items" aria-label="Select all visible items">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"></path><path d="M3 7h8"></path><path d="M3 12h5"></path><path d="M3 17h8"></path></svg>
-                  <span>All</span>
                 </button>
-                <button id="storageDeleteButton" type="button" class="secondary storage-tool-button storage-tool-danger" title="Delete selected items" aria-label="Delete selected items">
+                <button id="storageDeleteButton" type="button" class="secondary storage-tool-button storage-tool-danger icon-only-button" title="Delete selected items" aria-label="Delete selected items">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 14h10l1-14"></path><path d="M10 10v6"></path><path d="M14 10v6"></path></svg>
-                  <span>Delete</span>
                 </button>
-                <button id="storageUploadButton" type="button" class="storage-tool-button" title="Upload audio files" aria-label="Upload audio files">
+                <button id="storageUploadButton" type="button" class="storage-tool-button icon-only-button" title="Upload audio files" aria-label="Upload audio files">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4"></path><path d="m7 9 5-5 5 5"></path><path d="M5 20h14"></path></svg>
-                  <span>Upload</span>
                 </button>
-                <button id="storageNewFolderButton" type="button" class="secondary storage-tool-button" title="Create folder" aria-label="Create folder">
+                <button id="storageNewFolderButton" type="button" class="secondary storage-tool-button icon-only-button" title="Create folder" aria-label="Create folder">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h6l2 2h10v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="M12 11v6"></path><path d="M9 14h6"></path></svg>
-                  <span>Folder</span>
+                </button>
+                <button id="storageReindexButton" type="button" class="secondary storage-tool-button icon-only-button" title="Reindex files" aria-label="Reindex files">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path><path d="M12 7v5l3 3"></path></svg>
                 </button>
               </div>
             </div>
@@ -674,13 +715,17 @@
               </div>
               <div class="storage-preview-details">
                 <div id="storagePreviewAlbum" class="storage-preview-album">Album art unavailable</div>
+                <div id="storagePreviewArtworkStatus" class="scan-status">Waiting for artwork lookup.</div>
                 <div class="progress-wrap storage-preview-progress-wrap">
                   <div class="progress-bar"><div id="storagePreviewProgressFill" class="progress-fill"></div></div>
                   <div id="storagePreviewProgressLabel" class="progress-label">00:00 / 00:00</div>
                 </div>
                 <div class="storage-preview-actions">
+                  <button id="storagePreviewPrevButton" type="button" class="secondary" aria-label="Previous track" title="Previous track">&#9664;</button>
                   <button id="storagePreviewPlayButton" type="button">Play</button>
-                  <button id="storagePreviewStopButton" type="button" class="secondary">Stop</button>
+                  <button id="storagePreviewNextButton" type="button" class="secondary" aria-label="Next track" title="Next track">&#9654;</button>
+                  <button id="storagePreviewLoopButton" type="button" class="secondary" aria-pressed="false">Loop</button>
+                  <button id="storagePreviewShuffleButton" type="button" class="secondary" aria-pressed="false">Shuffle</button>
                 </div>
                 <p class="note">Double-click any music file to preview its metadata, listen in the browser for progress tracking, and start or stop that same file on the device.</p>
               </div>
@@ -709,6 +754,10 @@
             <button id="applyOtaButton" type="button" class="secondary">Install Selected</button>
             <button id="uploadFirmwareButton" type="button" class="secondary">Upload Local Firmware</button>
           </div>
+          <div class="row">
+            <label class="check"><input form="settingsForm" name="ota.autoCheck" type="checkbox"> Check for updates on boot</label>
+            <label class="check"><input form="settingsForm" name="ota.autoUpdate" type="checkbox"> Auto-update when a newer release is found</label>
+          </div>
           <div class="actions actions-inline-text">
             <span id="firmwareSelectionLabel" class="scan-status">No firmware selected</span>
             <span id="localFirmwareLabel" class="scan-status">No local firmware selected</span>
@@ -734,6 +783,33 @@
   <template id="toastTemplate">
     <div class="toast"></div>
   </template>
+
+  <div id="rebootOverlay" class="reboot-overlay" hidden>
+    <div class="reboot-overlay-card">
+      <div class="reboot-overlay-ring">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <circle class="reboot-ring-track" cx="60" cy="60" r="52"></circle>
+          <circle id="rebootOverlayProgress" class="reboot-ring-progress" cx="60" cy="60" r="52"></circle>
+        </svg>
+        <div class="reboot-overlay-center">
+          <strong id="rebootOverlayCountdown">30</strong>
+          <span>s</span>
+        </div>
+      </div>
+      <div id="rebootOverlayTitle" class="reboot-overlay-title">Rebooting device...</div>
+      <div id="rebootOverlayStatus" class="reboot-overlay-status">Waiting for device to come back online.</div>
+    </div>
+  </div>
+
+  <dialog id="updateAvailableDialog" class="storage-preview-modal">
+    <div class="storage-preview-shell">
+      <div class="storage-preview-header">
+        <strong>Update Available</strong>
+        <button id="updateAvailableCloseButton" type="button" class="secondary">Close</button>
+      </div>
+      <div id="updateAvailableBody" class="note">Checking update details...</div>
+    </div>
+  </dialog>
 
   <script src="/app.js" defer></script>
 </body>

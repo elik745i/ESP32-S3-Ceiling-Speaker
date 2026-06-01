@@ -173,6 +173,10 @@ class AudioPlayerStub {
         return false;
     }
 
+    bool playStorageFile(StorageTarget, const String&, const String&, const String&, const String&) {
+        return false;
+    }
+
     void stop() {
     state_ = "idle";
     type_ = "idle";
@@ -230,18 +234,42 @@ struct DeferredActions {
     SettingsBundle pendingSettings;
     bool playPending = false;
     bool playAddToHistory = true;
+    bool playFromStorage = false;
+    StorageTarget playStorageTarget = StorageTarget::Flash;
     bool stopPending = false;
     bool volumePending = false;
     bool volumeSavePending = false;
     uint8_t pendingVolume = 0;
     unsigned long volumeSaveAt = 0;
     String playUrl;
+    String playStoragePath;
     String playLabel;
     String playType;
     String playSource;
 };
 
 DeferredActions* deferredActions = nullptr;
+
+struct RuntimeAudioAutomation {
+    bool bootUpdateCheckQueued = false;
+    bool updateAvailableHandled = false;
+    bool pendingAutoUpdateInstall = false;
+    bool lowBatteryCueActive = false;
+    bool ambientVolumeApplied = false;
+    bool alarmActive = false;
+    bool restartPending = false;
+    bool restartFactoryReset = false;
+    bool restartForcePending = false;
+    bool webUiLockPending = false;
+    bool pendingCommandAfterNotification = false;
+    uint8_t ambientPreviousVolume = 0;
+    unsigned long ambientEligibleAt = 0;
+    unsigned long restartForceAt = 0;
+    PlaybackCommand pendingCommand;
+    String restartReason;
+};
+
+RuntimeAudioAutomation runtimeAudio;
 
 struct PhysicalButtonState {
     uint8_t pin = 0;
@@ -277,6 +305,7 @@ bool previousWifiConnected = false;
 bool previousMqttConnected = false;
 bool previousCharging = false;
 String previousPlaybackState = "idle";
+String previousPlaybackSource = "none";
 String lastPublishedOtaSignature;
 bool transitionStateInitialized = false;
 bool otaPendingVerification = false;
@@ -294,6 +323,8 @@ constexpr unsigned long kButtonDebounceMs = 30UL;
 constexpr size_t kPlaybackHistoryLimit = 12;
 constexpr unsigned long kOtaHealthConfirmDelayMs = 8000UL;
 constexpr unsigned long kWapePulseDurationMs = 500UL;
+constexpr unsigned long kAmbientResumeDelayMs = 30000UL;
+constexpr unsigned long kRestartEffectForceDelayMs = 7000UL;
 
 constexpr char kOtaRollbackNamespace[] = "ota_state";
 constexpr char kOtaPendingVersionKey[] = "pend_ver";
@@ -302,6 +333,46 @@ constexpr char kOtaLastBadVersionKey[] = "bad_ver";
 constexpr char kOtaLastBadReasonKey[] = "bad_reason";
 
 bool playRequest(const String& url, const String& label, const String& type, const String& source, String& error, bool addToHistory);
+void flushPendingSettingsNow();
+
+bool parseStorageFileReference(const String& raw, StorageTarget& target, String& path) {
+    String value = raw;
+    value.trim();
+    value.replace('\\', '/');
+
+    const int separatorIndex = value.indexOf(':');
+    if (separatorIndex <= 0) {
+        return false;
+    }
+
+    String targetId = value.substring(0, separatorIndex);
+    targetId.trim();
+    targetId.toLowerCase();
+    if (targetId == "sd") {
+        target = StorageTarget::Sd;
+    } else if (targetId == "flash") {
+        target = StorageTarget::Flash;
+    } else {
+        return false;
+    }
+
+    path = value.substring(separatorIndex + 1);
+    path.trim();
+    if (path.isEmpty()) {
+        return false;
+    }
+    if (!path.startsWith("/")) {
+        path = "/" + path;
+    }
+    while (path.indexOf("//") >= 0) {
+        path.replace("//", "/");
+    }
+    if (path.indexOf("..") >= 0) {
+        return false;
+    }
+
+    return true;
+}
 
 PhysicalButtonState button1 { DefaultConfig::BUTTON1_PIN, "Button 1" };
 PhysicalButtonState button2 { DefaultConfig::BUTTON2_PIN, "Button 2" };
@@ -541,6 +612,133 @@ void confirmOtaHealthIfReady() {
 void scheduleReboot(uint32_t delayMs) {
     rebootRequested = true;
     rebootAt = millis() + delayMs;
+}
+
+String effectFileForSource(const String& source) {
+    if (settings == nullptr) {
+        return "";
+    }
+    if (source == "effect-startup") return settings->effects.startupFile;
+    if (source == "effect-alarm") return settings->effects.alarmFile;
+    if (source == "effect-notification") return settings->effects.notificationFile;
+    if (source == "effect-ambient") return settings->effects.ambientSoundFile;
+    if (source == "effect-low-battery") return settings->effects.lowBatteryFile;
+    if (source == "effect-shutdown") return settings->effects.shutDownFile;
+    if (source == "effect-update-available") return settings->effects.updateAvailableFile;
+    if (source == "effect-update-success") return settings->effects.updateSuccessFile;
+    return "";
+}
+
+bool playConfiguredEffect(const String& effectRef, const String& label, const String& source) {
+    if (effectRef.isEmpty() || deferredActions == nullptr) {
+        return false;
+    }
+    String ignored;
+    return playRequest(effectRef, label, "effect", source, ignored, false);
+}
+
+bool tryOverlayConfiguredEffect(const String& effectRef, uint8_t duckPercent = 35, uint8_t overlayPercent = 100) {
+    if (effectRef.isEmpty() || audioPlayer == nullptr || appState == nullptr) {
+        return false;
+    }
+    StorageTarget target = StorageTarget::Flash;
+    String path;
+    if (!parseStorageFileReference(effectRef, target, path)) {
+        return false;
+    }
+    const AppStateSnapshot snapshot = appState->snapshot();
+    if (snapshot.playback.state != "playing" || snapshot.playback.source.startsWith("effect-")) {
+        return false;
+    }
+    return audioPlayer->playStorageOverlay(target, path, duckPercent, overlayPercent);
+}
+
+bool playConfiguredEffectSource(const String& source, const String& label) {
+    return playConfiguredEffect(effectFileForSource(source), label, source);
+}
+
+void restoreAmbientVolumeIfNeeded() {
+    if (!runtimeAudio.ambientVolumeApplied || audioPlayer == nullptr) {
+        return;
+    }
+    audioPlayer->setVolumePercent(settings != nullptr ? settings->device.savedVolumePercent : runtimeAudio.ambientPreviousVolume);
+    runtimeAudio.ambientVolumeApplied = false;
+}
+
+void startAmbientIfEligible(const AppStateSnapshot& snapshot) {
+    if (settings == nullptr || audioPlayer == nullptr || runtimeAudio.alarmActive || runtimeAudio.restartPending ||
+        settings->effects.ambientSoundFile.isEmpty() || snapshot.playback.state != "idle") {
+        return;
+    }
+    if (runtimeAudio.ambientEligibleAt == 0 || static_cast<long>(millis() - runtimeAudio.ambientEligibleAt) < 0) {
+        return;
+    }
+    runtimeAudio.ambientPreviousVolume = settings->device.savedVolumePercent;
+    audioPlayer->setVolumePercent(min<uint8_t>(20, settings->device.savedVolumePercent));
+    runtimeAudio.ambientVolumeApplied = true;
+    if (!playConfiguredEffectSource("effect-ambient", "Ambient Sound")) {
+        restoreAmbientVolumeIfNeeded();
+        runtimeAudio.ambientEligibleAt = millis() + kAmbientResumeDelayMs;
+    }
+}
+
+void scheduleAmbientResume() {
+    runtimeAudio.ambientEligibleAt = millis() + kAmbientResumeDelayMs;
+}
+
+void applyWebUiLockNow() {
+    if (webServer != nullptr) {
+        webServer->setWebUiLocked(true);
+    }
+    if (appState != nullptr) {
+        appState->setLastError("Web UI locked. Unlock it via MQTT command <baseTopic>/cmd/web_ui with payload unlock.");
+    }
+    if (mqttManager != nullptr) {
+        mqttManager->publishState();
+    }
+}
+
+void requestWebUiLockSequence() {
+    runtimeAudio.webUiLockPending = true;
+    runtimeAudio.pendingCommandAfterNotification = false;
+    runtimeAudio.alarmActive = false;
+    restoreAmbientVolumeIfNeeded();
+
+    if (audioPlayer != nullptr) {
+        audioPlayer->stop();
+    }
+
+    if (!playConfiguredEffectSource("effect-shutdown", "Shutting Down")) {
+        runtimeAudio.webUiLockPending = false;
+        applyWebUiLockNow();
+    }
+}
+
+void requestRestartSequence(const String& reason, bool factoryResetAfterRestart) {
+    runtimeAudio.restartPending = true;
+    runtimeAudio.restartFactoryReset = factoryResetAfterRestart;
+    runtimeAudio.restartReason = reason;
+    runtimeAudio.restartForcePending = true;
+    runtimeAudio.restartForceAt = millis() + kRestartEffectForceDelayMs;
+    runtimeAudio.pendingCommandAfterNotification = false;
+    runtimeAudio.alarmActive = false;
+    restoreAmbientVolumeIfNeeded();
+
+    if (audioPlayer != nullptr) {
+        audioPlayer->stop();
+    }
+
+    const bool playedUpdateSuccess = reason == "ota" && playConfiguredEffectSource("effect-update-success", "Update Success");
+    if (!playedUpdateSuccess && !playConfiguredEffectSource("effect-shutdown", "Restarting")) {
+        if (factoryResetAfterRestart) {
+            factoryResetRequested = true;
+        }
+        scheduleReboot(250);
+    }
+}
+
+void handleOtaRestartRequest(const String& reason) {
+    requestRestartSequence(reason, false);
 }
 
 uint8_t estimateBatteryPercent(float voltage) {
@@ -1030,6 +1228,8 @@ void applyRuntimeSettings() {
     soundEffects->applySettings(*settings);
     mqttManager->applySettings(*settings);
     otaManager->applySettings(*settings);
+    runtimeAudio.ambientEligibleAt = millis() + kAmbientResumeDelayMs;
+    runtimeAudio.updateAvailableHandled = false;
     sampleSystemMetrics();
 
     // Repaint the current status immediately on the newly selected LED pin so
@@ -1042,16 +1242,25 @@ bool saveSettingsFromJson(JsonVariantConst root, String& error) {
     if (!settingsManager->updateFromJson(updated, root, error)) {
         return false;
     }
+    updated.usingSavedSettings = true;
+    *settings = updated;
+    appState->setDevice(settings->device.deviceName, settings->device.friendlyName, true);
     deferredActions->pendingSettings = updated;
     deferredActions->settingsApplyPending = true;
     return true;
 }
 
 bool playRequest(const String& url, const String& label, const String& type, const String& source, String& error, bool addToHistory) {
-    const String normalizedUrl = PlaybackText::normalizeUrl(url);
-    if (normalizedUrl.isEmpty()) {
-        error = "URL is required";
-        return false;
+    StorageTarget storageTarget = StorageTarget::Flash;
+    String storagePath;
+    const bool storageReference = parseStorageFileReference(url, storageTarget, storagePath);
+    String normalizedUrl;
+    if (!storageReference) {
+        normalizedUrl = PlaybackText::normalizeUrl(url);
+        if (normalizedUrl.isEmpty()) {
+            error = "URL is required";
+            return false;
+        }
     }
 #if APP_AUDIO_DIAGNOSTIC_TEST
     if (source != "diagnostic-test") {
@@ -1063,8 +1272,13 @@ bool playRequest(const String& url, const String& label, const String& type, con
     error = "Audio disabled in diagnostic build";
     return false;
 #endif
-    deferredActions->playUrl = normalizedUrl;
-    deferredActions->playLabel = PlaybackText::normalizeTitle(label, normalizedUrl);
+    deferredActions->playFromStorage = storageReference;
+    deferredActions->playStorageTarget = storageTarget;
+    deferredActions->playStoragePath = storagePath;
+    deferredActions->playUrl = storageReference ? String(url) : normalizedUrl;
+    deferredActions->playLabel = storageReference
+        ? PlaybackText::normalizeTitle(label, storagePath)
+        : PlaybackText::normalizeTitle(label, normalizedUrl);
     deferredActions->playType = type;
     deferredActions->playAddToHistory = addToHistory;
     if (!source.isEmpty()) {
@@ -1077,7 +1291,46 @@ bool playRequest(const String& url, const String& label, const String& type, con
     return true;
 }
 
+void stopAlarmPlayback() {
+    runtimeAudio.alarmActive = false;
+    if (audioPlayer != nullptr && appState != nullptr) {
+        const AppStateSnapshot snapshot = appState->snapshot();
+        if (snapshot.playback.source == "effect-alarm") {
+            audioPlayer->stop();
+        }
+    }
+    scheduleAmbientResume();
+}
+
+void startAlarmPlayback() {
+    runtimeAudio.alarmActive = true;
+    restoreAmbientVolumeIfNeeded();
+    if (audioPlayer != nullptr) {
+        audioPlayer->stop();
+    }
+    if (!playConfiguredEffectSource("effect-alarm", "Alarm")) {
+        runtimeAudio.alarmActive = false;
+    }
+}
+
+void executePlaybackCommand(const PlaybackCommand& command);
+
 void handleMqttCommand(const PlaybackCommand& command) {
+    if (!command.skipNotificationCue &&
+        !settings->effects.notificationFile.isEmpty() &&
+        (command.action == "play" || command.action == "tts" || command.action == "alarm_start" || command.action == "ota_install" ||
+         command.action == "ota_install_latest" || command.action == "ota_install_selected")) {
+        runtimeAudio.pendingCommand = command;
+        runtimeAudio.pendingCommand.skipNotificationCue = true;
+        runtimeAudio.pendingCommandAfterNotification = playConfiguredEffectSource("effect-notification", "MQTT Notification");
+        if (runtimeAudio.pendingCommandAfterNotification) {
+            return;
+        }
+    }
+    executePlaybackCommand(command);
+}
+
+void executePlaybackCommand(const PlaybackCommand& command) {
     if (command.action == "ota_check") {
         String error;
         if (otaManager != nullptr && otaManager->triggerReleaseRefresh(error)) {
@@ -1137,7 +1390,30 @@ void handleMqttCommand(const PlaybackCommand& command) {
             appState->setLastError(message);
         }
         mqttManager->publishState();
+    } else if (command.action == "alarm_start") {
+        startAlarmPlayback();
+        mqttManager->publishState();
+    } else if (command.action == "alarm_stop") {
+        stopAlarmPlayback();
+        mqttManager->publishState();
+    } else if (command.action == "notify") {
+        if (!tryOverlayConfiguredEffect(settings->effects.notificationFile, 35, 100)) {
+            playConfiguredEffectSource("effect-notification", command.payload.isEmpty() ? "MQTT Notification" : command.payload);
+        }
+    } else if (command.action == "web_ui_lock") {
+        if (webServer != nullptr) {
+            webServer->setWebUiLocked(true);
+        }
+        appState->setLastError("Web UI locked. Send MQTT payload 'unlock' to <baseTopic>/cmd/web_ui to restore access.");
+        mqttManager->publishState();
+    } else if (command.action == "web_ui_unlock") {
+        if (webServer != nullptr) {
+            webServer->setWebUiLocked(false);
+        }
+        appState->setLastError("");
+        mqttManager->publishState();
     } else if (command.action == "stop" || command.action == "pause") {
+        stopAlarmPlayback();
         audioPlayer->stop();
         mqttManager->publishState();
     } else if (command.action == "display_trigger") {
@@ -1170,6 +1446,9 @@ void handleMqttCommand(const PlaybackCommand& command) {
     } else if (command.action == "previous") {
         stepPlaybackHistory(-1);
     } else {
+        runtimeAudio.alarmActive = false;
+        restoreAmbientVolumeIfNeeded();
+        scheduleAmbientResume();
         String ignored;
         playRequest(command.url, command.label, command.mediaType.isEmpty() ? command.action : command.mediaType, command.source, ignored, true);
     }
@@ -1181,11 +1460,7 @@ void processDeferredActions() {
     }
 
     if (deferredActions->settingsApplyPending) {
-        settingsManager->save(deferredActions->pendingSettings);
-        *settings = settingsManager->load();
-        applyRuntimeSettings();
-        deferredActions->settingsApplyPending = false;
-        mqttManager->publishState();
+        flushPendingSettingsNow();
     }
 
     if (deferredActions->stopPending) {
@@ -1210,11 +1485,23 @@ void processDeferredActions() {
     }
 
     if (deferredActions->playPending) {
-        audioPlayer->play(
-            deferredActions->playUrl,
-            deferredActions->playLabel,
-            deferredActions->playType,
-            deferredActions->playSource);
+        if (deferredActions->playSource != "effect-ambient") {
+            restoreAmbientVolumeIfNeeded();
+        }
+        if (deferredActions->playFromStorage) {
+            audioPlayer->playStorageFile(
+                deferredActions->playStorageTarget,
+                deferredActions->playStoragePath,
+                deferredActions->playLabel,
+                deferredActions->playType,
+                deferredActions->playSource);
+        } else {
+            audioPlayer->play(
+                deferredActions->playUrl,
+                deferredActions->playLabel,
+                deferredActions->playType,
+                deferredActions->playSource);
+        }
         if (deferredActions->playAddToHistory) {
             rememberPlaybackSelection(
                 deferredActions->playUrl,
@@ -1300,6 +1587,7 @@ void setup() {
 
     soundEffects->begin(*settings);
     otaManager->begin(*settings, *appState);
+    otaManager->setRestartHandler(handleOtaRestartRequest);
     refreshRollbackStateInOtaManager();
     otaManager->setProgressCallback(pumpOtaDisplayProgress);
 
@@ -1313,7 +1601,9 @@ void setup() {
         []() { return *settings; },
         saveSettingsFromJson,
         [](const String& url, const String& label, const String& type, String& error) {
-            return playRequest(url, label, type, "", error, true);
+            const bool addToHistory = type != "effect-preview";
+            const String source = type == "effect-preview" ? "effect-preview" : "";
+            return playRequest(url, label, type, source, error, addToHistory);
         },
         []() {
             deferredActions->stopPending = true;
@@ -1325,22 +1615,43 @@ void setup() {
         },
         [](bool apply) { return otaManager->triggerCheck(apply); },
         [](bool connect, String& error) {
+            if (connect) {
+                flushPendingSettingsNow();
+            }
             return connect ? mqttManager->requestConnect(error) : mqttManager->requestDisconnect(error);
         },
         []() { triggerWapeDisplay(); },
-        []() { scheduleReboot(500); },
         []() {
-            factoryResetRequested = true;
-            scheduleReboot(500);
-        });
+            if (webServer != nullptr) {
+                webServer->setWebUiLocked(true);
+            }
+            requestWebUiLockSequence();
+        },
+        []() { requestRestartSequence("manual", false); },
+        []() { requestRestartSequence("factory_reset", true); });
 
     displayManager->setBootMessage("Idle");
 #if !APP_AUDIO_DIAGNOSTIC_TEST
-    soundEffects->playBoot();
+    playConfiguredEffectSource("effect-startup", "Startup");
 #endif
+    runtimeAudio.ambientEligibleAt = millis() + kAmbientResumeDelayMs;
+    runtimeAudio.bootUpdateCheckQueued = settings->ota.autoCheck;
     if (settings->oled.displayType == "wape" && settings->oled.wapeTriggerEvent == "device_start") {
         requestWapeTriggerPulse();
     }
+}
+
+namespace {
+void flushPendingSettingsNow() {
+    if (deferredActions == nullptr || !deferredActions->settingsApplyPending) {
+        return;
+    }
+    settingsManager->save(deferredActions->pendingSettings);
+    *settings = settingsManager->load();
+    applyRuntimeSettings();
+    deferredActions->settingsApplyPending = false;
+    mqttManager->publishState();
+}
 }
 
 void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
@@ -1348,13 +1659,20 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
     (void)snapshot;
     return;
 #endif
-    if (soundEffects == nullptr) {
+    if (soundEffects == nullptr || settings == nullptr) {
         return;
     }
+
+    const bool nowPlaying = snapshot.playback.state == "playing" || snapshot.playback.state == "buffering";
+    const bool wasPlaying = previousPlaybackState == "playing" || previousPlaybackState == "buffering";
+    const bool playbackStopped = wasPlaying && !nowPlaying;
+    const bool playbackStarted = !wasPlaying && nowPlaying;
+
     if (!transitionStateInitialized) {
         previousWifiConnected = snapshot.network.wifiConnected;
         previousMqttConnected = snapshot.network.mqttConnected;
         previousPlaybackState = snapshot.playback.state;
+        previousPlaybackSource = snapshot.playback.source;
         previousCharging = snapshot.battery.charging;
         transitionStateInitialized = true;
         return;
@@ -1370,13 +1688,82 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
         soundEffects->playMqttConnected();
     }
 
-    if (previousPlaybackState != "playing" && snapshot.playback.state == "playing") {
+    if (playbackStarted) {
         soundEffects->playPlaybackStart();
+        if (snapshot.playback.source != "effect-ambient") {
+            runtimeAudio.ambientEligibleAt = millis() + kAmbientResumeDelayMs;
+        }
         if (settings != nullptr && settings->oled.wapeTriggerEvent == "play_start") {
             requestWapeTriggerPulse();
         }
-    } else if (previousPlaybackState == "playing" && snapshot.playback.state != "playing") {
+    } else if (playbackStopped) {
         soundEffects->playPlaybackStop();
+    }
+
+    if (playbackStopped) {
+        if (runtimeAudio.pendingCommandAfterNotification) {
+            runtimeAudio.pendingCommandAfterNotification = false;
+            executePlaybackCommand(runtimeAudio.pendingCommand);
+        } else if (runtimeAudio.pendingAutoUpdateInstall) {
+            runtimeAudio.pendingAutoUpdateInstall = false;
+            String error;
+            if (otaManager != nullptr && !snapshot.ota.latestVersion.isEmpty()) {
+                otaManager->triggerInstallVersion(snapshot.ota.latestVersion, error);
+            }
+        } else if (runtimeAudio.restartPending) {
+            if (previousPlaybackSource == "effect-update-success") {
+                if (!playConfiguredEffectSource("effect-shutdown", "Restarting")) {
+                    if (runtimeAudio.restartFactoryReset) {
+                        factoryResetRequested = true;
+                    }
+                    runtimeAudio.restartPending = false;
+                    runtimeAudio.restartForcePending = false;
+                    scheduleReboot(250);
+                }
+            } else if (previousPlaybackSource == "effect-shutdown") {
+                if (runtimeAudio.restartFactoryReset) {
+                    factoryResetRequested = true;
+                }
+                runtimeAudio.restartPending = false;
+                runtimeAudio.restartForcePending = false;
+                scheduleReboot(250);
+            }
+        } else if (runtimeAudio.webUiLockPending && previousPlaybackSource == "effect-shutdown") {
+            runtimeAudio.webUiLockPending = false;
+            applyWebUiLockNow();
+        } else if (runtimeAudio.alarmActive && previousPlaybackSource == "effect-alarm") {
+            playConfiguredEffectSource("effect-alarm", "Alarm");
+        } else if (previousPlaybackSource == "effect-ambient") {
+            restoreAmbientVolumeIfNeeded();
+            if (!runtimeAudio.alarmActive) {
+                runtimeAudio.ambientPreviousVolume = settings->device.savedVolumePercent;
+                audioPlayer->setVolumePercent(min<uint8_t>(20, settings->device.savedVolumePercent));
+                runtimeAudio.ambientVolumeApplied = true;
+                if (!playConfiguredEffectSource("effect-ambient", "Ambient Sound")) {
+                    restoreAmbientVolumeIfNeeded();
+                    scheduleAmbientResume();
+                }
+            }
+        } else if (previousPlaybackSource == "effect-low-battery") {
+            runtimeAudio.lowBatteryCueActive = false;
+        }
+    }
+
+    if (!runtimeAudio.updateAvailableHandled && snapshot.ota.updateAvailable && !snapshot.ota.latestVersion.isEmpty()) {
+        runtimeAudio.updateAvailableHandled = true;
+        runtimeAudio.pendingAutoUpdateInstall = settings->ota.autoUpdate;
+        const bool playedUpdateAvailableCue =
+            tryOverlayConfiguredEffect(settings->effects.updateAvailableFile, 40, 100) ||
+            playConfiguredEffectSource("effect-update-available", "Update Available");
+        if (!playedUpdateAvailableCue && runtimeAudio.pendingAutoUpdateInstall) {
+            runtimeAudio.pendingAutoUpdateInstall = false;
+            String error;
+            if (otaManager != nullptr) {
+                otaManager->triggerInstallVersion(snapshot.ota.latestVersion, error);
+            }
+        }
+    } else if (!snapshot.ota.updateAvailable) {
+        runtimeAudio.updateAvailableHandled = false;
     }
 
     if (!previousCharging && snapshot.battery.charging) {
@@ -1388,7 +1775,49 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
     previousWifiConnected = snapshot.network.wifiConnected;
     previousMqttConnected = snapshot.network.mqttConnected;
     previousPlaybackState = snapshot.playback.state;
+    previousPlaybackSource = snapshot.playback.source;
     previousCharging = snapshot.battery.charging;
+}
+
+void serviceRuntimeAudioAutomation(const AppStateSnapshot& snapshot) {
+    if (settings == nullptr) {
+        return;
+    }
+
+    if (audioPlayer != nullptr && audioPlayer->consumeOverlayFinished() && runtimeAudio.pendingAutoUpdateInstall) {
+        runtimeAudio.pendingAutoUpdateInstall = false;
+        String error;
+        if (otaManager != nullptr && !snapshot.ota.latestVersion.isEmpty()) {
+            otaManager->triggerInstallVersion(snapshot.ota.latestVersion, error);
+        }
+    }
+
+    if (runtimeAudio.bootUpdateCheckQueued && wifiManager != nullptr && wifiManager->isConnected() && otaManager != nullptr && !snapshot.ota.busy) {
+        runtimeAudio.bootUpdateCheckQueued = false;
+        otaManager->triggerCheck(false);
+    }
+
+    const uint8_t batteryPercent = estimateBatteryPercent(snapshot.battery.voltage);
+    if (batteryPercent > settings->device.lowBatterySleepThresholdPercent) {
+        runtimeAudio.lowBatteryCueActive = false;
+    } else if (!runtimeAudio.lowBatteryCueActive && !settings->effects.lowBatteryFile.isEmpty() && !runtimeAudio.alarmActive && !runtimeAudio.restartPending) {
+        runtimeAudio.lowBatteryCueActive =
+            tryOverlayConfiguredEffect(settings->effects.lowBatteryFile, 40, 100) ||
+            playConfiguredEffectSource("effect-low-battery", "Low Battery");
+    }
+
+    if (snapshot.playback.source != "effect-ambient") {
+        startAmbientIfEligible(snapshot);
+    }
+
+    if (runtimeAudio.restartForcePending && static_cast<long>(millis() - runtimeAudio.restartForceAt) >= 0) {
+        runtimeAudio.restartForcePending = false;
+        runtimeAudio.restartPending = false;
+        if (runtimeAudio.restartFactoryReset) {
+            factoryResetRequested = true;
+        }
+        scheduleReboot(250);
+    }
 }
 
 void serviceAudioDiagnosticTest() {
@@ -1461,6 +1890,7 @@ void loop() {
 
     const AppStateSnapshot snapshot = appState->snapshot();
     processSoundEffectTransitions(snapshot);
+    serviceRuntimeAudioAutomation(snapshot);
     displayManager->loop(snapshot);
     handleLowBatterySleepPolicy(snapshot);
     confirmOtaHealthIfReady();
@@ -1490,7 +1920,7 @@ void loop() {
         Serial.printf("[recovery] scheduling reboot after %u failed Wi-Fi attempts\n",
                       static_cast<unsigned>(wifiManager->consecutiveFailureCount()));
         Serial.flush();
-        scheduleReboot(1000);
+        requestRestartSequence("wifi_recovery", false);
     }
 
     if (!recoveryRebootScheduled && mqttManager->shouldRebootForRecovery()) {
@@ -1498,7 +1928,7 @@ void loop() {
         Serial.printf("[recovery] scheduling reboot after %u failed MQTT attempts\n",
                       static_cast<unsigned>(mqttManager->consecutiveFailureCount()));
         Serial.flush();
-        scheduleReboot(1000);
+        requestRestartSequence("mqtt_recovery", false);
     }
 
     if (rebootRequested && static_cast<long>(millis() - rebootAt) >= 0) {

@@ -5,10 +5,10 @@ Custom PlatformIO firmware for ESP32 and ESP32-S3 Wi-Fi speaker/notifier hardwar
 
 ## Current Release
 
-- Firmware version: `v0.1.14`
+- Firmware version: `v0.1.15`
 - Primary release repository: `elik745i/ESP32-S3-Ceiling-Speaker`
 - GitHub Releases feed: `https://api.github.com/repos/elik745i/ESP32-S3-Ceiling-Speaker/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.14.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.15.bin`
 
 ## What This Firmware Does
 
@@ -86,6 +86,17 @@ There is also a dedicated diagnostic build for isolated MAX98357A testing:
 
 That profile is for troubleshooting and is not part of the standard release asset matrix.
 
+## Sound Effects And Automation
+
+Runtime automation and local sound-effect routing are coordinated in [src/main.cpp](src/main.cpp), [src/audio_player.cpp](src/audio_player.cpp), and [src/sound_effects.cpp](src/sound_effects.cpp).
+
+Current behavior:
+
+- Configurable effect-file routing is available for startup, alarm, notification, ambient, low-battery, shutdown, update-available, and update-success events.
+- Ambient and alert cues can be selected from local storage and triggered without replacing the normal release asset flow.
+- Low-battery handling can play a cue before entering deep sleep when that mode is enabled.
+- OTA availability and success cues can be paired with the firmware action flow.
+
 ## Web UI
 
 The web frontend lives in [web/index.html](web/index.html), [web/style.css](web/style.css), and [web/app.js](web/app.js), then gets embedded into firmware by [scripts/asset_embed.py](scripts/asset_embed.py).
@@ -93,15 +104,19 @@ The web frontend lives in [web/index.html](web/index.html), [web/style.css](web/
 Current UI highlights:
 
 - Hero header with live firmware version, release channel badge, and author link.
+- Header gear menu with inline refresh, reboot, and shutdown actions.
+- Centered reboot countdown overlay that waits for reconnect before forcing a refresh.
 - Live Wi-Fi, MQTT, playback, battery, heap, and firmware status.
+- Hardware Monitor cards for CPU load, SRAM, PSRAM, flash FS, SD, and board metadata.
 - Radio Browser country and station selection with recent playback history.
 - Direct URL playback and TTS playback entry.
 - Previous, play or stop, and next station transport controls from the top playback card.
+- Audio Effects tab for assigning local files to startup, alert, ambient, and OTA cues.
 - I2S pin remapping for MAX98357A wiring.
-- OLED pin remapping and display configuration.
-- Battery configuration and calibration helpers.
+- OLED pin remapping plus display-mode selection between OLED and Wape trigger mode.
+- Battery configuration, charging-sense pin selection, calibration helpers, and low-battery sleep controls.
 - GPIO Info tab with board selector, dedicated SVG board art, side-by-side pin guidance, and board suitability recommendations.
-- Internal flash and SD storage tabs with file browsing, folder creation, upload support, and SD pin configuration.
+- Internal flash and SD storage tabs with file browsing, folder creation, upload support, selection tools, and SD pin configuration.
 - Firmware release browsing, local firmware upload, and firmware action dashboard.
 - Password reveal toggles, reboot, and factory-reset actions.
 
@@ -247,14 +262,14 @@ For Home Assistant media-player style control, use the HACS-oriented build with 
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.14`:
+Release asset names for `v0.1.15`:
 
-- `esp32-notifier-v0.1.14.bin`
-- `esp32-notifier-hacs-v0.1.14.bin`
-- `esp32-notifier-hacs-slim-v0.1.14.bin`
-- `esp32s3-notifier-v0.1.14.bin`
-- `esp32s3-notifier-hacs-v0.1.14.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.14.bin`
+- `esp32-notifier-v0.1.15.bin`
+- `esp32-notifier-hacs-v0.1.15.bin`
+- `esp32-notifier-hacs-slim-v0.1.15.bin`
+- `esp32s3-notifier-v0.1.15.bin`
+- `esp32s3-notifier-hacs-v0.1.15.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.15.bin`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard release variants and upload the matching OTA assets back to that release.
 
@@ -267,6 +282,8 @@ Current ESP32-S3 default behavior:
 - The ESP32-S3 Super Mini profiles use `GPIO3` for voltage sensing.
 - The default ESP32-S3 calibration multiplier is `2.0`.
 - On some ESP32-S3 Super Mini boards this reflects a built-in VBUS divider rather than a true direct cell-voltage measurement.
+- An optional charging-sense pin can be assigned when voltage-only charging detection is not sufficient.
+- Device settings now include low-battery sleep enablement, threshold percentage, and wake interval controls.
 
 If the reported voltage is off, recalibrate it from the Battery tab using a multimeter measurement.
 
@@ -277,7 +294,9 @@ OLED support is handled by [src/display_manager.cpp](src/display_manager.cpp).
 Current behavior:
 
 - SSD1306 and SH1106 displays are supported.
+- Display mode can switch between a normal OLED renderer and a Wape trigger mode.
 - OLED pins can be remapped from the UI.
+- Wape mode can fire a trigger pin on device start, playback start, or charging start.
 - OLED pin choices are sanitized to avoid clashes with audio, battery, LED, SD, and other reserved functions.
 - Only one display mode is intended to be active at a time.
 
@@ -289,7 +308,7 @@ Current behavior:
 
 - Internal flash storage is available only when the selected partition table includes a flash filesystem partition.
 - SD storage can be enabled and pinned through the UI.
-- The web UI supports browsing, folder creation, and file upload actions for available storage targets.
+- The web UI supports browsing, folder creation, upload actions, bulk selection controls, and in-browser preview helpers for available storage targets.
 - SD pin choices are checked against active audio, battery, and status pin assignments.
 
 ## Repository Layout
@@ -326,4 +345,4 @@ Key files and directories:
 
 Current release notes live here:
 
-- [release-assets/v0.1.14/release-notes.md](release-assets/v0.1.14/release-notes.md)
+- [release-assets/v0.1.15/release-notes.md](release-assets/v0.1.15/release-notes.md)

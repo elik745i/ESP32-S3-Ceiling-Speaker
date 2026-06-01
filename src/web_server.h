@@ -40,8 +40,11 @@ class WebServerManager {
         OtaHandler otaHandler,
         MqttHandler mqttHandler,
         SimpleHandler displayTriggerHandler,
+        SimpleHandler serverShutdownHandler,
         SimpleHandler rebootHandler,
         SimpleHandler factoryResetHandler);
+    void setWebUiLocked(bool locked);
+    bool webUiLocked() const;
 
   private:
 #ifndef APP_DISABLE_WEB_UI
@@ -58,8 +61,10 @@ class WebServerManager {
     OtaHandler otaHandler_;
     MqttHandler mqttHandler_;
     SimpleHandler displayTriggerHandler_;
+    SimpleHandler serverShutdownHandler_;
     SimpleHandler rebootHandler_;
     SimpleHandler factoryResetHandler_;
+    bool webUiLocked_ = false;
     File storageUploadFile_;
     StorageTarget storageUploadTarget_ = StorageTarget::Flash;
     String storageUploadPath_;
@@ -70,6 +75,7 @@ class WebServerManager {
     size_t storageTransferBufferCapacity_ = 0;
 
     bool ensureAuthorized(AsyncWebServerRequest* request);
+    bool rejectIfWebUiLocked(AsyncWebServerRequest* request);
     bool ensureStorageTransferBuffer(size_t minimumSize);
     bool redirectCaptivePortalIfNeeded(AsyncWebServerRequest* request);
     void sendJson(AsyncWebServerRequest* request, const JsonDocument& doc, int statusCode = 200);
