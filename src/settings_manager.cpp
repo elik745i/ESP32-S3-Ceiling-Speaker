@@ -474,6 +474,9 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
         settings.ota.assetTemplate == "esp32s3-notifier-hacs-slim-${version}.bin") {
         settings.ota.assetTemplate = defaultOtaAssetTemplate();
     }
+    if (settings.ota.autoUpdate) {
+        settings.ota.autoCheck = true;
+    }
     if (settings.mqtt.port == 0) {
         settings.mqtt.port = DefaultConfig::MQTT_PORT;
     }

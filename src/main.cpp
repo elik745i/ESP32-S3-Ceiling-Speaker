@@ -1720,7 +1720,7 @@ void setup() {
     playConfiguredEffectSource("effect-startup", "Startup");
 #endif
     runtimeAudio.ambientEligibleAt = millis() + kAmbientResumeDelayMs;
-    runtimeAudio.bootUpdateCheckQueued = settings->ota.autoCheck;
+    runtimeAudio.bootUpdateCheckQueued = settings->ota.autoCheck || settings->ota.autoUpdate;
     if (settings->oled.displayType == "wape" && settings->oled.wapeTriggerEvent == "device_start") {
         requestWapeTriggerPulse();
     }

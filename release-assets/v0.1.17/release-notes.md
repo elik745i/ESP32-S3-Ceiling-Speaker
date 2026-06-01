@@ -17,6 +17,7 @@ ESP32 Notifier v0.1.17
 - Restored SD infinite scrolling during playback for indexed folders, so large directories continue loading past the first 20 entries.
 - Changed SD reindex actions to stop playback first and then continue automatically instead of only reporting a blocker message.
 - Fixed MQTT auto-connect after reboot so the firmware now uses the same configure-and-connect path as the manual Connect button.
+- Fixed boot-time OTA checks for units with legacy saved settings where auto-update was enabled but auto-check had been left disabled, so those devices now discover and install new releases after reboot.
 
 Release assets:
 
