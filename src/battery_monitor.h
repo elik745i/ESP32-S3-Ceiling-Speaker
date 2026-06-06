@@ -20,13 +20,14 @@ class BatteryMonitor {
     void applySettings(const BatterySettings& settings, uint8_t adcPin);
     bool loop(bool samplingAllowed = true);
     BatteryReading latest() const;
+    bool enabled() const;
 
   private:
     static constexpr uint16_t kMaxWindowSize = 32;
 
     BatterySettings settings_;
     AppState* appState_ = nullptr;
-    uint8_t adcPin_ = 36;
+    uint8_t adcPin_ = 0;
     unsigned long lastSampleAt_ = 0;
     BatteryReading latest_;
     float movingAverageSamples_[kMaxWindowSize] = {};

@@ -1,6 +1,9 @@
 .pio/
 .vscode/
 .idea/
+node_modules/
+.web-build/
+.tmp-webbundle/
 compile_commands.json
 src/generated_web_assets.cpp
 include/generated_web_assets.h

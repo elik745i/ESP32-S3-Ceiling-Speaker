@@ -5,10 +5,10 @@ Custom PlatformIO firmware for ESP32 and ESP32-S3 Wi-Fi speaker/notifier hardwar
 
 ## Current Release
 
-- Firmware version: `v0.1.19-beta`
+- Firmware version: `v0.1.20-beta`
 - Primary release repository: `elik745i/ESP32-S3-Ceiling-Speaker`
 - GitHub Releases feed: `https://api.github.com/repos/elik745i/ESP32-S3-Ceiling-Speaker/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.19-beta.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.20-beta.bin`
 
 This version is intended to be published as a GitHub prerelease (`beta`) using the normal OTA asset names with a `-beta` suffix.
 

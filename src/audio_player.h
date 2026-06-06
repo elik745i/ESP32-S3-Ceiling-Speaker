@@ -19,7 +19,7 @@ class AudioPlayer {
         bool diagnosticTestMode = false;
     };
 
-    void begin(uint8_t bclkPin, uint8_t wsPin, uint8_t doutPin, uint8_t initialVolumePercent, AppState& appState);
+    void begin(uint8_t bclkPin, uint8_t wsPin, uint8_t doutPin, uint8_t initialVolumePercent, bool outputEnabled, AppState& appState);
     void loop();
     bool play(const String& url, const String& title, const String& mediaType, const String& source);
     bool playStorageFile(StorageTarget target, const String& path, const String& title, const String& mediaType, const String& source);
@@ -28,6 +28,7 @@ class AudioPlayer {
     bool overlayActive() const;
     bool consumeOverlayFinished();
     bool reconfigureOutputPins(uint8_t bclkPin, uint8_t wsPin, uint8_t doutPin);
+    bool disableOutput();
     void setVolumePercent(uint8_t volumePercent);
     void setDirectLibraryVolume(uint8_t libraryVolume);
     uint8_t volumePercent() const;

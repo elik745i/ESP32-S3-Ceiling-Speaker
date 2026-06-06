@@ -32,15 +32,17 @@ void BatteryMonitor::begin(const BatterySettings& settings, uint8_t adcPin, AppS
 
 void BatteryMonitor::applySettings(const BatterySettings& settings, uint8_t adcPin) {
     adcPin_ = adcPin;
-    pinMode(adcPin_, INPUT);
-    analogSetPinAttenuation(adcPin_, ADC_11db);
     settings_ = settings;
     chargingSensePin_ = settings_.chargingSensePin;
-    if (chargingSensePin_ > 0 && chargingSensePin_ != adcPin_) {
+    if (adcPin_ > 0) {
+        pinMode(adcPin_, INPUT);
+        analogSetPinAttenuation(adcPin_, ADC_11db);
+    }
+    if (chargingSensePin_ > 0 && chargingSensePin_ != adcPin_ && adcPin_ > 0) {
         pinMode(chargingSensePin_, INPUT_PULLUP);
     }
     resetFilterState();
-    latest_ = sampleNow();
+    latest_ = adcPin_ > 0 ? sampleNow() : BatteryReading{};
     if (appState_ != nullptr) {
         appState_->setBattery(latest_.filteredVoltage, latest_.rawAdcVoltage, latest_.rawAdc, latest_.charging);
     }
@@ -60,6 +62,10 @@ void BatteryMonitor::resetFilterState() {
 }
 
 BatteryReading BatteryMonitor::sampleNow() {
+    if (adcPin_ == 0) {
+        return BatteryReading{};
+    }
+
     const uint16_t raw = static_cast<uint16_t>(analogRead(adcPin_));
     const float rawVoltage = (static_cast<float>(raw) / 4095.0f) * 3.3f;
     const float correctedVoltage = rawVoltage * settings_.calibrationMultiplier;
@@ -118,6 +124,10 @@ BatteryReading BatteryMonitor::sampleNow() {
 }
 
 bool BatteryMonitor::loop(bool samplingAllowed) {
+    if (adcPin_ == 0) {
+        return false;
+    }
+
     const unsigned long now = millis();
     if (now - lastSampleAt_ < settings_.updateIntervalMs) {
         return false;
@@ -137,4 +147,8 @@ bool BatteryMonitor::loop(bool samplingAllowed) {
 
 BatteryReading BatteryMonitor::latest() const {
     return latest_;
+}
+
+bool BatteryMonitor::enabled() const {
+    return adcPin_ > 0;
 }

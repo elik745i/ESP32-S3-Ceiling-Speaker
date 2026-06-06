@@ -298,6 +298,7 @@ bool wokeFromDeepSleep = false;
 uint8_t activeI2sBclkPin = DefaultConfig::I2S_BCLK_PIN;
 uint8_t activeI2sWsPin = DefaultConfig::I2S_WS_PIN;
 uint8_t activeI2sDoutPin = DefaultConfig::I2S_DOUT_PIN;
+bool activeAudioOutputEnabled = true;
 uint8_t activeWapeTriggerPin = 0;
 bool wapeTriggerInitialized = false;
 bool wapePulseActive = false;
@@ -1256,11 +1257,17 @@ void applyRuntimeSettings() {
     wifiManager->applySettings(*settings);
     batteryMonitor->applySettings(settings->battery, settings->battery.adcPin);
     displayManager->applySettings(settings->oled);
-    if (settings->audio.bclkPin != activeI2sBclkPin || settings->audio.wsPin != activeI2sWsPin || settings->audio.doutPin != activeI2sDoutPin) {
+    if (!settings->audio.enabled) {
+        if (activeAudioOutputEnabled) {
+            audioPlayer->disableOutput();
+            activeAudioOutputEnabled = false;
+        }
+    } else if (!activeAudioOutputEnabled || settings->audio.bclkPin != activeI2sBclkPin || settings->audio.wsPin != activeI2sWsPin || settings->audio.doutPin != activeI2sDoutPin) {
         if (audioPlayer->reconfigureOutputPins(settings->audio.bclkPin, settings->audio.wsPin, settings->audio.doutPin)) {
             activeI2sBclkPin = settings->audio.bclkPin;
             activeI2sWsPin = settings->audio.wsPin;
             activeI2sDoutPin = settings->audio.doutPin;
+            activeAudioOutputEnabled = true;
         }
     }
 #if APP_AUDIO_DIAGNOSTIC_TEST
@@ -1699,15 +1706,18 @@ void setup() {
     activeI2sBclkPin = settings->audio.bclkPin;
     activeI2sWsPin = settings->audio.wsPin;
     activeI2sDoutPin = settings->audio.doutPin;
-    audioPlayer->begin(activeI2sBclkPin, activeI2sWsPin, activeI2sDoutPin, settings->device.savedVolumePercent, *appState);
+    activeAudioOutputEnabled = settings->audio.enabled;
+    audioPlayer->begin(activeI2sBclkPin, activeI2sWsPin, activeI2sDoutPin, settings->device.savedVolumePercent, activeAudioOutputEnabled, *appState);
 #if APP_AUDIO_DIAGNOSTIC_TEST
-    audioPlayer->setDirectLibraryVolume(DefaultConfig::AUDIO_DIAGNOSTIC_LIBRARY_VOLUME);
-    Serial.printf("[audio-test] build enabled, waiting for Wi-Fi to start %s at library volume %u using BCLK=%u WS=%u DOUT=%u\n",
-                  DefaultConfig::AUDIO_DIAGNOSTIC_STREAM_URL,
-                  static_cast<unsigned>(DefaultConfig::AUDIO_DIAGNOSTIC_LIBRARY_VOLUME),
-                  static_cast<unsigned>(activeI2sBclkPin),
-                  static_cast<unsigned>(activeI2sWsPin),
-                  static_cast<unsigned>(activeI2sDoutPin));
+    if (activeAudioOutputEnabled) {
+        audioPlayer->setDirectLibraryVolume(DefaultConfig::AUDIO_DIAGNOSTIC_LIBRARY_VOLUME);
+        Serial.printf("[audio-test] build enabled, waiting for Wi-Fi to start %s at library volume %u using BCLK=%u WS=%u DOUT=%u\n",
+                      DefaultConfig::AUDIO_DIAGNOSTIC_STREAM_URL,
+                      static_cast<unsigned>(DefaultConfig::AUDIO_DIAGNOSTIC_LIBRARY_VOLUME),
+                      static_cast<unsigned>(activeI2sBclkPin),
+                      static_cast<unsigned>(activeI2sWsPin),
+                      static_cast<unsigned>(activeI2sDoutPin));
+    }
 #endif
 
     soundEffects->begin(*settings);

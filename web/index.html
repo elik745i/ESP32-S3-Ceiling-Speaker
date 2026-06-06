@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ESP32 Notifier</title>
-  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f172a'/%3E%3Cpath d='M18 45V19h18c8.3 0 14 4.9 14 12.5C50 39.8 44.3 45 36 45H18zm8-7h9.2c4.2 0 6.8-2.4 6.8-6.5 0-4-2.6-6.5-6.8-6.5H26V38z' fill='%23fff'/%3E%3C/svg%3E" sizes="any">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -76,8 +76,8 @@
     <div class="grid">
       <section class="panel panel-wide">
         <div class="tabs" role="tablist" aria-label="Notifier tabs">
-          <button class="tab-button tab-button-icon tab-info" type="button" role="tab" aria-label="Info" data-tooltip="Info" title="Info" aria-selected="true" aria-controls="tab-info" data-tab="info">
-            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 10v6"></path><path d="M12 7h.01"></path></svg>
+          <button class="tab-button tab-button-icon tab-gpio" type="button" role="tab" aria-label="Configuration" data-tooltip="Configuration" title="Configuration" aria-selected="true" aria-controls="tab-gpio" data-tab="gpio">
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h4v4H6z"></path><path d="M14 6h4v4h-4z"></path><path d="M6 14h4v4H6z"></path><path d="M14 14h4v4h-4z"></path><path d="M10 8h4"></path><path d="M8 10v4"></path><path d="M16 10v4"></path><path d="M10 16h4"></path></svg>
           </button>
           <button class="tab-button tab-button-icon tab-audio" type="button" role="tab" aria-label="Audio" data-tooltip="Audio" title="Audio" aria-selected="false" aria-controls="tab-playback" data-tab="playback">
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15h4l5 4V5l-5 4H5z"></path><path d="M18 9a4 4 0 0 1 0 6"></path><path d="M20.5 6.5a7.5 7.5 0 0 1 0 11"></path></svg>
@@ -103,9 +103,6 @@
           <button class="tab-button tab-button-icon tab-hardware" type="button" role="tab" aria-label="Hardware Monitor" data-tooltip="Hardware Monitor" title="Hardware Monitor" aria-selected="false" aria-controls="tab-hardware" data-tab="hardware">
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"></rect><path d="M9 1v3"></path><path d="M15 1v3"></path><path d="M9 20v3"></path><path d="M15 20v3"></path><path d="M1 9h3"></path><path d="M1 15h3"></path><path d="M20 9h3"></path><path d="M20 15h3"></path></svg>
           </button>
-          <button class="tab-button tab-button-icon tab-gpio" type="button" role="tab" aria-label="Peripherials" data-tooltip="Peripherials" title="Peripherials" aria-selected="false" aria-controls="tab-gpio" data-tab="gpio">
-            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h4v4H6z"></path><path d="M14 6h4v4h-4z"></path><path d="M6 14h4v4H6z"></path><path d="M14 14h4v4h-4z"></path><path d="M10 8h4"></path><path d="M8 10v4"></path><path d="M16 10v4"></path><path d="M10 16h4"></path></svg>
-          </button>
           <button class="tab-button tab-button-icon tab-storage-internal" type="button" role="tab" aria-label="Internal Storage" data-tooltip="Internal Storage" title="Internal Storage" aria-selected="false" aria-controls="tab-storage-internal" data-tab="storage-internal">
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14v10H5z"></path><path d="M8 10h8"></path><path d="M8 14h5"></path></svg>
           </button>
@@ -115,9 +112,12 @@
           <button class="tab-button tab-button-icon tab-firmware" type="button" role="tab" aria-label="Firmware" data-tooltip="Firmware" title="Firmware" aria-selected="false" aria-controls="tab-firmware" data-tab="firmware">
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10"></path><path d="m8 9 4 4 4-4"></path><path d="M5 17v2h14v-2"></path></svg>
           </button>
+          <button class="tab-button tab-button-icon tab-info" type="button" role="tab" aria-label="Info" data-tooltip="Info" title="Info" aria-selected="false" aria-controls="tab-info" data-tab="info">
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 10v6"></path><path d="M12 7h.01"></path></svg>
+          </button>
         </div>
 
-        <div id="tab-info" class="tab-panel active" role="tabpanel">
+        <div id="tab-info" class="tab-panel" role="tabpanel">
           <h2>Info</h2>
           <div class="status-list">
             <div class="status-item"><span>Device</span><strong id="deviceNameValue">-</strong></div>
@@ -292,6 +292,7 @@
             </div>
             <div class="inline-actions">
               <button id="scanWifiButton" type="button" class="secondary">Scan Network</button>
+              <button id="wifiConnectButton" type="button">Connect</button>
               <span id="scanStatus" class="scan-status"></span>
             </div>
             <label>Found Networks
@@ -439,6 +440,22 @@
                 <select id="statusLedPin" form="settingsForm" name="device.statusLedPin"></select>
               </label>
             </div>
+            <div class="row gpio-remap-source">
+              <label>SD CS
+                <select id="sdCsPin" form="settingsForm" name="sd.csPin"></select>
+              </label>
+              <label>SD SCK
+                <select id="sdSckPin" form="settingsForm" name="sd.sckPin"></select>
+              </label>
+            </div>
+            <div class="row gpio-remap-source">
+              <label>SD MOSI
+                <select id="sdMosiPin" form="settingsForm" name="sd.mosiPin"></select>
+              </label>
+              <label>SD MISO
+                <select id="sdMisoPin" form="settingsForm" name="sd.misoPin"></select>
+              </label>
+            </div>
             <p class="note">On ESP32-S3 Super Mini / Zero style boards, the built-in WS2812 is typically on GPIO21. GPIO10 is the current external RGB default in this firmware.</p>
             <label class="check"><input id="lowBatterySleepToggle" form="settingsForm" name="device.lowBatterySleepEnabled" type="checkbox"> Deep sleep on low battery</label>
             <label>Sleep Threshold <span id="lowBatterySleepThresholdValue">20%</span>
@@ -468,7 +485,7 @@
               <button id="factoryResetButton" type="button" class="danger">Factory Reset</button>
               <button id="saveDeviceButton" type="button">Save Device Settings</button>
             </div>
-            <input id="restoreConfigFile" type="file" accept=".md,.markdown,.txt,.json" hidden>
+            <input id="restoreConfigFile" name="restoreConfigFile" type="file" accept=".md,.markdown,.txt,.json" aria-labelledby="restoreConfigButton" hidden>
             <p class="note">Backup exports a readable Markdown file with embedded JSON settings. Restore applies a previously exported backup file to a freshly flashed device.</p>
           </form>
         </div>
@@ -631,8 +648,8 @@
           </form>
         </div>
 
-        <div id="tab-gpio" class="tab-panel" role="tabpanel">
-          <h2>Peripherials</h2>
+        <div id="tab-gpio" class="tab-panel active" role="tabpanel">
+          <h2>Configuration</h2>
           <div class="gpio-controls-strip" aria-label="Peripheral profiles">
             <div class="gpio-controls-field gpio-controls-field-board">
               <span class="gpio-controls-field-label">Board</span>
@@ -657,11 +674,14 @@
                 </label>
               </div>
             </div>
-            <label class="gpio-controls-field">
+            <label class="gpio-controls-field gpio-controls-field-audio">
               <span class="gpio-controls-field-label">Audio Out</span>
               <div class="gpio-controls-field-main">
-                <div class="peripheral-field-composite">
-                  <select id="peripheralAudioProfile" aria-label="Audio output peripheral profile">
+                <div class="peripheral-profile-row">
+                  <div class="peripheral-profile-stack">
+                    <div id="peripheralAudioPrimaryIndexLabel" class="peripheral-profile-index-label" hidden></div>
+                    <div class="peripheral-field-composite">
+                      <select id="peripheralAudioProfile" aria-label="Audio output peripheral profile">
                   <option value="none">None</option>
                   <option value="max98357a-i2s-amp" selected>MAX98357A I2S Amp</option>
                   <option value="pcm5102-i2s-dac">PCM5102 I2S DAC</option>
@@ -674,51 +694,73 @@
                   <option value="analog-line-out-via-dac">Analog Line-Out via DAC</option>
                   <option value="pam8403-analog-amp">PAM8403 Analog Amp</option>
                   <option value="tpa3110-tpa3116-analog-amp">TPA3110 / TPA3116 Analog Amp</option>
+                  <option value="buzzer">Buzzer</option>
                   <option value="wm8960-audio-codec">WM8960 Audio Codec</option>
                   <option value="es8388-audio-codec">ES8388 Audio Codec</option>
                   <option value="bluetooth-audio-source">Bluetooth Audio Source</option>
                   <option value="custom">Custom</option>
-                  </select>
-                  <div id="peripheralAudioPins" class="peripheral-binding-group" aria-label="Audio output GPIO mapping"></div>
+                      </select>
+                      <div id="peripheralAudioPins" class="peripheral-binding-group" aria-label="Audio output GPIO mapping"></div>
+                    </div>
+                  </div>
+                  <button id="peripheralAudioAddButton" type="button" class="peripheral-profile-action peripheral-profile-action-add" aria-label="Add another audio out" title="Add another audio out">+</button>
                 </div>
+                <div id="peripheralAudioOutputsList" class="peripheral-audio-list" aria-label="Additional audio output peripheral profiles"></div>
               </div>
             </label>
             <label class="gpio-controls-field">
               <span class="gpio-controls-field-label">Audio In</span>
               <div class="gpio-controls-field-main">
-                <select id="peripheralAudioInProfile" aria-label="Audio input peripheral profile">
-                <option value="none" selected>None</option>
-                <option value="i2s-microphone-generic">I2S Microphone Generic</option>
-                <option value="inmp441-i2s-mic">INMP441 I2S Mic</option>
-                <option value="sph0645-ics43434-i2s-mic">SPH0645 / ICS-43434 I2S Mic</option>
-                <option value="msm2615-i2s-mic">MSM2615 I2S Mic</option>
-                <option value="pdm-microphone">PDM Microphone</option>
-                <option value="analog-electret-mic-adc">Analog Electret Mic ADC</option>
-                <option value="max9814-mic-adc">MAX9814 Mic ADC</option>
-                <option value="max4466-mic-adc">MAX4466 Mic ADC</option>
-                <option value="line-in-adc">Line-In ADC</option>
-                <option value="external-i2s-adc">External I2S ADC</option>
-                <option value="es7243-es7210-i2s-adc">ES7243 / ES7210 I2S ADC</option>
-                <option value="wm8960-audio-codec">WM8960 Audio Codec</option>
-                <option value="es8388-audio-codec">ES8388 Audio Codec</option>
-                <option value="bluetooth-audio-sink">Bluetooth Audio Sink</option>
-                <option value="custom">Custom</option>
-                </select>
+                <div class="peripheral-profile-row">
+                  <div class="peripheral-profile-stack">
+                    <div id="peripheralAudioInPrimaryIndexLabel" class="peripheral-profile-index-label" hidden></div>
+                    <div class="peripheral-field-composite">
+                      <select id="peripheralAudioInProfile" aria-label="Audio input peripheral profile">
+                  <option value="none" selected>None</option>
+                  <option value="i2s-microphone-generic">I2S Microphone Generic</option>
+                  <option value="inmp441-i2s-mic">INMP441 I2S Mic</option>
+                  <option value="sph0645-ics43434-i2s-mic">SPH0645 / ICS-43434 I2S Mic</option>
+                  <option value="msm2615-i2s-mic">MSM2615 I2S Mic</option>
+                  <option value="pdm-microphone">PDM Microphone</option>
+                  <option value="analog-electret-mic-adc">Analog Electret Mic ADC</option>
+                  <option value="max9814-mic-adc">MAX9814 Mic ADC</option>
+                  <option value="max4466-mic-adc">MAX4466 Mic ADC</option>
+                  <option value="line-in-adc">Line-In ADC</option>
+                  <option value="external-i2s-adc">External I2S ADC</option>
+                  <option value="es7243-es7210-i2s-adc">ES7243 / ES7210 I2S ADC</option>
+                  <option value="wm8960-audio-codec">WM8960 Audio Codec</option>
+                  <option value="es8388-audio-codec">ES8388 Audio Codec</option>
+                  <option value="bluetooth-audio-sink">Bluetooth Audio Sink</option>
+                  <option value="custom">Custom</option>
+                      </select>
+                      <div id="peripheralAudioInPins" class="peripheral-binding-group" aria-label="Audio input GPIO mapping"></div>
+                    </div>
+                  </div>
+                  <button id="peripheralAudioInAddButton" type="button" class="peripheral-profile-action peripheral-profile-action-add" aria-label="Add another audio input" title="Add another audio input">+</button>
+                </div>
+                <div id="peripheralAudioInList" class="peripheral-audio-in-list" aria-label="Additional audio input peripheral profiles"></div>
               </div>
             </label>
             <label class="gpio-controls-field">
               <span class="gpio-controls-field-label">Display</span>
               <div class="gpio-controls-field-main">
-                <div class="peripheral-field-composite">
-                  <select id="peripheralDisplayProfile" aria-label="Display peripheral profile">
+                <div class="peripheral-profile-row">
+                  <div class="peripheral-profile-stack">
+                    <div id="peripheralDisplayPrimaryIndexLabel" class="peripheral-profile-index-label" hidden></div>
+                    <div class="peripheral-field-composite">
+                      <select id="peripheralDisplayProfile" aria-label="Display peripheral profile">
                   <option value="none">None</option>
                   <option value="i2c-oled" selected>I2C OLED</option>
                   <option value="spi-tft">SPI TFT</option>
                   <option value="waveshare-screen">Waveshare Screen</option>
                   <option value="custom">Custom</option>
-                  </select>
-                  <div id="peripheralDisplayPins" class="peripheral-binding-group" aria-label="Display GPIO mapping"></div>
+                      </select>
+                      <div id="peripheralDisplayPins" class="peripheral-binding-group" aria-label="Display GPIO mapping"></div>
+                    </div>
+                  </div>
+                  <button id="peripheralDisplayAddButton" type="button" class="peripheral-profile-action peripheral-profile-action-add" aria-label="Add another display" title="Add another display">+</button>
                 </div>
+                <div id="peripheralDisplayList" class="peripheral-display-list" aria-label="Additional display peripheral profiles"></div>
               </div>
             </label>
             <div class="gpio-controls-field gpio-controls-field-sensors">
@@ -759,13 +801,25 @@
             </div>
           </div>
           <div class="peripheral-diagram-frame" aria-label="Peripheral diagram placeholder">
-            <div class="peripheral-diagram-title">Dynamic Peripheral Diagram</div>
+            <div class="peripheral-diagram-header">
+              <div class="peripheral-diagram-title">Dynamic Peripheral Diagram</div>
+              <div class="peripheral-diagram-actions">
+                <button id="peripheralDiagramResetWiringButton" type="button" class="secondary peripheral-diagram-action">Reset Wiring</button>
+                <button id="peripheralDiagramRewireButton" type="button" class="secondary peripheral-diagram-action">Rewire</button>
+                <button id="peripheralDiagramSaveButton" type="button" class="secondary peripheral-diagram-action">Save</button>
+                <button id="peripheralDiagramLoadButton" type="button" class="secondary peripheral-diagram-action">Load</button>
+                <input id="peripheralDiagramLoadFile" name="peripheralDiagramLoadFile" type="file" accept=".md,.markdown,.txt,.json" aria-labelledby="peripheralDiagramLoadButton" hidden>
+              </div>
+            </div>
             <div class="peripheral-diagram-placeholder">
               <div id="peripheralDiagramStage" class="peripheral-diagram-stage">
                 <div id="peripheralDiagramItems" class="peripheral-diagram-items" aria-hidden="true"></div>
-                <img id="peripheralDiagramBoardImage" class="peripheral-diagram-board-image" src="/esp32-s3-supermini-breadboard.svg" alt="ESP32-S3 Super Mini board in peripheral diagram" />
+                <div id="peripheralDiagramBoardShell" class="peripheral-diagram-board-shell">
+                  <button id="peripheralDiagramBoardEdit" type="button" class="peripheral-diagram-board-edit" data-board-edit="true" aria-label="Edit ESP board labels" title="Edit labels">Edit</button>
+                  <img id="peripheralDiagramBoardImage" class="peripheral-diagram-board-image" src="/esp32-s3-supermini-breadboard.svg" alt="ESP32-S3 Super Mini board in peripheral diagram" />
+                </div>
               </div>
-              <div class="peripheral-diagram-placeholder-text">Dynamic diagram of connected peripherials will appear here.</div>
+              <div class="peripheral-diagram-placeholder-text">Dynamic diagram of connected peripherals will appear here.</div>
             </div>
           </div>
           <div class="gpio-layout-card">
@@ -853,7 +907,7 @@
                 </button>
               </div>
             </div>
-            <input id="storageFileInput" type="file" accept=".mp3,.wav,.aac,.m4a,.ogg,.opus,.flac,audio/*" hidden>
+            <input id="storageFileInput" name="storageFileInput" type="file" accept=".mp3,.wav,.aac,.m4a,.ogg,.opus,.flac,audio/*" aria-labelledby="storageUploadButton" hidden>
             <div class="progress-wrap storage-progress-wrap">
               <div class="progress-bar"><div id="storageProgressFill" class="progress-fill"></div></div>
               <div id="storageProgressLabel" class="progress-label">Idle</div>
@@ -903,6 +957,39 @@
           </div>
         </dialog>
 
+        <dialog id="peripheralDiagramLabelEditorModal" class="storage-preview-modal peripheral-diagram-editor-modal">
+          <div class="storage-preview-shell peripheral-diagram-editor-shell">
+            <div class="storage-preview-head peripheral-diagram-editor-head">
+              <div>
+                <h3 id="peripheralDiagramLabelEditorTitle">Peripheral Labels</h3>
+                <div id="peripheralDiagramLabelEditorSubtitle" class="scan-status">Drag labels to reposition them.</div>
+              </div>
+              <div class="peripheral-diagram-editor-head-actions">
+                <button id="peripheralDiagramLabelEditorClose" type="button" class="secondary storage-preview-close" aria-label="Close label editor" title="Close editor">Close</button>
+                <button id="peripheralDiagramLabelEditorAdd" type="button" class="secondary peripheral-diagram-editor-add" aria-label="Add label" title="Add label">Add Label</button>
+              </div>
+            </div>
+            <div id="peripheralDiagramLabelEditorStage" class="peripheral-diagram-editor-stage">
+              <div id="peripheralDiagramLabelEditorVisual" class="peripheral-diagram-editor-visual"></div>
+              <div id="peripheralDiagramLabelEditorLabels" class="peripheral-diagram-editor-labels"></div>
+            </div>
+            <div class="peripheral-diagram-editor-panel">
+              <div id="peripheralDiagramLabelEditorHint" class="scan-status">Select a label to rename it, switch it to a standard signal label, or remove it.</div>
+              <div id="peripheralDiagramLabelEditorInspector" class="peripheral-diagram-editor-inspector" hidden>
+                <label>
+                  Standard label
+                  <select id="peripheralDiagramLabelEditorPreset"></select>
+                </label>
+                <label>
+                  Label name
+                  <input id="peripheralDiagramLabelEditorName" type="text" maxlength="24" placeholder="Custom label">
+                </label>
+                <button id="peripheralDiagramLabelEditorRemove" type="button" class="secondary peripheral-diagram-editor-remove">Remove Label</button>
+              </div>
+            </div>
+          </div>
+        </dialog>
+
         <div id="tab-firmware" class="tab-panel" role="tabpanel">
           <h2>Firmware</h2>
           <div class="firmware-summary">
@@ -932,7 +1019,7 @@
             <span id="firmwareSelectionLabel" class="scan-status">No firmware selected</span>
             <span id="localFirmwareLabel" class="scan-status">No local firmware selected</span>
           </div>
-          <input id="localFirmwareFile" type="file" accept=".bin,application/octet-stream" hidden>
+          <input id="localFirmwareFile" name="localFirmwareFile" type="file" accept=".bin,application/octet-stream" aria-labelledby="uploadFirmwareButton" hidden>
           <p class="note">Settings auto-save after edits. Number fields accept commas, but they are normalized to dots before saving. Local upload accepts a single ESP32 application .bin and reboots automatically after a successful flash.</p>
           <div class="actions">
             <button id="rebootButton" type="button" class="secondary">Reboot</button>
@@ -980,6 +1067,6 @@
     </div>
   </dialog>
 
-  <script src="/app.js" defer></script>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>

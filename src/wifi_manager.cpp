@@ -253,9 +253,9 @@ void WiFiManager::registerFailedAttempt(const char* reason) {
 
     if (consecutiveFailureCount_ >= WIFI_MAX_CONSECUTIVE_FAILURES) {
         if (isConfiguredNetworkVisible()) {
-            clearFrontendError();
-            recoveryRebootRecommended_ = true;
-            Serial.println("[wifi] max consecutive failures reached with saved network visible, recovery reboot recommended");
+            setFrontendError("Wi-Fi reconnect is failing for saved network '" + settings_.wifi.ssid + "'. Keeping AP/retry mode active instead of rebooting.");
+            recoveryRebootRecommended_ = false;
+            Serial.println("[wifi] max consecutive failures reached with saved network visible, continuing retries without recovery reboot");
         } else {
             setFrontendError("Saved Wi-Fi network '" + settings_.wifi.ssid + "' is not visible. Reboot skipped.");
             recoveryRebootRecommended_ = false;

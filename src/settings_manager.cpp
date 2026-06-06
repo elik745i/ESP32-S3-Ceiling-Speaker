@@ -15,6 +15,9 @@ bool approximatelyEqual(float left, float right, float tolerance = 0.05f) {
 }
 
 bool isValidBatteryAdcPin(uint8_t pin) {
+    if (pin == 0) {
+        return true;
+    }
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
     if (pin < 1 || pin > 20) {
         return false;
@@ -60,7 +63,17 @@ bool isValidI2sPin(uint8_t pin) {
 #endif
 }
 
+bool audioUsesPin(const AudioSettings& audio, int pin) {
+    if (!audio.enabled || pin < 0) {
+        return false;
+    }
+    return audio.bclkPin == pin || audio.wsPin == pin || audio.doutPin == pin;
+}
+
 bool hasDistinctI2sPins(const AudioSettings& settings) {
+    if (!settings.enabled) {
+        return true;
+    }
     return settings.bclkPin != settings.wsPin && settings.bclkPin != settings.doutPin && settings.wsPin != settings.doutPin;
 }
 
@@ -77,16 +90,17 @@ bool hasDistinctSdPins(const SdSettings& sd) {
 }
 
 bool batteryPinConflicts(const BatterySettings& battery, const AudioSettings& audio, const SdSettings& sd) {
-    return battery.adcPin == audio.bclkPin || battery.adcPin == audio.wsPin || battery.adcPin == audio.doutPin ||
-        sdUsesPin(sd, battery.adcPin);
+    if (battery.adcPin == 0) {
+        return false;
+    }
+    return audioUsesPin(audio, battery.adcPin) || sdUsesPin(sd, battery.adcPin);
 }
 
 bool chargingSensePinConflicts(const BatterySettings& battery, const AudioSettings& audio, const DeviceSettings& device, const SdSettings& sd) {
     if (battery.chargingSensePin == 0) {
         return false;
     }
-    return battery.chargingSensePin == battery.adcPin || battery.chargingSensePin == audio.bclkPin ||
-           battery.chargingSensePin == audio.wsPin || battery.chargingSensePin == audio.doutPin ||
+    return battery.chargingSensePin == battery.adcPin || audioUsesPin(audio, battery.chargingSensePin) ||
            battery.chargingSensePin == device.statusLedPin || sdUsesPin(sd, battery.chargingSensePin);
 }
 
@@ -103,7 +117,7 @@ bool oledPinConflicts(const OledSettings& oled, const AudioSettings& audio, cons
             return false;
         }
 
-        return pin == audio.bclkPin || pin == audio.wsPin || pin == audio.doutPin ||
+                return audioUsesPin(audio, pin) ||
                pin == battery.adcPin || pin == battery.chargingSensePin ||
                pin == device.statusLedPin || pin == DefaultConfig::BUTTON1_PIN ||
              pin == DefaultConfig::BUTTON2_PIN || pin == kDocumentedBuzzerPin ||
@@ -125,7 +139,7 @@ bool wapeTriggerPinConflicts(const OledSettings& oled, const AudioSettings& audi
     if (oled.wapeTriggerPin == 0) {
         return false;
     }
-    return oled.wapeTriggerPin == audio.bclkPin || oled.wapeTriggerPin == audio.wsPin || oled.wapeTriggerPin == audio.doutPin ||
+    return audioUsesPin(audio, oled.wapeTriggerPin) ||
            oled.wapeTriggerPin == battery.adcPin || oled.wapeTriggerPin == device.statusLedPin || sdUsesPin(sd, oled.wapeTriggerPin)
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
            || oled.wapeTriggerPin == 21
@@ -138,7 +152,7 @@ bool sdPinConflictsWithRequiredFunctions(const SdSettings& sd, const AudioSettin
         return false;
     }
 
-    return sdUsesPin(sd, audio.bclkPin) || sdUsesPin(sd, audio.wsPin) || sdUsesPin(sd, audio.doutPin) ||
+    return audioUsesPin(audio, sd.csPin) || audioUsesPin(audio, sd.sckPin) || audioUsesPin(audio, sd.mosiPin) || audioUsesPin(audio, sd.misoPin) ||
         sdUsesPin(sd, battery.adcPin) || sdUsesPin(sd, battery.chargingSensePin) || sdUsesPin(sd, device.statusLedPin);
 }
 
@@ -157,23 +171,6 @@ String normalizeWapeTriggerEvent(String value) {
         return value;
     }
     return String("play_start");
-}
-
-uint8_t fallbackBatteryAdcPin(const AudioSettings& audio, const SdSettings& sd) {
-    BatterySettings candidate;
-    candidate.adcPin = DefaultConfig::BATTERY_ADC_PIN;
-    if (!batteryPinConflicts(candidate, audio, sd)) {
-        return DefaultConfig::BATTERY_ADC_PIN;
-    }
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-    for (uint8_t pin = 1; pin <= 20; ++pin) {
-        candidate.adcPin = pin;
-        if (!batteryPinConflicts(candidate, audio, sd)) {
-            return pin;
-        }
-    }
-#endif
-    return DefaultConfig::BATTERY_ADC_PIN;
 }
 
 String defaultDeviceBaseName() {
@@ -372,6 +369,40 @@ String normalizePeripheralDiagramLayout(String value) {
     serializeJson(document.as<JsonObjectConst>(), normalized);
     return normalized;
 }
+
+String normalizePeripheralHelperBindings(String value) {
+    value.trim();
+    if (value.isEmpty()) {
+        return "{}";
+    }
+
+    JsonDocument document;
+    DeserializationError error = deserializeJson(document, value);
+    if (error || !document.is<JsonObject>()) {
+        return "{}";
+    }
+
+    String normalized;
+    serializeJson(document.as<JsonObjectConst>(), normalized);
+    return normalized;
+}
+
+String normalizePeripheralProfileSelections(String value) {
+    value.trim();
+    if (value.isEmpty()) {
+        return "{}";
+    }
+
+    JsonDocument document;
+    DeserializationError error = deserializeJson(document, value);
+    if (error || !document.is<JsonObject>()) {
+        return "{}";
+    }
+
+    String normalized;
+    serializeJson(document.as<JsonObjectConst>(), normalized);
+    return normalized;
+}
 }  // namespace
 
 bool SettingsManager::begin() {
@@ -406,7 +437,7 @@ SettingsBundle SettingsManager::defaults() const {
     settings.ota.autoUpdate = true;
 
     settings.battery.calibrationMultiplier = DefaultConfig::BATTERY_CALIBRATION;
-    settings.battery.adcPin = DefaultConfig::BATTERY_ADC_PIN;
+    settings.battery.adcPin = 0;
     settings.battery.measuredVoltage = 0.0f;
     settings.battery.chargingSensePin = 0;
     settings.battery.updateIntervalMs = DefaultConfig::BATTERY_UPDATE_INTERVAL_MS;
@@ -416,6 +447,7 @@ SettingsBundle SettingsManager::defaults() const {
     settings.webAuth.username = DefaultConfig::WEB_USERNAME;
     settings.webAuth.password = DefaultConfig::WEB_PASSWORD;
 
+    settings.audio.enabled = true;
     settings.audio.doutPin = DefaultConfig::I2S_DOUT_PIN;
     settings.audio.wsPin = DefaultConfig::I2S_WS_PIN;
     settings.audio.bclkPin = DefaultConfig::I2S_BCLK_PIN;
@@ -470,6 +502,8 @@ SettingsBundle SettingsManager::defaults() const {
     settings.ui.gpioBoardAutodetect = true;
     settings.ui.gpioBoardSelection = "";
     settings.ui.peripheralDiagramLayout = "{}";
+    settings.ui.peripheralHelperBindings = "{}";
+    settings.ui.peripheralProfileSelections = "{}";
     settings.usingSavedSettings = false;
     return settings;
 }
@@ -575,7 +609,7 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
         settings.sd.enabled = false;
     }
     if (!isValidBatteryAdcPin(settings.battery.adcPin) || batteryPinConflicts(settings.battery, settings.audio, settings.sd)) {
-        settings.battery.adcPin = fallbackBatteryAdcPin(settings.audio, settings.sd);
+        settings.battery.adcPin = 0;
     }
     if (!isValidBatteryAdcPin(settings.battery.chargingSensePin) || chargingSensePinConflicts(settings.battery, settings.audio, settings.device, settings.sd)) {
         settings.battery.chargingSensePin = 0;
@@ -616,6 +650,8 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     }
     settings.oled.wapeTriggerEvent = normalizeWapeTriggerEvent(settings.oled.wapeTriggerEvent);
     settings.ui.peripheralDiagramLayout = normalizePeripheralDiagramLayout(settings.ui.peripheralDiagramLayout);
+    settings.ui.peripheralHelperBindings = normalizePeripheralHelperBindings(settings.ui.peripheralHelperBindings);
+    settings.ui.peripheralProfileSelections = normalizePeripheralProfileSelections(settings.ui.peripheralProfileSelections);
     settings.usingSavedSettings = input.usingSavedSettings;
     return settings;
 }
@@ -668,6 +704,7 @@ SettingsBundle SettingsManager::load() {
     settings.webAuth.username = readString("web_user", settings.webAuth.username);
     settings.webAuth.password = readString("web_pass", settings.webAuth.password);
 
+    settings.audio.enabled = readBool("aud_en", settings.audio.enabled);
     settings.audio.doutPin = readUInt("aud_dout", settings.audio.doutPin);
     settings.audio.wsPin = readUInt("aud_ws", settings.audio.wsPin);
     settings.audio.bclkPin = readUInt("aud_bclk", settings.audio.bclkPin);
@@ -722,6 +759,8 @@ SettingsBundle SettingsManager::load() {
     settings.ui.gpioBoardAutodetect = readBool("ui_gpio_auto", settings.ui.gpioBoardAutodetect);
     settings.ui.gpioBoardSelection = readString("ui_gpio_sel", settings.ui.gpioBoardSelection);
     settings.ui.peripheralDiagramLayout = readString("ui_diag", settings.ui.peripheralDiagramLayout);
+    settings.ui.peripheralHelperBindings = readString("ui_helpers", settings.ui.peripheralHelperBindings);
+    settings.ui.peripheralProfileSelections = readString("ui_profiles", settings.ui.peripheralProfileSelections);
 
     settings = sanitize(settings);
     settings.mqtt.clientId = fallbackIfEmpty(settings.mqtt.clientId, settings.device.deviceName);
@@ -772,6 +811,7 @@ bool SettingsManager::save(const SettingsBundle& settings) {
     changed |= writeStringIfChanged("web_user", sanitized.webAuth.username);
     changed |= writeStringIfChanged("web_pass", sanitized.webAuth.password);
 
+    changed |= writeBoolIfChanged("aud_en", sanitized.audio.enabled);
     changed |= writeUIntIfChanged("aud_dout", sanitized.audio.doutPin);
     changed |= writeUIntIfChanged("aud_ws", sanitized.audio.wsPin);
     changed |= writeUIntIfChanged("aud_bclk", sanitized.audio.bclkPin);
@@ -826,6 +866,8 @@ bool SettingsManager::save(const SettingsBundle& settings) {
     changed |= writeBoolIfChanged("ui_gpio_auto", sanitized.ui.gpioBoardAutodetect);
     changed |= writeStringIfChanged("ui_gpio_sel", sanitized.ui.gpioBoardSelection);
     changed |= writeStringIfChanged("ui_diag", sanitized.ui.peripheralDiagramLayout);
+    changed |= writeStringIfChanged("ui_helpers", sanitized.ui.peripheralHelperBindings);
+    changed |= writeStringIfChanged("ui_profiles", sanitized.ui.peripheralProfileSelections);
     changed |= writeBoolIfChanged(PREF_MARKER, true);
     return changed;
 }
@@ -881,6 +923,7 @@ void SettingsManager::toJson(const SettingsBundle& settings, JsonObject root) co
     webAuth["password"] = settings.webAuth.password;
 
     JsonObject audio = root["audio"].to<JsonObject>();
+    audio["enabled"] = settings.audio.enabled;
     audio["doutPin"] = settings.audio.doutPin;
     audio["wsPin"] = settings.audio.wsPin;
     audio["bclkPin"] = settings.audio.bclkPin;
@@ -940,16 +983,10 @@ void SettingsManager::toJson(const SettingsBundle& settings, JsonObject root) co
     JsonObject ui = root["ui"].to<JsonObject>();
     ui["gpioBoardAutodetect"] = settings.ui.gpioBoardAutodetect;
     ui["gpioBoardSelection"] = settings.ui.gpioBoardSelection;
-    JsonDocument peripheralDiagramDocument;
-    DeserializationError peripheralDiagramError = deserializeJson(peripheralDiagramDocument, settings.ui.peripheralDiagramLayout);
-    if (!peripheralDiagramError && peripheralDiagramDocument.is<JsonObjectConst>()) {
-        JsonObject positions = ui["peripheralDiagramPositions"].to<JsonObject>();
-        for (JsonPairConst entry : peripheralDiagramDocument.as<JsonObjectConst>()) {
-            positions[entry.key()] = entry.value();
-        }
-    } else {
-        ui["peripheralDiagramPositions"].to<JsonObject>();
-    }
+    ui["peripheralDiagramLayout"] = settings.ui.peripheralDiagramLayout;
+
+    ui["peripheralHelperBindings"] = settings.ui.peripheralHelperBindings;
+    ui["peripheralProfiles"] = settings.ui.peripheralProfileSelections;
 
     root["usingSavedSettings"] = settings.usingSavedSettings;
 }
@@ -1025,6 +1062,7 @@ bool SettingsManager::updateFromJson(SettingsBundle& settings, JsonVariantConst 
 
     JsonObjectConst audio = object["audio"];
     if (!audio.isNull()) {
+        if (audio["enabled"].is<bool>()) settings.audio.enabled = audio["enabled"].as<bool>();
         if (audio["doutPin"].is<uint8_t>()) settings.audio.doutPin = audio["doutPin"].as<uint8_t>();
         if (audio["wsPin"].is<uint8_t>()) settings.audio.wsPin = audio["wsPin"].as<uint8_t>();
         if (audio["bclkPin"].is<uint8_t>()) settings.audio.bclkPin = audio["bclkPin"].as<uint8_t>();
@@ -1100,6 +1138,20 @@ bool SettingsManager::updateFromJson(SettingsBundle& settings, JsonVariantConst 
             String serializedLayout;
             serializeJson(ui["peripheralDiagramPositions"], serializedLayout);
             settings.ui.peripheralDiagramLayout = serializedLayout;
+        }
+        if (ui["peripheralHelperBindings"].is<const char*>()) {
+            settings.ui.peripheralHelperBindings = ui["peripheralHelperBindings"].as<const char*>();
+        } else if (ui["peripheralHelperBindings"].is<JsonObjectConst>()) {
+            String serializedBindings;
+            serializeJson(ui["peripheralHelperBindings"], serializedBindings);
+            settings.ui.peripheralHelperBindings = serializedBindings;
+        }
+        if (ui["peripheralProfiles"].is<const char*>()) {
+            settings.ui.peripheralProfileSelections = ui["peripheralProfiles"].as<const char*>();
+        } else if (ui["peripheralProfiles"].is<JsonObjectConst>()) {
+            String serializedProfiles;
+            serializeJson(ui["peripheralProfiles"], serializedProfiles);
+            settings.ui.peripheralProfileSelections = serializedProfiles;
         }
     }
 

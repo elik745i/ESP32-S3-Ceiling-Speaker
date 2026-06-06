@@ -50,10 +50,10 @@ struct OtaSettings {
 struct BatterySettings {
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
     float calibrationMultiplier = 2.0f;
-    uint8_t adcPin = 3;
+    uint8_t adcPin = 0;
 #else
     float calibrationMultiplier = 3.866f;
-    uint8_t adcPin = 36;
+    uint8_t adcPin = 0;
 #endif
     float measuredVoltage = 0.0f;
     uint8_t chargingSensePin = 0;
@@ -68,6 +68,7 @@ struct WebAuthSettings {
 };
 
 struct AudioSettings {
+    bool enabled = true;
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
     uint8_t doutPin = 9;
     uint8_t wsPin = 12;
@@ -143,6 +144,8 @@ struct UiSettings {
     bool gpioBoardAutodetect = true;
     String gpioBoardSelection;
     String peripheralDiagramLayout = "{}";
+    String peripheralHelperBindings = "{}";
+    String peripheralProfileSelections = "{}";
 };
 
 struct SettingsBundle {

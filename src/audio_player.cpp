@@ -79,16 +79,17 @@ class AudioPlayer::Impl {
 
     Audio audio;
     AppState* appState = nullptr;
-        uint8_t bclkPin = DefaultConfig::I2S_BCLK_PIN;
-        uint8_t wsPin = DefaultConfig::I2S_WS_PIN;
-        uint8_t doutPin = DefaultConfig::I2S_DOUT_PIN;
+    uint8_t bclkPin = DefaultConfig::I2S_BCLK_PIN;
+    uint8_t wsPin = DefaultConfig::I2S_WS_PIN;
+    uint8_t doutPin = DefaultConfig::I2S_DOUT_PIN;
+    bool outputEnabled = true;
     uint8_t volume = DefaultConfig::DEFAULT_VOLUME_PERCENT;
     uint8_t hardwareAudioVolume = 0;
-        uint32_t requestedSampleRateHz = kPreferredDiagnosticSampleRateHz;
-        uint32_t activeSampleRateHz = 0;
-        uint8_t bitsPerSample = 16;
-        uint8_t channelCount = DefaultConfig::AUDIO_FORCE_MONO ? 1 : 2;
-        bool diagnosticTestMode = false;
+    uint32_t requestedSampleRateHz = kPreferredDiagnosticSampleRateHz;
+    uint32_t activeSampleRateHz = 0;
+    uint8_t bitsPerSample = 16;
+    uint8_t channelCount = DefaultConfig::AUDIO_FORCE_MONO ? 1 : 2;
+    bool diagnosticTestMode = false;
     String state = "idle";
     String type = "idle";
     String title = "Idle";
@@ -403,7 +404,7 @@ void audio_eof_speech(const char* info) {
     Serial.printf("[audio] eof speech %s\n", info == nullptr ? "" : info);
 }
 
-void AudioPlayer::begin(uint8_t bclkPin, uint8_t wsPin, uint8_t doutPin, uint8_t initialVolumePercent, AppState& appState) {
+void AudioPlayer::begin(uint8_t bclkPin, uint8_t wsPin, uint8_t doutPin, uint8_t initialVolumePercent, bool outputEnabled, AppState& appState) {
     if (impl_ == nullptr) {
         impl_ = allocatePreferPsram<Impl>();
     }
@@ -416,9 +417,12 @@ void AudioPlayer::begin(uint8_t bclkPin, uint8_t wsPin, uint8_t doutPin, uint8_t
     impl_->bclkPin = bclkPin;
     impl_->wsPin = wsPin;
     impl_->doutPin = doutPin;
+    impl_->outputEnabled = outputEnabled;
     impl_->audio.setBufsize(DefaultConfig::AUDIO_BUFFER_SIZE_RAM, DefaultConfig::AUDIO_BUFFER_SIZE_PSRAM);
     impl_->audio.setI2SCommFMT_LSB(false);
-    impl_->audio.setPinout(bclkPin, wsPin, doutPin);
+    if (outputEnabled) {
+        impl_->audio.setPinout(bclkPin, wsPin, doutPin);
+    }
     impl_->requestedSampleRateHz = kPreferredDiagnosticSampleRateHz;
     impl_->diagnosticTestMode = DefaultConfig::AUDIO_DIAGNOSTIC_TEST;
     impl_->audio.forceMono(DefaultConfig::AUDIO_FORCE_MONO);
@@ -426,14 +430,18 @@ void AudioPlayer::begin(uint8_t bclkPin, uint8_t wsPin, uint8_t doutPin, uint8_t
     impl_->audio.setConnectionTimeout(8000, 8000);
     impl_->volume = constrain(initialVolumePercent, static_cast<uint8_t>(0), static_cast<uint8_t>(100));
     impl_->applyHardwareVolumePercent(impl_->volume);
-    Serial.printf("[audio] init driver=ESP32-audioI2S target=MAX98357A fmt=std-i2s bclk=%u ws=%u dout=%u requested_rate=%lu volume_percent=%u lib_volume=%u mono=%s\n",
-                  bclkPin,
-                  wsPin,
-                  doutPin,
-                  static_cast<unsigned long>(impl_->requestedSampleRateHz),
-                  impl_->volume,
-                  impl_->hardwareAudioVolume,
-                  DefaultConfig::AUDIO_FORCE_MONO ? "on" : "off");
+    if (outputEnabled) {
+        Serial.printf("[audio] init driver=ESP32-audioI2S target=MAX98357A fmt=std-i2s bclk=%u ws=%u dout=%u requested_rate=%lu volume_percent=%u lib_volume=%u mono=%s\n",
+                      bclkPin,
+                      wsPin,
+                      doutPin,
+                      static_cast<unsigned long>(impl_->requestedSampleRateHz),
+                      impl_->volume,
+                      impl_->hardwareAudioVolume,
+                      DefaultConfig::AUDIO_FORCE_MONO ? "on" : "off");
+    } else {
+        Serial.println("[audio] output disabled");
+    }
     impl_->publish();
 }
 
@@ -461,7 +469,7 @@ void AudioPlayer::loop() {
 }
 
 bool AudioPlayer::play(const String& url, const String& title, const String& mediaType, const String& source) {
-    if (impl_ == nullptr || url.isEmpty()) {
+    if (impl_ == nullptr || !impl_->outputEnabled || url.isEmpty()) {
         return false;
     }
 
@@ -515,7 +523,7 @@ bool AudioPlayer::play(const String& url, const String& title, const String& med
 }
 
 bool AudioPlayer::playStorageFile(StorageTarget target, const String& path, const String& title, const String& mediaType, const String& source) {
-    if (impl_ == nullptr || path.isEmpty()) {
+    if (impl_ == nullptr || !impl_->outputEnabled || path.isEmpty()) {
         return false;
     }
 
@@ -575,7 +583,7 @@ bool AudioPlayer::playStorageFile(StorageTarget target, const String& path, cons
 }
 
 bool AudioPlayer::playStorageOverlay(StorageTarget target, const String& path, uint8_t duckPercent, uint8_t overlayPercent) {
-    if (impl_ == nullptr || path.isEmpty() || !impl_->audio.isRunning() ||
+    if (impl_ == nullptr || !impl_->outputEnabled || path.isEmpty() || !impl_->audio.isRunning() ||
         !(impl_->state == "playing" || impl_->state == "buffering")) {
         return false;
     }
@@ -642,9 +650,11 @@ bool AudioPlayer::reconfigureOutputPins(uint8_t bclkPin, uint8_t wsPin, uint8_t 
         delay(kSwitchQuietTimeMs);
     }
 
-    gpio_reset_pin(static_cast<gpio_num_t>(impl_->bclkPin));
-    gpio_reset_pin(static_cast<gpio_num_t>(impl_->wsPin));
-    gpio_reset_pin(static_cast<gpio_num_t>(impl_->doutPin));
+    if (impl_->outputEnabled) {
+        gpio_reset_pin(static_cast<gpio_num_t>(impl_->bclkPin));
+        gpio_reset_pin(static_cast<gpio_num_t>(impl_->wsPin));
+        gpio_reset_pin(static_cast<gpio_num_t>(impl_->doutPin));
+    }
 
     impl_->audio.setI2SCommFMT_LSB(false);
     impl_->audio.setPinout(bclkPin, wsPin, doutPin);
@@ -654,6 +664,7 @@ bool AudioPlayer::reconfigureOutputPins(uint8_t bclkPin, uint8_t wsPin, uint8_t 
     impl_->bclkPin = bclkPin;
     impl_->wsPin = wsPin;
     impl_->doutPin = doutPin;
+    impl_->outputEnabled = true;
     Serial.printf("[audio] reconfigured target=MAX98357A fmt=std-i2s bclk=%u ws=%u dout=%u requested_rate=%lu lib_volume=%u mono=%s\n",
                   bclkPin,
                   wsPin,
@@ -668,6 +679,41 @@ bool AudioPlayer::reconfigureOutputPins(uint8_t bclkPin, uint8_t wsPin, uint8_t 
     }
 
     return play(resumeUrl, resumeTitle, resumeType, resumeSource);
+}
+
+bool AudioPlayer::disableOutput() {
+    if (impl_ == nullptr) {
+        return false;
+    }
+
+    impl_->retryPending = false;
+    impl_->retryCount = 0;
+    impl_->stopRequested = true;
+
+    if (impl_->audio.isRunning() || impl_->state == "playing" || impl_->state == "buffering") {
+        impl_->fadeToPercent(0, kSwitchFadeOutMs);
+        impl_->audio.stopSong();
+        delay(kSwitchQuietTimeMs);
+    }
+
+    clearOverlay(impl_);
+    releaseStorageLease(impl_);
+
+    if (impl_->outputEnabled) {
+        gpio_reset_pin(static_cast<gpio_num_t>(impl_->bclkPin));
+        gpio_reset_pin(static_cast<gpio_num_t>(impl_->wsPin));
+        gpio_reset_pin(static_cast<gpio_num_t>(impl_->doutPin));
+    }
+
+    impl_->outputEnabled = false;
+    impl_->state = "idle";
+    impl_->type = "idle";
+    impl_->title = "Idle";
+    impl_->url = "";
+    impl_->source = "disabled";
+    Serial.println("[audio] output disabled");
+    impl_->publish();
+    return true;
 }
 
 void AudioPlayer::setVolumePercent(uint8_t volumePercent) {

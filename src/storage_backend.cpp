@@ -35,9 +35,7 @@ bool sameSdSettings(const SdSettings& left, const SdSettings& right) {
 }
 
 SdSettings effectiveSdSettings(const SdSettings& settings) {
-    SdSettings effective = settings;
-    effective.enabled = true;
-    return effective;
+    return settings;
 }
 
 bool sdSettingsUsePin(const SdSettings& settings, uint8_t pin) {

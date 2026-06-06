@@ -1466,6 +1466,8 @@ body {
   }
 
   .gpio-controls-field-label {
+    display: flex;
+    align-items: center;
     font-size: 0.78rem;
     font-weight: 800;
     color: #334155;
@@ -1477,9 +1479,13 @@ body {
     min-width: 0;
   }
 
+  .gpio-controls-field:not(.gpio-controls-field-board) .peripheral-field-composite {
+    grid-template-columns: minmax(234px, 234px) minmax(0, 1fr);
+  }
+
   .peripheral-field-composite {
     display: grid;
-    grid-template-columns: minmax(180px, 1.05fr) minmax(220px, 0.95fr);
+    grid-template-columns: minmax(234px, 234px) minmax(0, 1fr);
     gap: 10px;
     align-items: end;
   }
@@ -1543,33 +1549,48 @@ body {
   }
 
   .gpio-controls-field-sensors {
-    align-items: start;
+    align-items: center;
   }
 
   .gpio-controls-field-inputs {
-    align-items: start;
+    align-items: center;
   }
 
   .gpio-controls-field-controls {
-    align-items: start;
+    align-items: center;
   }
 
   .gpio-controls-field-expansions {
-    align-items: start;
+    align-items: center;
   }
 
   .gpio-controls-field-storage {
-    align-items: start;
+    align-items: center;
   }
 
   .gpio-controls-field-communication {
-    align-items: start;
+    align-items: center;
   }
 
   .peripheral-sensor-list {
     display: grid;
     gap: 10px;
     width: 100%;
+  }
+
+  .peripheral-audio-list {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+    margin-top: 10px;
+  }
+
+  .peripheral-audio-in-list,
+  .peripheral-display-list {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+    margin-top: 10px;
   }
 
   .peripheral-input-list {
@@ -1615,6 +1636,20 @@ body {
     min-width: 0;
   }
 
+  .peripheral-profile-stack {
+    display: grid;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .peripheral-profile-index-label {
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
   .peripheral-profile-action {
     display: inline-flex;
     align-items: center;
@@ -1655,12 +1690,34 @@ body {
     box-shadow: var(--shadow);
   }
 
+  .peripheral-diagram-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
   .peripheral-diagram-title {
     font-size: 0.82rem;
     font-weight: 800;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: #334155;
+  }
+
+  .peripheral-diagram-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-left: auto;
+  }
+
+  .peripheral-diagram-action {
+    min-height: 0;
+    padding: 8px 14px;
+    font-size: 0.76rem;
+    line-height: 1;
   }
 
   .peripheral-diagram-placeholder {
@@ -1680,6 +1737,17 @@ body {
     position: relative;
   }
 
+  @media (max-width: 720px) {
+    .peripheral-diagram-header {
+      flex-wrap: wrap;
+      align-items: stretch;
+    }
+
+    .peripheral-diagram-actions {
+      width: 100%;
+    }
+  }
+
   .peripheral-diagram-stage {
     position: relative;
     width: calc(100% + 36px);
@@ -1692,16 +1760,143 @@ body {
   .peripheral-diagram-items {
     position: absolute;
     inset: 0;
-    pointer-events: auto;
+    pointer-events: none;
+    z-index: 3;
+  }
+
+  .peripheral-diagram-wiring-overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  .peripheral-diagram-label-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  .peripheral-diagram-floating-label {
+    position: absolute;
+    pointer-events: none;
+    transform-origin: center center;
+    z-index: 6;
+  }
+
+  .peripheral-diagram-floating-label-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    min-height: 18px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.16);
+    white-space: nowrap;
+  }
+
+  .peripheral-diagram-wire-connection {
+    opacity: 1;
+    transition: opacity 140ms ease, filter 140ms ease;
+    pointer-events: none;
+  }
+
+  .peripheral-diagram-wiring-overlay.is-connection-hovering .peripheral-diagram-wire-connection {
+    opacity: 0.2;
+  }
+
+  .peripheral-diagram-wiring-overlay.is-connection-hovering .peripheral-diagram-wire-connection.is-active {
+    opacity: 1;
+    filter: saturate(1.1);
+  }
+
+  .peripheral-diagram-wire {
+    fill: none;
+    stroke-width: 3.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    pointer-events: none;
+  }
+
+  .peripheral-diagram-wire-glow {
+    stroke-width: 8;
+    pointer-events: none;
+  }
+
+  .peripheral-diagram-wire-hit {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.001);
+    stroke-width: 16;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    pointer-events: stroke;
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .peripheral-diagram-wire-handle {
+    fill: #ffffff;
+    stroke: #0f172a;
+    stroke-width: 2;
+    opacity: 0;
+    transition: opacity 140ms ease;
+    pointer-events: none;
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .peripheral-diagram-wire-connection.is-active .peripheral-diagram-wire-handle,
+  .peripheral-diagram-wire-connection.is-dragging .peripheral-diagram-wire-handle {
+    opacity: 1;
+    pointer-events: all;
+  }
+
+  .peripheral-diagram-wire-connection.is-dragging .peripheral-diagram-wire-handle {
+    cursor: grabbing;
+  }
+
+  .peripheral-diagram-wire-badge text {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+  }
+
+  .peripheral-diagram-wire-board-badge text {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+    pointer-events: none;
   }
 
   .peripheral-diagram-board-image {
     position: relative;
     z-index: 1;
-    width: min(100%, 220px);
+    width: 100%;
+    max-width: 220px;
     max-height: 180px;
     object-fit: contain;
     filter: drop-shadow(0 10px 20px rgba(15, 23, 42, 0.12));
+    transform-origin: center center;
+  }
+
+  .peripheral-diagram-board-shell {
+    position: relative;
+    z-index: 4;
+    display: grid;
+    place-items: center;
+    width: min(100%, 220px);
   }
 
   .peripheral-diagram-placeholder-text {
@@ -1719,7 +1914,8 @@ body {
     cursor: grab;
     user-select: none;
     touch-action: none;
-    z-index: 2;
+    pointer-events: auto;
+    z-index: 3;
   }
 
   .peripheral-diagram-node-visual {
@@ -1730,22 +1926,19 @@ body {
     transition: transform 160ms ease;
   }
 
-  .peripheral-diagram-node-rotate {
+  .peripheral-diagram-node-edit,
+  .peripheral-diagram-node-rotate,
+  .peripheral-diagram-board-edit {
     position: absolute;
-    top: -26px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 26px;
-    height: 26px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    width: auto;
+    min-height: 0;
     border: 1px solid rgba(37, 99, 235, 0.22);
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.96);
     color: #1d4ed8;
-    font-size: 0.95rem;
-    font-weight: 800;
     box-shadow: 0 8px 18px rgba(15, 23, 42, 0.14);
     opacity: 0;
     pointer-events: none;
@@ -1753,13 +1946,67 @@ body {
     z-index: 6;
   }
 
+  .peripheral-diagram-node-edit,
+  .peripheral-diagram-board-edit {
+    top: 8px;
+    right: 8px;
+    min-width: 42px;
+    height: 24px;
+    padding: 0 10px;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    transform: translateY(2px);
+  }
+
+  .peripheral-diagram-board-edit {
+    top: 50%;
+    left: 50%;
+    right: auto;
+    z-index: 7;
+    transform: translate(-50%, calc(-50% + 2px));
+  }
+
+  .peripheral-diagram-node-rotate {
+    top: 8px;
+    left: 8px;
+    transform: translateY(2px);
+    width: 26px;
+    height: 26px;
+    font-size: 0.95rem;
+    font-weight: 800;
+  }
+
+  .peripheral-diagram-node:hover .peripheral-diagram-node-edit,
+  .peripheral-diagram-node:focus-within .peripheral-diagram-node-edit,
   .peripheral-diagram-node:hover .peripheral-diagram-node-rotate,
   .peripheral-diagram-node:focus-within .peripheral-diagram-node-rotate {
     opacity: 1;
     pointer-events: auto;
-    transform: translateX(-50%) translateY(-2px);
   }
 
+  .peripheral-diagram-board-shell:hover .peripheral-diagram-board-edit,
+  .peripheral-diagram-board-shell:focus-within .peripheral-diagram-board-edit {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translate(-50%, -50%);
+  }
+
+  .peripheral-diagram-node:hover .peripheral-diagram-node-edit,
+  .peripheral-diagram-node:focus-within .peripheral-diagram-node-edit {
+    transform: translateY(0);
+  }
+
+  .peripheral-diagram-node:hover .peripheral-diagram-node-rotate,
+  .peripheral-diagram-node:focus-within .peripheral-diagram-node-rotate {
+    transform: translateY(0);
+  }
+
+  .peripheral-diagram-node-edit:hover,
+  .peripheral-diagram-node-edit:focus-visible,
+  .peripheral-diagram-board-edit:hover,
+  .peripheral-diagram-board-edit:focus-visible,
   .peripheral-diagram-node-rotate:hover,
   .peripheral-diagram-node-rotate:focus-visible {
     background: #dbeafe;
@@ -1809,6 +2056,140 @@ body {
     font-weight: 700;
     letter-spacing: 0.03em;
     color: #155e75;
+  }
+
+  .peripheral-diagram-divider-block {
+    width: 100%;
+    min-height: 118px;
+    padding: 10px 8px 8px;
+    display: grid;
+    align-content: start;
+    gap: 4px;
+    border: 1px solid rgba(37, 99, 235, 0.26);
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(219, 234, 254, 0.96));
+    box-shadow: 0 10px 20px rgba(15, 23, 42, 0.10);
+  }
+
+  .peripheral-diagram-divider-title {
+    font-size: 0.66rem;
+    font-weight: 800;
+    line-height: 1.15;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #0f172a;
+  }
+
+  .peripheral-diagram-divider-ohms {
+    font-size: 0.56rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: #1d4ed8;
+  }
+
+  .peripheral-diagram-divider-schematic {
+    position: relative;
+    display: grid;
+    gap: 14px;
+    padding: 6px 0 2px 18px;
+  }
+
+  .peripheral-diagram-divider-schematic::before {
+    content: "";
+    position: absolute;
+    left: 10px;
+    top: 18px;
+    width: 2px;
+    height: 32px;
+    background: #475569;
+  }
+
+  .peripheral-diagram-divider-node {
+    position: absolute;
+    left: 7px;
+    top: 31px;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: #1e293b;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9);
+  }
+
+  .peripheral-diagram-divider-gpio-contact {
+    position: absolute;
+    left: -2px;
+    top: 26px;
+    transform: translateX(-100%);
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: rgba(37, 99, 235, 0.12);
+    font-size: 0.52rem;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    color: #1d4ed8;
+    white-space: nowrap;
+  }
+
+  .peripheral-diagram-divider-row {
+    display: grid;
+    grid-template-columns: 12px minmax(0, 1fr) 10px auto;
+    align-items: center;
+    gap: 0;
+  }
+
+  .peripheral-diagram-divider-lead,
+  .peripheral-diagram-divider-tail {
+    display: block;
+    height: 2px;
+    background: #475569;
+  }
+
+  .peripheral-diagram-divider-resistor {
+    height: 12px;
+    border-radius: 999px;
+    border: 1px solid #3b82f6;
+    background: linear-gradient(180deg, #bfdbfe 0%, #60a5fa 100%);
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    align-items: stretch;
+    gap: 4px;
+    padding: 1px 12px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  }
+
+  .peripheral-diagram-divider-resistor-band {
+    display: block;
+    width: 3px;
+    border-radius: 999px;
+    justify-self: center;
+  }
+
+  .peripheral-diagram-divider-resistor-band-red {
+    background: #dc2626;
+  }
+
+  .peripheral-diagram-divider-resistor-band-black {
+    background: #111827;
+  }
+
+  .peripheral-diagram-divider-resistor-band-orange {
+    background: #ea580c;
+  }
+
+  .peripheral-diagram-divider-resistor-band-brown {
+    background: #92400e;
+  }
+
+  .peripheral-diagram-divider-contact {
+    justify-self: end;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: rgba(14, 116, 144, 0.10);
+    font-size: 0.52rem;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    color: #155e75;
+    white-space: nowrap;
   }
 
   .peripheral-diagram-node img {
@@ -2077,6 +2458,123 @@ body {
   .gpio-board-recommendations-neutral {
     border-color: #e2e8f0;
     background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+  }
+
+  .gpio-board-legend {
+    margin-top: 6px;
+    display: grid;
+    gap: 7px;
+    text-align: left;
+    padding-top: 8px;
+    border-top: 1px solid rgba(148, 163, 184, 0.28);
+  }
+
+  .gpio-board-legend-title {
+    font-size: 0.76rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #334155;
+  }
+
+  .gpio-board-legend-item {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+  }
+
+  .gpio-board-legend-swatch {
+    width: 16px;
+    height: 16px;
+    border-radius: 5px;
+    border: 1px solid rgba(15, 23, 42, 0.14);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+    margin-top: 1px;
+  }
+
+  .gpio-board-legend-copy {
+    font-size: 0.76rem;
+    line-height: 1.35;
+    color: inherit;
+  }
+
+  .gpio-board-legend-copy strong {
+    color: inherit;
+    margin-right: 4px;
+  }
+
+  .gpio-board-legend-note {
+    margin-top: 2px;
+    padding-top: 6px;
+    border-top: 1px dashed rgba(148, 163, 184, 0.26);
+    font-size: 0.75rem;
+    line-height: 1.4;
+  }
+
+  .gpio-board-legend-swatch-free {
+    background: linear-gradient(180deg, #ecfdf5 0%, #d1fae5 100%);
+    border-color: #86efac;
+  }
+
+  .gpio-board-legend-swatch-occupied {
+    background: linear-gradient(180deg, #fff7ed 0%, #fed7aa 100%);
+    border-color: #fdba74;
+  }
+
+  .gpio-board-legend-swatch-camera {
+    background: linear-gradient(180deg, #eff6ff 0%, #bfdbfe 100%);
+    border-color: #60a5fa;
+  }
+
+  .gpio-board-legend-swatch-strap {
+    background: linear-gradient(180deg, #fff7ed 0%, #fdba74 100%);
+    border-color: #f97316;
+  }
+
+  .gpio-board-legend-swatch-psram {
+    background: linear-gradient(180deg, #f5f3ff 0%, #ddd6fe 100%);
+    border-color: #a78bfa;
+  }
+
+  .gpio-board-legend-swatch-sd {
+    background: linear-gradient(180deg, #fdf2f8 0%, #f5b4d8 100%);
+    border-color: #ec4899;
+  }
+
+  .gpio-board-legend-swatch-jtag {
+    background: linear-gradient(180deg, #ecfccb 0%, #bef264 100%);
+    border-color: #84cc16;
+  }
+
+  .gpio-board-legend-swatch-usb {
+    background: linear-gradient(180deg, #f7fee7 0%, #d9f99d 100%);
+    border-color: #a3e635;
+  }
+
+  .gpio-board-legend-swatch-serial {
+    background: linear-gradient(180deg, #eff6ff 0%, #93c5fd 100%);
+    border-color: #3b82f6;
+  }
+
+  .gpio-board-legend-swatch-onboard {
+    background: linear-gradient(180deg, #ecfeff 0%, #a5f3fc 100%);
+    border-color: #22d3ee;
+  }
+
+  .gpio-board-legend-swatch-5v {
+    background: linear-gradient(180deg, #fef2f2 0%, #fecaca 100%);
+    border-color: #fca5a5;
+  }
+
+  .gpio-board-legend-swatch-gnd {
+    background: linear-gradient(180deg, #f3f4f6 0%, #d1d5db 100%);
+    border-color: #9ca3af;
+  }
+
+  .gpio-board-legend-swatch-3v3 {
+    background: linear-gradient(180deg, #fefce8 0%, #fde68a 100%);
+    border-color: #facc15;
   }
 
   .gpio-extra-shell {
@@ -2726,6 +3224,225 @@ body {
     display: grid;
     gap: 14px;
     background: linear-gradient(180deg, #fffdf7, #f3f0ea);
+  }
+
+  .peripheral-diagram-editor-modal {
+    width: min(1120px, calc(100% - 20px));
+  }
+
+  .peripheral-diagram-editor-shell {
+    gap: 16px;
+  }
+
+  .peripheral-diagram-editor-head {
+    align-items: start;
+  }
+
+  .peripheral-diagram-editor-head-actions {
+    display: grid;
+    gap: 10px;
+    justify-items: stretch;
+  }
+
+  .peripheral-diagram-editor-add,
+  .peripheral-diagram-editor-remove {
+    width: auto;
+    min-height: 0;
+  }
+
+  .peripheral-diagram-editor-stage {
+    position: relative;
+    min-height: 560px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    border-radius: 20px;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at top, rgba(191, 219, 254, 0.45), transparent 54%),
+      linear-gradient(180deg, #f8fbff 0%, #eef4ff 100%);
+    cursor: zoom-in;
+  }
+
+  .peripheral-diagram-editor-stage.is-panning {
+    cursor: grabbing;
+  }
+
+  .peripheral-diagram-editor-visual,
+  .peripheral-diagram-editor-labels {
+    position: absolute;
+    inset: 0;
+    transition: transform 120ms ease;
+  }
+
+  .peripheral-diagram-editor-visual {
+    display: grid;
+    place-items: center;
+    padding: 28px;
+    z-index: 1;
+  }
+
+  .peripheral-diagram-editor-visual img {
+    width: min(100%, 520px);
+    max-width: min(100%, 720px);
+    max-height: 500px;
+    height: auto;
+    object-fit: contain;
+    filter: drop-shadow(0 16px 28px rgba(15, 23, 42, 0.18));
+    user-select: none;
+    pointer-events: none;
+  }
+
+  .peripheral-diagram-editor-visual-fallback {
+    width: min(100%, 640px);
+    min-height: 360px;
+    padding: 28px;
+    display: grid;
+    align-content: center;
+    gap: 14px;
+    border: 1px solid rgba(14, 116, 144, 0.22);
+    border-radius: 20px;
+    background: linear-gradient(180deg, #f8fafc, #e2e8f0);
+    box-shadow: 0 18px 34px rgba(15, 23, 42, 0.14);
+    text-align: center;
+  }
+
+  .peripheral-diagram-editor-visual-fallback-title {
+    font-size: 1.2rem;
+    font-weight: 800;
+    color: #0f172a;
+  }
+
+  .peripheral-diagram-editor-visual-fallback-pins {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .peripheral-diagram-editor-visual-fallback-pins span {
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.9);
+    color: #334155;
+    font-size: 0.72rem;
+    font-weight: 700;
+  }
+
+  .peripheral-diagram-editor-labels {
+    z-index: 3;
+    will-change: transform;
+  }
+
+  .peripheral-diagram-editor-label {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    width: auto;
+    min-height: 0;
+    padding: 8px 10px 8px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    border-radius: 999px;
+    box-shadow: 0 14px 28px rgba(15, 23, 42, 0.18);
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+    white-space: nowrap;
+    z-index: 4;
+  }
+
+  .peripheral-diagram-editor-label.is-dragging {
+    cursor: grabbing;
+    z-index: 5;
+  }
+
+  .peripheral-diagram-editor-label.is-active-edit {
+    box-shadow: 0 18px 34px rgba(15, 23, 42, 0.28);
+    outline: 2px solid rgba(255, 255, 255, 0.65);
+  }
+
+  .peripheral-diagram-editor-label-text {
+    font-size: 0.74rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .peripheral-diagram-editor-label-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .peripheral-diagram-editor-label-edit,
+  .peripheral-diagram-editor-label-rotate {
+    width: 24px;
+    height: 24px;
+    min-height: 0;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.2);
+    color: inherit;
+    font-size: 0.86rem;
+    font-weight: 800;
+    opacity: 0;
+    transition: opacity 140ms ease, transform 140ms ease, background-color 140ms ease;
+    transform: scale(0.92);
+  }
+
+  .peripheral-diagram-editor-label:hover .peripheral-diagram-editor-label-edit,
+  .peripheral-diagram-editor-label:hover .peripheral-diagram-editor-label-rotate,
+  .peripheral-diagram-editor-label:focus-visible .peripheral-diagram-editor-label-edit,
+  .peripheral-diagram-editor-label:focus-visible .peripheral-diagram-editor-label-rotate,
+  .peripheral-diagram-editor-label.is-active-edit .peripheral-diagram-editor-label-edit,
+  .peripheral-diagram-editor-label.is-active-edit .peripheral-diagram-editor-label-rotate {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .peripheral-diagram-editor-label-edit:hover,
+  .peripheral-diagram-editor-label-rotate:hover {
+    background: rgba(255, 255, 255, 0.34);
+  }
+
+  .peripheral-diagram-editor-panel {
+    display: grid;
+    gap: 12px;
+    padding: 14px 16px;
+    border: 1px solid rgba(203, 213, 225, 0.85);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.72);
+  }
+
+  .peripheral-diagram-editor-inspector {
+    display: grid;
+    grid-template-columns: minmax(180px, 240px) minmax(220px, 1fr) auto;
+    gap: 12px;
+    align-items: end;
+  }
+
+  .peripheral-diagram-editor-inspector label {
+    gap: 6px;
+  }
+
+  @media (max-width: 720px) {
+    .peripheral-diagram-editor-stage {
+      min-height: 380px;
+    }
+
+    .peripheral-diagram-editor-visual {
+      padding: 22px;
+    }
+
+    .peripheral-diagram-editor-visual img {
+      max-height: 300px;
+    }
+
+    .peripheral-diagram-editor-inspector {
+      grid-template-columns: 1fr;
+    }
   }
 
   .storage-preview-head {
