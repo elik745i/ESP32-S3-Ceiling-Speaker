@@ -18,6 +18,7 @@ import {
   peripheralDiagramBoardNodeId,
   peripheralDiagramBoardLabelEntryId,
   peripheralDiagramBoardLabelDefaultLayout,
+  rotatePeripheralDiagramNodeLabels,
 } from "./modules/peripheral-diagram-label-editor.js";
 import { createPlaybackStatusModule } from "./modules/playback-status.js";
 import { createPeripheralDiagramWiringModule } from "./modules/peripheral-diagram-wiring.js";
@@ -25,11 +26,14 @@ import { createRadioBrowserModule } from "./modules/radio-browser.js";
 import { createStatusRenderModule } from "./modules/status-render.js";
 import { createStorageTab } from "./modules/storage-tab.js";
 import { initTabNavigation } from "./modules/tab-navigation.js";
+import { createUiHistoryModule } from "./modules/ui-history.js";
 import { createWifiTab } from "./modules/wifi-tab.js";
 
 const state = {
   status: null,
   settings: null,
+  deviceReachable: null,
+  offlineNoticeShown: false,
   storageInfoByTarget: {},
   currentStorageEntriesByTarget: { flash: [], sd: [] },
   currentStoragePathByTarget: { flash: "/", sd: "/" },
@@ -146,7 +150,9 @@ let playbackStatusModule = null;
 let radioBrowserModule = null;
 let statusRenderModule = null;
 let storageTab = null;
+let uiHistoryModule = null;
 let wifiTab = null;
+const peripheralDiagramControlHideTimers = new WeakMap();
 
 const SETTINGS_AUTOSAVE_DELAY_MS = 900;
 const ACTIVE_TAB_STORAGE_KEY = "notifierActiveTab";
@@ -170,6 +176,7 @@ const EFFECT_FILE_SOURCES = [
   { target: "flash", dir: "/wav", prefix: "Flash" },
 ];
 const EFFECT_FILE_PAGE_SIZE = 20;
+const PERIPHERAL_DIAGRAM_CONTROL_HIDE_DELAY_MS = 2000;
 const MAX_PERIPHERAL_AUDIO_OUTPUTS = 3;
 const MAX_PERIPHERAL_AUDIO_INPUTS = 3;
 const MAX_PERIPHERAL_DISPLAYS = 2;
@@ -327,6 +334,18 @@ const PERIPHERAL_EXPANSION_PROFILE_OPTIONS = [
   { value: "pca9685", label: "PWM Expander PCA9685" },
   { value: "custom", label: "Custom" },
 ];
+
+function peripheralDiagramOptionLabel(options, value, fallbackLabel = "Peripheral") {
+  const normalizedValue = String(value || "").trim();
+  if (!normalizedValue || normalizedValue === "none") {
+    return fallbackLabel;
+  }
+  const match = Array.isArray(options)
+    ? options.find((entry) => String(entry?.value || "").trim() === normalizedValue)
+    : null;
+  return String(match?.label || fallbackLabel).trim() || fallbackLabel;
+}
+
 const EFFECT_SELECT_CONFIG = [
   { id: "effectStartupFile", field: "startupFile", label: "Startup", source: "effect-startup", volumeId: "effectStartupVolumePercent", volumeField: "startupVolumePercent" },
   { id: "effectAlarmFile", field: "alarmFile", label: "Alarm", source: "effect-alarm", volumeId: "effectAlarmVolumePercent", volumeField: "alarmVolumePercent" },
@@ -982,6 +1001,8 @@ const elements = {
   peripheralDiagramBoardEdit: document.getElementById("peripheralDiagramBoardEdit"),
   peripheralDiagramBoardImage: document.getElementById("peripheralDiagramBoardImage"),
   peripheralDiagramItems: document.getElementById("peripheralDiagramItems"),
+  peripheralDiagramUndoButton: document.getElementById("peripheralDiagramUndoButton"),
+  peripheralDiagramRedoButton: document.getElementById("peripheralDiagramRedoButton"),
   peripheralDiagramResetWiringButton: document.getElementById("peripheralDiagramResetWiringButton"),
   peripheralDiagramRewireButton: document.getElementById("peripheralDiagramRewireButton"),
   peripheralDiagramSaveButton: document.getElementById("peripheralDiagramSaveButton"),
@@ -1261,6 +1282,8 @@ peripheralDiagramWiringModule = createPeripheralDiagramWiringModule({
   peripheralHelperBindingValue,
   setPeripheralHelperBindingValue,
   savePeripheralDiagramPositions,
+  syncGpioMappingControls,
+  queueSettingsSave,
 });
 
 peripheralDiagramLabelEditorModule = createPeripheralDiagramLabelEditorModule({
@@ -1269,6 +1292,18 @@ peripheralDiagramLabelEditorModule = createPeripheralDiagramLabelEditorModule({
   renderPeripheralDiagram,
   savePeripheralDiagramPositions,
   buildEditablePeripheralLabels,
+});
+
+uiHistoryModule = createUiHistoryModule({
+  state,
+  elements,
+  currentSettingsSnapshot,
+  fillForm,
+  activeTabName,
+  activateTabByName,
+  queueSettingsSave,
+  renderPeripheralDiagram,
+  syncGpioMappingControls,
 });
 
 configurationBackupModule = createConfigurationBackupModule({
@@ -1351,6 +1386,7 @@ configurationSettingsPersistenceModule = createConfigurationSettingsPersistenceM
   syncPageSections,
   normalizeUiSettings,
   cloneSettingsObject,
+  peripheralDiagramPositionsStorageKey: PERIPHERAL_DIAGRAM_POSITIONS_STORAGE_KEY,
   validateSettingsPayload,
   applyPeripheralProfileSelections,
   currentSettingsSnapshot,
@@ -1570,6 +1606,7 @@ configurationPeripheralsTab.bindEvents();
 displayTab.bindEvents();
 effectsTab.bindEvents();
 mqttTab.bindEvents();
+uiHistoryModule.bindEvents();
 
 elements.peripheralDiagramSaveButton?.addEventListener("click", async () => {
   try {
@@ -1587,6 +1624,7 @@ elements.peripheralDiagramRewireButton?.addEventListener("click", () => {
     renderPeripheralDiagram();
     if (result.matchedAssignments > 0) {
       queueSettingsSave(0);
+      uiHistoryModule?.scheduleCapture();
       setMessage(`Rewired ${result.matchedAssignments} label assignment${result.matchedAssignments === 1 ? "" : "s"}`);
     } else {
       setMessage("No label-to-board matches found for rewiring");
@@ -2494,20 +2532,27 @@ function syncPeripheralBindingGroups() {
 }
 
 function loadPeripheralDiagramPositions() {
+  try {
+    const local = normalizePeripheralDiagramPositions(
+      window.localStorage.getItem(PERIPHERAL_DIAGRAM_POSITIONS_STORAGE_KEY) || "{}",
+    );
+    if (Object.keys(local).length) {
+      return local;
+    }
+  } catch {
+  }
   return ensureUiSettings().peripheralDiagramPositions;
 }
 
 function savePeripheralDiagramPositions(options = {}) {
-  const { persist = true } = options;
-  const ui = ensureUiSettings();
-  ui.peripheralDiagramPositions = cloneSettingsObject(state.peripheralDiagramPositions || {}) || {};
-  if (persist && !state.settingsLoading) {
-    queueSettingsSave(0);
-  }
-}
-
-function peripheralDiagramOptionLabel(options, value, fallbackLabel = "Custom") {
-  return options.find((option) => option.value === value)?.label || fallbackLabel;
+  const result = configurationSettingsPersistenceModule?.savePeripheralDiagramPositions(
+    state.peripheralDiagramPositions,
+    options,
+  ) || Promise.resolve();
+  Promise.resolve(result).finally(() => {
+    uiHistoryModule?.scheduleCapture();
+  });
+  return result;
 }
 
 function peripheralDiagramSelectedLabel(element, fallbackValue) {
@@ -3020,7 +3065,7 @@ function handlePeripheralDiagramPointerMove(event) {
     ...(state.peripheralDiagramPositions?.[dragState.nodeId] || {}),
     ...position,
   };
-  peripheralDiagramWiringModule?.render();
+  renderPeripheralDiagramWiring();
 }
 
 function handlePeripheralDiagramPointerUp(event) {
@@ -3033,7 +3078,7 @@ function handlePeripheralDiagramPointerUp(event) {
   nodeElement?.classList.remove("is-dragging");
   savePeripheralDiagramPositions();
   state.peripheralDiagramDrag = null;
-  peripheralDiagramWiringModule?.render();
+  renderPeripheralDiagramWiring();
 }
 
 function handlePeripheralDiagramAssetError(event) {
@@ -3055,7 +3100,7 @@ function handlePeripheralDiagramAssetError(event) {
     const visualStyle = rotation ? ` style="transform:rotate(${rotation}deg);"` : "";
     nodeElement.innerHTML = `<button type="button" class="peripheral-diagram-node-rotate" data-node-rotate="${escapeHtml(node.id)}" aria-label="Rotate ${escapeHtml(node.label)} clockwise" title="Rotate 90 degrees clockwise">↻</button><div class="peripheral-diagram-node-visual"${visualStyle}>${peripheralDiagramPlaceholderMarkup(node)}</div><div class="peripheral-diagram-node-label">${escapeHtml(node.label)}</div>`;
   }
-  peripheralDiagramWiringModule?.render();
+  renderPeripheralDiagramWiring();
 }
 
 function rotatePeripheralDiagramNode(nodeId) {
@@ -3065,17 +3110,143 @@ function rotatePeripheralDiagramNode(nodeId) {
 
   const current = state.peripheralDiagramPositions?.[nodeId] || {};
   const nextRotation = (peripheralDiagramRotation(nodeId) + 90) % 360;
+  const visual = elements.peripheralDiagramItems?.querySelector(`[data-node-id="${nodeId}"] .peripheral-diagram-node-visual`);
+  rotatePeripheralDiagramNodeLabels(state, nodeId, {
+    deltaDegrees: 90,
+    visualWidth: visual?.offsetWidth || visual?.getBoundingClientRect?.().width || 1,
+    visualHeight: visual?.offsetHeight || visual?.getBoundingClientRect?.().height || 1,
+  });
   state.peripheralDiagramPositions[nodeId] = {
     ...current,
     rotation: nextRotation,
   };
   savePeripheralDiagramPositions();
 
-  const visual = elements.peripheralDiagramItems?.querySelector(`[data-node-id="${nodeId}"] .peripheral-diagram-node-visual`);
   if (visual) {
     visual.style.transform = nextRotation ? `rotate(${nextRotation}deg)` : "";
   }
-  peripheralDiagramWiringModule?.render();
+  renderPeripheralDiagramWiring();
+}
+
+function peripheralDiagramStageRelativeRect(element, stageRect) {
+  if (!element || !stageRect) {
+    return null;
+  }
+  const rect = element.getBoundingClientRect();
+  if (!rect.width || !rect.height) {
+    return null;
+  }
+  return {
+    left: rect.left - stageRect.left,
+    top: rect.top - stageRect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function peripheralDiagramControlLabelRects(stageRect) {
+  if (!stageRect) {
+    return [];
+  }
+  return [...document.querySelectorAll(".peripheral-diagram-floating-label")]
+    .map((element) => peripheralDiagramStageRelativeRect(element, stageRect))
+    .filter(Boolean);
+}
+
+function peripheralDiagramRectOverlapArea(left, right) {
+  const overlapWidth = Math.max(0, Math.min(left.left + left.width, right.left + right.width) - Math.max(left.left, right.left));
+  const overlapHeight = Math.max(0, Math.min(left.top + left.height, right.top + right.height) - Math.max(left.top, right.top));
+  return overlapWidth * overlapHeight;
+}
+
+function peripheralDiagramControlCandidates(ownerRect, isBoard = false) {
+  const horizontalWidth = isBoard ? 108 : 116;
+  const horizontalHeight = 34;
+  const verticalWidth = isBoard ? 52 : 62;
+  const verticalHeight = isBoard ? 30 : 72;
+  return {
+    top: {
+      left: ownerRect.left + ((ownerRect.width - horizontalWidth) / 2),
+      top: ownerRect.top - (horizontalHeight + 8),
+      width: horizontalWidth,
+      height: horizontalHeight,
+    },
+    bottom: {
+      left: ownerRect.left + ((ownerRect.width - horizontalWidth) / 2),
+      top: ownerRect.top + ownerRect.height + 8,
+      width: horizontalWidth,
+      height: horizontalHeight,
+    },
+    left: {
+      left: ownerRect.left - (verticalWidth + 10),
+      top: ownerRect.top + ((ownerRect.height - verticalHeight) / 2),
+      width: verticalWidth,
+      height: verticalHeight,
+    },
+    right: {
+      left: ownerRect.left + ownerRect.width + 10,
+      top: ownerRect.top + ((ownerRect.height - verticalHeight) / 2),
+      width: verticalWidth,
+      height: verticalHeight,
+    },
+  };
+}
+
+function choosePeripheralDiagramControlDock(ownerRect, labelRects, stageRect, isBoard = false) {
+  if (!ownerRect || !stageRect) {
+    return "top";
+  }
+  const candidates = peripheralDiagramControlCandidates(ownerRect, isBoard);
+  const preferredOrder = isBoard ? ["top", "bottom", "right", "left"] : ["top", "right", "left", "bottom"];
+  let bestDock = preferredOrder[0];
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  preferredOrder.forEach((dock, index) => {
+    const candidate = candidates[dock];
+    if (!candidate) {
+      return;
+    }
+    const overlapScore = labelRects.reduce((total, rect) => total + peripheralDiagramRectOverlapArea(candidate, rect), 0);
+    const outOfBoundsPenalty = (
+      Math.max(0, -candidate.left)
+      + Math.max(0, -candidate.top)
+      + Math.max(0, (candidate.left + candidate.width) - stageRect.width)
+      + Math.max(0, (candidate.top + candidate.height) - stageRect.height)
+    ) * 200;
+    const score = overlapScore + outOfBoundsPenalty + index;
+    if (score < bestScore) {
+      bestScore = score;
+      bestDock = dock;
+    }
+  });
+
+  return bestDock;
+}
+
+function updatePeripheralDiagramControlDocks() {
+  const stageRect = elements.peripheralDiagramStage?.getBoundingClientRect();
+  if (!stageRect) {
+    return;
+  }
+
+  const labelRects = peripheralDiagramControlLabelRects(stageRect);
+  elements.peripheralDiagramItems?.querySelectorAll(".peripheral-diagram-node[data-node-id]").forEach((nodeElement) => {
+    const ownerRect = peripheralDiagramStageRelativeRect(nodeElement, stageRect);
+    if (!ownerRect) {
+      return;
+    }
+    nodeElement.dataset.controlDock = choosePeripheralDiagramControlDock(ownerRect, labelRects, stageRect, false);
+  });
+
+  const boardShellRect = peripheralDiagramStageRelativeRect(elements.peripheralDiagramBoardShell, stageRect);
+  if (boardShellRect && elements.peripheralDiagramBoardShell) {
+    elements.peripheralDiagramBoardShell.dataset.controlDock = choosePeripheralDiagramControlDock(boardShellRect, labelRects, stageRect, true);
+  }
+}
+
+function renderPeripheralDiagramWiring(nodes = Object.values(state.peripheralDiagramNodeMap || {})) {
+  peripheralDiagramWiringModule?.render(nodes);
+  updatePeripheralDiagramControlDocks();
 }
 
 function handlePeripheralDiagramClick(event) {
@@ -3105,6 +3276,73 @@ function handlePeripheralDiagramClick(event) {
   rotatePeripheralDiagramNode(String(rotateButton.dataset.nodeRotate || ""));
 }
 
+function peripheralDiagramControlHost(target) {
+  return target instanceof Element
+    ? target.closest(".peripheral-diagram-node[data-node-id], .peripheral-diagram-board-shell")
+    : null;
+}
+
+function clearPeripheralDiagramControlHideTimer(host) {
+  const timer = peripheralDiagramControlHideTimers.get(host);
+  if (timer) {
+    window.clearTimeout(timer);
+    peripheralDiagramControlHideTimers.delete(host);
+  }
+}
+
+function showPeripheralDiagramControls(host) {
+  if (!host) {
+    return;
+  }
+  clearPeripheralDiagramControlHideTimer(host);
+  host.classList.add("controls-visible");
+}
+
+function schedulePeripheralDiagramControlHide(host) {
+  if (!host) {
+    return;
+  }
+  clearPeripheralDiagramControlHideTimer(host);
+  peripheralDiagramControlHideTimers.set(host, window.setTimeout(() => {
+    peripheralDiagramControlHideTimers.delete(host);
+    if (!host.matches(":hover") && !host.matches(":focus-within")) {
+      host.classList.remove("controls-visible");
+    }
+  }, PERIPHERAL_DIAGRAM_CONTROL_HIDE_DELAY_MS));
+}
+
+function handlePeripheralDiagramControlPointerOver(event) {
+  showPeripheralDiagramControls(peripheralDiagramControlHost(event.target));
+}
+
+function handlePeripheralDiagramControlPointerOut(event) {
+  const host = peripheralDiagramControlHost(event.target);
+  if (!host) {
+    return;
+  }
+  const nextHost = peripheralDiagramControlHost(event.relatedTarget);
+  if (nextHost === host) {
+    return;
+  }
+  schedulePeripheralDiagramControlHide(host);
+}
+
+function handlePeripheralDiagramControlFocusIn(event) {
+  showPeripheralDiagramControls(peripheralDiagramControlHost(event.target));
+}
+
+function handlePeripheralDiagramControlFocusOut(event) {
+  const host = peripheralDiagramControlHost(event.target);
+  if (!host) {
+    return;
+  }
+  const nextHost = peripheralDiagramControlHost(event.relatedTarget);
+  if (nextHost === host) {
+    return;
+  }
+  schedulePeripheralDiagramControlHide(host);
+}
+
 function setupPeripheralDiagramInteractions() {
   if (!elements.peripheralDiagramItems || !elements.peripheralDiagramStage || elements.peripheralDiagramItems.dataset.interactionsReady === "true") {
     return;
@@ -3113,6 +3351,10 @@ function setupPeripheralDiagramInteractions() {
   elements.peripheralDiagramItems.dataset.interactionsReady = "true";
   elements.peripheralDiagramItems.addEventListener("pointerdown", handlePeripheralDiagramPointerDown);
   elements.peripheralDiagramStage.addEventListener("click", handlePeripheralDiagramClick);
+  elements.peripheralDiagramStage.addEventListener("pointerover", handlePeripheralDiagramControlPointerOver);
+  elements.peripheralDiagramStage.addEventListener("pointerout", handlePeripheralDiagramControlPointerOut);
+  elements.peripheralDiagramStage.addEventListener("focusin", handlePeripheralDiagramControlFocusIn);
+  elements.peripheralDiagramStage.addEventListener("focusout", handlePeripheralDiagramControlFocusOut);
   elements.peripheralDiagramItems.addEventListener("error", handlePeripheralDiagramAssetError, true);
   document.addEventListener("pointermove", handlePeripheralDiagramPointerMove);
   document.addEventListener("pointerup", handlePeripheralDiagramPointerUp);
@@ -3339,7 +3581,7 @@ function renderPeripheralDiagram() {
   if (elements.peripheralDiagramPlaceholderText) {
     elements.peripheralDiagramPlaceholderText.hidden = nodes.length > 0;
   }
-  peripheralDiagramWiringModule?.render(nodes);
+  renderPeripheralDiagramWiring(nodes);
 }
 
 function renderPeripheralAudioOutputControls() {
@@ -3954,7 +4196,7 @@ function populateButtonActionSelect(fieldName) {
 
   const options = availableButtonActionOptions();
   const signature = options.map((option) => option.value).join("|");
-  const key = fieldName.split(".").pop();
+  const key = String(fieldName || "").replace(/^device\./, "");
   const currentValue = String(field.value || state.settings?.device?.[key] || defaultButtonActionForField(fieldName)).trim();
 
   if (field.dataset.optionSignature !== signature) {
@@ -6238,11 +6480,57 @@ function renderDeviceResources(status) {
   hardwareTab?.renderDeviceResources(status);
 }
 
+function updateHeaderActionsButtonStatus() {
+  if (!elements.headerActionsButton) {
+    return;
+  }
+  const status = state.deviceReachable === true ? "true" : (state.deviceReachable === false ? "false" : "unknown");
+  elements.headerActionsButton.dataset.deviceOnline = status;
+  elements.headerActionsButton.title = state.deviceReachable === false ? "Device offline" : "Device actions";
+  elements.headerActionsButton.setAttribute("aria-label", state.deviceReachable === false ? "Device actions, device offline" : "Device actions");
+}
+
+function isApiPath(path) {
+  return typeof path === "string" && (path.startsWith("/api/") || path === "/api/status");
+}
+
+function isExpectedOfflineError(error) {
+  return Boolean(error?.isDeviceOffline);
+}
+
+function markDeviceReachability(reachable) {
+  const normalized = reachable === true ? true : (reachable === false ? false : null);
+  if (state.deviceReachable === normalized) {
+    return;
+  }
+  state.deviceReachable = normalized;
+  if (normalized !== false) {
+    state.offlineNoticeShown = false;
+  }
+  updateHeaderActionsButtonStatus();
+}
+
 async function request(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      headers: { "Content-Type": "application/json" },
+      ...options,
+    });
+  } catch (error) {
+    if (isApiPath(path)) {
+      markDeviceReachability(false);
+      const offlineError = new Error("Device offline");
+      offlineError.cause = error;
+      offlineError.isDeviceOffline = true;
+      offlineError.path = path;
+      throw offlineError;
+    }
+    throw error;
+  }
+  if (isApiPath(path)) {
+    markDeviceReachability(true);
+  }
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `HTTP ${response.status}`);
@@ -6345,7 +6633,7 @@ function formatBrowserReindexStatus(progress, labelPrefix) {
 }
 
 function shouldDeferSdReads() {
-  return isPlaybackActive(state.status);
+  return false;
 }
 
 function mergeEffectFileOptions(options) {
@@ -7024,6 +7312,8 @@ function setupTabs() {
       if (resolvedTabName === "storage-external") {
         storageTab?.maybeRefreshVisibleStorageTab(true);
       }
+
+      uiHistoryModule?.scheduleCapture();
     },
   });
 }
@@ -7062,6 +7352,12 @@ async function loadStatus() {
       }
     }
     return status;
+  } catch (error) {
+    if (isExpectedOfflineError(error)) {
+      markDeviceReachability(false);
+      return state.status;
+    }
+    throw error;
   } finally {
     state.statusRequestInFlight = false;
   }
@@ -7368,11 +7664,10 @@ document.addEventListener("keydown", (event) => {
 window.addEventListener("pageshow", () => {
   resetTransientOverlays();
 });
-window.addEventListener("load", () => {
-  resetTransientOverlays();
-});
-window.addEventListener("pagehide", () => {
-  hideRebootOverlay();
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    hideRebootOverlay();
+  }
 });
 elements.playForm.addEventListener("submit", (event) => handlePlaybackAction(event).catch(handleError));
 elements.radioCountrySelect?.addEventListener("change", (event) => {
@@ -7493,6 +7788,15 @@ for (const field of elements.settingsForm.elements) {
 }
 
 function handleError(error) {
+  if (isExpectedOfflineError(error)) {
+    markDeviceReachability(false);
+    setMessage("Device offline", true);
+    if (!state.offlineNoticeShown) {
+      toast("Device offline");
+      state.offlineNoticeShown = true;
+    }
+    return;
+  }
   console.error(error);
   setMessage(error.message, true);
   toast(`Error: ${error.message}`);
@@ -7523,7 +7827,14 @@ normalizeOwnedFormControlIds();
 restoreGpioBoardPreferences();
 updateGpioBoardSelectorMode(state.status);
 updateGpioBoardImage();
+updateHeaderActionsButtonStatus();
 loadRadioCountries().catch(handleError);
 
-Promise.all([loadStatus(), loadSettings()]).catch(handleError);
+uiHistoryModule.captureSnapshot({ replace: true });
+
+Promise.all([loadStatus(), loadSettings()])
+  .then(() => {
+    uiHistoryModule?.captureSnapshot({ replace: true });
+  })
+  .catch(handleError);
 startStatusPolling();

@@ -5,12 +5,12 @@ Custom PlatformIO firmware for ESP32 and ESP32-S3 Wi-Fi speaker/notifier hardwar
 
 ## Current Release
 
-- Firmware version: `v0.1.20-beta`
+- Firmware version: `v0.1.20`
 - Primary release repository: `elik745i/ESP32-S3-Ceiling-Speaker`
 - GitHub Releases feed: `https://api.github.com/repos/elik745i/ESP32-S3-Ceiling-Speaker/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.20-beta.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.20.bin`
 
-This version is intended to be published as a GitHub prerelease (`beta`) using the normal OTA asset names with a `-beta` suffix.
+This version is intended to be published as a standard GitHub release using the normal OTA asset names without a prerelease suffix.
 
 ## What This Firmware Does
 
@@ -296,14 +296,14 @@ Current MQTT behavior:
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.18`:
+Release asset names for `v0.1.20`:
 
-- `esp32-notifier-v0.1.18.bin`
-- `esp32-notifier-hacs-v0.1.18.bin`
-- `esp32-notifier-hacs-slim-v0.1.18.bin`
-- `esp32s3-notifier-v0.1.18.bin`
-- `esp32s3-notifier-hacs-v0.1.18.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.18.bin`
+- `esp32-notifier-v0.1.20.bin`
+- `esp32-notifier-hacs-v0.1.20.bin`
+- `esp32-notifier-hacs-slim-v0.1.20.bin`
+- `esp32s3-notifier-v0.1.20.bin`
+- `esp32s3-notifier-hacs-v0.1.20.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.20.bin`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard release variants and upload the matching OTA assets back to that release.
 
@@ -384,4 +384,4 @@ Key files and directories:
 
 Current release notes live here:
 
-- [release-assets/v0.1.18/release-notes.md](release-assets/v0.1.18/release-notes.md)
+- [release-assets/v0.1.20/release-notes.md](release-assets/v0.1.20/release-notes.md)

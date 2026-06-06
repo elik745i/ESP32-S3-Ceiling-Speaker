@@ -90,17 +90,43 @@ body {
     border-radius: 999px;
     display: inline-grid;
     place-items: center;
+    color: #8a5a00;
+    background: #d7d7d7;
+    border: 1px solid #bdbdbd;
+  }
+
+  .hero-actions-button svg {
+    fill: #f7c948;
+    stroke: #8a5a00;
+  }
+
+  .hero-actions-button[data-device-online="true"] {
+    background: linear-gradient(180deg, #4fb070, var(--ok));
+    border-color: #1f6d48;
+  }
+
+  .hero-actions-button[data-device-online="false"] {
+    background: linear-gradient(180deg, #d85f57, var(--danger));
+    border-color: #92211a;
+  }
+
+  .hero-actions-button[data-device-online="unknown"] {
+    background: linear-gradient(180deg, #ebebeb, #d6d6d6);
+    border-color: #bdbdbd;
   }
 
   .hero-actions-button svg,
   .hero-actions-menu-button svg {
     width: 18px;
     height: 18px;
-    fill: none;
     stroke: currentColor;
     stroke-width: 2;
     stroke-linecap: round;
     stroke-linejoin: round;
+  }
+
+  .hero-actions-menu-button svg {
+    fill: none;
   }
 
   .hero-actions-menu {
@@ -1802,6 +1828,9 @@ body {
     text-transform: uppercase;
     box-shadow: 0 8px 18px rgba(15, 23, 42, 0.16);
     white-space: nowrap;
+    pointer-events: auto;
+    cursor: crosshair;
+    touch-action: none;
   }
 
   .peripheral-diagram-wire-connection {
@@ -1832,6 +1861,12 @@ body {
     pointer-events: none;
   }
 
+  .peripheral-diagram-wire-preview {
+    stroke-width: 3.2;
+    stroke-dasharray: 8 8;
+    opacity: 0.8;
+  }
+
   .peripheral-diagram-wire-hit {
     fill: none;
     stroke: rgba(255, 255, 255, 0.001);
@@ -1841,6 +1876,16 @@ body {
     pointer-events: stroke;
     cursor: grab;
     touch-action: none;
+  }
+
+  .peripheral-diagram-wire-endpoint-handle {
+    pointer-events: all;
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .peripheral-diagram-wire-connection.is-endpoint-dragging .peripheral-diagram-wire-endpoint-handle {
+    cursor: grabbing;
   }
 
   .peripheral-diagram-wire-handle {
@@ -1943,7 +1988,7 @@ body {
     opacity: 0;
     pointer-events: none;
     transition: opacity 140ms ease, transform 140ms ease, background-color 140ms ease;
-    z-index: 6;
+    z-index: 10;
   }
 
   .peripheral-diagram-node-edit,
@@ -1978,19 +2023,127 @@ body {
     font-weight: 800;
   }
 
+  .peripheral-diagram-node[data-control-dock="top"] .peripheral-diagram-node-edit,
+  .peripheral-diagram-node[data-control-dock="bottom"] .peripheral-diagram-node-edit,
+  .peripheral-diagram-node[data-control-dock="left"] .peripheral-diagram-node-edit,
+  .peripheral-diagram-node[data-control-dock="right"] .peripheral-diagram-node-edit,
+  .peripheral-diagram-node[data-control-dock="top"] .peripheral-diagram-node-rotate,
+  .peripheral-diagram-node[data-control-dock="bottom"] .peripheral-diagram-node-rotate,
+  .peripheral-diagram-node[data-control-dock="left"] .peripheral-diagram-node-rotate,
+  .peripheral-diagram-node[data-control-dock="right"] .peripheral-diagram-node-rotate,
+  .peripheral-diagram-board-shell[data-control-dock="top"] .peripheral-diagram-board-edit,
+  .peripheral-diagram-board-shell[data-control-dock="bottom"] .peripheral-diagram-board-edit,
+  .peripheral-diagram-board-shell[data-control-dock="left"] .peripheral-diagram-board-edit,
+  .peripheral-diagram-board-shell[data-control-dock="right"] .peripheral-diagram-board-edit {
+    right: auto;
+    bottom: auto;
+  }
+
+  .peripheral-diagram-node[data-control-dock="top"] .peripheral-diagram-node-edit {
+    top: -32px;
+    left: calc(50% + 4px);
+  }
+
+  .peripheral-diagram-node[data-control-dock="top"] .peripheral-diagram-node-rotate {
+    top: -34px;
+    left: calc(50% - 34px);
+  }
+
+  .peripheral-diagram-node[data-control-dock="bottom"] .peripheral-diagram-node-edit {
+    top: auto;
+    bottom: -32px;
+    left: calc(50% + 4px);
+  }
+
+  .peripheral-diagram-node[data-control-dock="bottom"] .peripheral-diagram-node-rotate {
+    top: auto;
+    bottom: -34px;
+    left: calc(50% - 34px);
+  }
+
+  .peripheral-diagram-node[data-control-dock="left"] .peripheral-diagram-node-edit {
+    top: calc(50% - 30px);
+    left: -52px;
+  }
+
+  .peripheral-diagram-node[data-control-dock="left"] .peripheral-diagram-node-rotate {
+    top: calc(50% + 4px);
+    left: -34px;
+  }
+
+  .peripheral-diagram-node[data-control-dock="right"] .peripheral-diagram-node-edit {
+    top: calc(50% - 30px);
+    left: calc(100% + 10px);
+  }
+
+  .peripheral-diagram-node[data-control-dock="right"] .peripheral-diagram-node-rotate {
+    top: calc(50% + 4px);
+    left: calc(100% + 28px);
+  }
+
+  .peripheral-diagram-board-shell[data-control-dock="top"] .peripheral-diagram-board-edit {
+    top: -34px;
+    left: 50%;
+    right: auto;
+    transform: translate(-50%, 2px);
+  }
+
+  .peripheral-diagram-board-shell[data-control-dock="bottom"] .peripheral-diagram-board-edit {
+    top: auto;
+    bottom: -34px;
+    left: 50%;
+    right: auto;
+    transform: translate(-50%, 2px);
+  }
+
+  .peripheral-diagram-board-shell[data-control-dock="left"] .peripheral-diagram-board-edit {
+    top: 50%;
+    left: -54px;
+    right: auto;
+    transform: translateY(calc(-50% + 2px));
+  }
+
+  .peripheral-diagram-board-shell[data-control-dock="right"] .peripheral-diagram-board-edit {
+    top: 50%;
+    left: calc(100% + 12px);
+    right: auto;
+    transform: translateY(calc(-50% + 2px));
+  }
+
   .peripheral-diagram-node:hover .peripheral-diagram-node-edit,
   .peripheral-diagram-node:focus-within .peripheral-diagram-node-edit,
+  .peripheral-diagram-node.controls-visible .peripheral-diagram-node-edit,
   .peripheral-diagram-node:hover .peripheral-diagram-node-rotate,
-  .peripheral-diagram-node:focus-within .peripheral-diagram-node-rotate {
+  .peripheral-diagram-node:focus-within .peripheral-diagram-node-rotate,
+  .peripheral-diagram-node.controls-visible .peripheral-diagram-node-rotate {
     opacity: 1;
     pointer-events: auto;
   }
 
   .peripheral-diagram-board-shell:hover .peripheral-diagram-board-edit,
-  .peripheral-diagram-board-shell:focus-within .peripheral-diagram-board-edit {
+  .peripheral-diagram-board-shell:focus-within .peripheral-diagram-board-edit,
+  .peripheral-diagram-board-shell.controls-visible .peripheral-diagram-board-edit {
     opacity: 1;
     pointer-events: auto;
-    transform: translate(-50%, -50%);
+    transform: translateY(0);
+  }
+
+  .peripheral-diagram-board-shell[data-control-dock="top"]:hover .peripheral-diagram-board-edit,
+  .peripheral-diagram-board-shell[data-control-dock="top"]:focus-within .peripheral-diagram-board-edit,
+  .peripheral-diagram-board-shell[data-control-dock="top"].controls-visible .peripheral-diagram-board-edit,
+  .peripheral-diagram-board-shell[data-control-dock="bottom"]:hover .peripheral-diagram-board-edit,
+  .peripheral-diagram-board-shell[data-control-dock="bottom"]:focus-within .peripheral-diagram-board-edit,
+  .peripheral-diagram-board-shell[data-control-dock="bottom"].controls-visible .peripheral-diagram-board-edit {
+    transform: translate(-50%, 0);
+  }
+
+  .peripheral-diagram-board-shell[data-control-dock="left"]:hover .peripheral-diagram-board-edit,
+  .peripheral-diagram-board-shell[data-control-dock="left"]:focus-within .peripheral-diagram-board-edit,
+  .peripheral-diagram-board-shell[data-control-dock="left"].controls-visible .peripheral-diagram-board-edit,
+  .peripheral-diagram-board-shell[data-control-dock="right"]:hover .peripheral-diagram-board-edit,
+  .peripheral-diagram-board-shell[data-control-dock="right"]:focus-within .peripheral-diagram-board-edit,
+  .peripheral-diagram-board-shell[data-control-dock="right"].controls-visible .peripheral-diagram-board-edit {
+    transform: translateY(-50%);
   }
 
   .peripheral-diagram-node:hover .peripheral-diagram-node-edit,

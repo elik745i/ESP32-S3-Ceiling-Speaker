@@ -7,7 +7,7 @@
 #include <freertos/FreeRTOS.h>
 
 namespace {
-constexpr uint32_t kSdFrequenciesHz[] = {40000000UL, 20000000UL, 10000000UL, 4000000UL, 1000000UL, 400000UL};
+constexpr uint32_t kSdFrequenciesHz[] = {80000000UL, 40000000UL, 20000000UL, 10000000UL, 4000000UL, 1000000UL, 400000UL};
 constexpr unsigned long kSdHotplugPollIntervalMs = 2000UL;
 constexpr unsigned long kSdRetryBackoffMs[] = {2000UL, 5000UL, 15000UL, 60000UL};
 

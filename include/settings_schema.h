@@ -69,6 +69,7 @@ struct WebAuthSettings {
 
 struct AudioSettings {
     bool enabled = true;
+    bool rememberLastPlayed = true;
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
     uint8_t doutPin = 9;
     uint8_t wsPin = 12;
@@ -78,6 +79,13 @@ struct AudioSettings {
     uint8_t wsPin = 26;
     uint8_t bclkPin = 27;
 #endif
+    struct LastPlaybackSettings {
+        String url;
+        String label;
+        String type;
+        String source;
+        bool resumeAfterBoot = false;
+    } lastPlayback;
 };
 
 struct OledSettings {

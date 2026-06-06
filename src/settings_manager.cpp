@@ -525,6 +525,10 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     settings.ota.manifestUrl.trim();
     settings.webAuth.username.trim();
     settings.ui.gpioBoardSelection.trim();
+    settings.audio.lastPlayback.url.trim();
+    settings.audio.lastPlayback.label.trim();
+    settings.audio.lastPlayback.type.trim();
+    settings.audio.lastPlayback.source.trim();
 
     if (settings.device.deviceName.isEmpty() || isLegacyDefaultDeviceName(settings.device.deviceName)) {
         settings.device.deviceName = defaultDeviceName();
@@ -600,6 +604,19 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
         settings.audio.bclkPin = DefaultConfig::I2S_BCLK_PIN;
         settings.audio.wsPin = DefaultConfig::I2S_WS_PIN;
         settings.audio.doutPin = DefaultConfig::I2S_DOUT_PIN;
+    }
+    if (!settings.audio.rememberLastPlayed) {
+        settings.audio.lastPlayback.resumeAfterBoot = false;
+    }
+    settings.audio.lastPlayback.type.toLowerCase();
+    if (settings.audio.lastPlayback.type != "stream" && settings.audio.lastPlayback.type != "media") {
+        settings.audio.lastPlayback.resumeAfterBoot = false;
+    }
+    if (settings.audio.lastPlayback.url.isEmpty()) {
+        settings.audio.lastPlayback.label = "";
+        settings.audio.lastPlayback.type = "";
+        settings.audio.lastPlayback.source = "";
+        settings.audio.lastPlayback.resumeAfterBoot = false;
     }
     if (!isValidSdPin(settings.sd.csPin) || !isValidSdPin(settings.sd.sckPin) || !isValidSdPin(settings.sd.mosiPin) ||
         !isValidSdPin(settings.sd.misoPin) || !hasDistinctSdPins(settings.sd)) {
@@ -705,9 +722,15 @@ SettingsBundle SettingsManager::load() {
     settings.webAuth.password = readString("web_pass", settings.webAuth.password);
 
     settings.audio.enabled = readBool("aud_en", settings.audio.enabled);
+    settings.audio.rememberLastPlayed = readBool("aud_rem", settings.audio.rememberLastPlayed);
     settings.audio.doutPin = readUInt("aud_dout", settings.audio.doutPin);
     settings.audio.wsPin = readUInt("aud_ws", settings.audio.wsPin);
     settings.audio.bclkPin = readUInt("aud_bclk", settings.audio.bclkPin);
+    settings.audio.lastPlayback.url = readString("aud_lp_url", settings.audio.lastPlayback.url);
+    settings.audio.lastPlayback.label = readString("aud_lp_lbl", settings.audio.lastPlayback.label);
+    settings.audio.lastPlayback.type = readString("aud_lp_type", settings.audio.lastPlayback.type);
+    settings.audio.lastPlayback.source = readString("aud_lp_src", settings.audio.lastPlayback.source);
+    settings.audio.lastPlayback.resumeAfterBoot = readBool("aud_lp_res", settings.audio.lastPlayback.resumeAfterBoot);
 
     settings.effects.startupFile = readString("eff_start", settings.effects.startupFile);
     settings.effects.startupVolumePercent = readUInt("eff_st_vol", settings.effects.startupVolumePercent);
@@ -812,9 +835,15 @@ bool SettingsManager::save(const SettingsBundle& settings) {
     changed |= writeStringIfChanged("web_pass", sanitized.webAuth.password);
 
     changed |= writeBoolIfChanged("aud_en", sanitized.audio.enabled);
+    changed |= writeBoolIfChanged("aud_rem", sanitized.audio.rememberLastPlayed);
     changed |= writeUIntIfChanged("aud_dout", sanitized.audio.doutPin);
     changed |= writeUIntIfChanged("aud_ws", sanitized.audio.wsPin);
     changed |= writeUIntIfChanged("aud_bclk", sanitized.audio.bclkPin);
+    changed |= writeStringIfChanged("aud_lp_url", sanitized.audio.lastPlayback.url);
+    changed |= writeStringIfChanged("aud_lp_lbl", sanitized.audio.lastPlayback.label);
+    changed |= writeStringIfChanged("aud_lp_type", sanitized.audio.lastPlayback.type);
+    changed |= writeStringIfChanged("aud_lp_src", sanitized.audio.lastPlayback.source);
+    changed |= writeBoolIfChanged("aud_lp_res", sanitized.audio.lastPlayback.resumeAfterBoot);
 
     changed |= writeStringIfChanged("eff_start", sanitized.effects.startupFile);
     changed |= writeUIntIfChanged("eff_st_vol", sanitized.effects.startupVolumePercent);
@@ -924,9 +953,16 @@ void SettingsManager::toJson(const SettingsBundle& settings, JsonObject root) co
 
     JsonObject audio = root["audio"].to<JsonObject>();
     audio["enabled"] = settings.audio.enabled;
+    audio["rememberLastPlayed"] = settings.audio.rememberLastPlayed;
     audio["doutPin"] = settings.audio.doutPin;
     audio["wsPin"] = settings.audio.wsPin;
     audio["bclkPin"] = settings.audio.bclkPin;
+    JsonObject lastPlayback = audio["lastPlayback"].to<JsonObject>();
+    lastPlayback["url"] = settings.audio.lastPlayback.url;
+    lastPlayback["label"] = settings.audio.lastPlayback.label;
+    lastPlayback["type"] = settings.audio.lastPlayback.type;
+    lastPlayback["source"] = settings.audio.lastPlayback.source;
+    lastPlayback["resumeAfterBoot"] = settings.audio.lastPlayback.resumeAfterBoot;
 
     JsonObject effects = root["effects"].to<JsonObject>();
     effects["startupFile"] = settings.effects.startupFile;
@@ -1063,9 +1099,18 @@ bool SettingsManager::updateFromJson(SettingsBundle& settings, JsonVariantConst 
     JsonObjectConst audio = object["audio"];
     if (!audio.isNull()) {
         if (audio["enabled"].is<bool>()) settings.audio.enabled = audio["enabled"].as<bool>();
+        if (audio["rememberLastPlayed"].is<bool>()) settings.audio.rememberLastPlayed = audio["rememberLastPlayed"].as<bool>();
         if (audio["doutPin"].is<uint8_t>()) settings.audio.doutPin = audio["doutPin"].as<uint8_t>();
         if (audio["wsPin"].is<uint8_t>()) settings.audio.wsPin = audio["wsPin"].as<uint8_t>();
         if (audio["bclkPin"].is<uint8_t>()) settings.audio.bclkPin = audio["bclkPin"].as<uint8_t>();
+        JsonObjectConst lastPlayback = audio["lastPlayback"];
+        if (!lastPlayback.isNull()) {
+            copyString(lastPlayback, "url", settings.audio.lastPlayback.url);
+            copyString(lastPlayback, "label", settings.audio.lastPlayback.label);
+            copyString(lastPlayback, "type", settings.audio.lastPlayback.type);
+            copyString(lastPlayback, "source", settings.audio.lastPlayback.source);
+            if (lastPlayback["resumeAfterBoot"].is<bool>()) settings.audio.lastPlayback.resumeAfterBoot = lastPlayback["resumeAfterBoot"].as<bool>();
+        }
     }
 
     JsonObjectConst effects = object["effects"];

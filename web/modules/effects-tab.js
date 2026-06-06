@@ -389,6 +389,22 @@ export function createEffectsTab({
         try {
           await saveSettings({ silent: true });
           if (selectedValue) {
+            const ambientWasPlaying = source === "effect-ambient"
+              && String(state.status?.playback?.source || "") === "effect-ambient";
+            if (ambientWasPlaying) {
+              await stopPlayback();
+              const playbackStopped = await pollStatusUntil(
+                (status) => {
+                  const playbackState = String(status?.playback?.state || "idle");
+                  return playbackState !== "playing" && playbackState !== "buffering";
+                },
+                32,
+                150,
+              );
+              if (!playbackStopped) {
+                throw new Error("Ambient playback is still stopping. Try the change again in a moment.");
+              }
+            }
             await previewEffectFile(selectedValue, label, { source });
           }
         } catch (error) {

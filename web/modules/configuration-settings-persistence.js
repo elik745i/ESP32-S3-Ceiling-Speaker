@@ -28,6 +28,7 @@ export function createConfigurationSettingsPersistenceModule({
   syncPageSections,
   normalizeUiSettings,
   cloneSettingsObject,
+  peripheralDiagramPositionsStorageKey,
   validateSettingsPayload,
   applyPeripheralProfileSelections,
   currentSettingsSnapshot,
@@ -94,12 +95,53 @@ export function createConfigurationSettingsPersistenceModule({
     await saveSettings({ silent: true });
   }
 
+  function loadPeripheralDiagramPositions() {
+    try {
+      const local = normalizeUiSettings({
+        peripheralDiagramPositions: window.localStorage.getItem(peripheralDiagramPositionsStorageKey) || "{}",
+      }).peripheralDiagramPositions;
+      if (Object.keys(local).length) {
+        return local;
+      }
+    } catch {
+    }
+
+    return normalizeUiSettings(state.settings?.ui).peripheralDiagramPositions;
+  }
+
+  function savePeripheralDiagramPositions(positions, options = {}) {
+    const { persist = true, immediate = false } = options;
+    const ui = normalizeUiSettings(state.settings?.ui);
+    ui.peripheralDiagramPositions = cloneSettingsObject(positions || {}) || {};
+    if (state.settings) {
+      state.settings.ui = ui;
+    }
+    try {
+      window.localStorage.setItem(
+        peripheralDiagramPositionsStorageKey,
+        JSON.stringify(ui.peripheralDiagramPositions),
+      );
+    } catch {
+    }
+    if (persist && !state.settingsLoading) {
+      if (immediate) {
+        return saveSettings({ silent: true });
+      }
+      queueSettingsSave(0);
+    }
+    return Promise.resolve();
+  }
+
   function fillForm(data) {
     state.settingsLoading = true;
     data.audio ||= {};
+    data.audio.lastPlayback ||= {};
+    if (data.audio.rememberLastPlayed === undefined) {
+      data.audio.rememberLastPlayed = true;
+    }
     data.sd ||= {};
     data.ui = normalizeUiSettings(data.ui);
-    state.peripheralDiagramPositions = cloneSettingsObject(data.ui.peripheralDiagramPositions) || {};
+    state.peripheralDiagramPositions = cloneSettingsObject(loadPeripheralDiagramPositions()) || {};
     applyPeripheralProfileSelectionsState(data.ui.peripheralProfiles);
     state.peripheralHelperBindings = cloneSettingsObject(data.ui.peripheralHelperBindings) || {};
     savePeripheralProfileSelections();
@@ -174,6 +216,18 @@ export function createConfigurationSettingsPersistenceModule({
     }
     if (elements.volumeSlider && data.device?.savedVolumePercent !== undefined) {
       elements.volumeSlider.value = String(data.device.savedVolumePercent);
+    }
+    if (elements.playUrl && document.activeElement !== elements.playUrl) {
+      elements.playUrl.value = String(data.audio?.lastPlayback?.url || elements.playUrl.value || "");
+    }
+    if (elements.playLabel && document.activeElement !== elements.playLabel) {
+      elements.playLabel.value = String(data.audio?.lastPlayback?.label || elements.playLabel.value || "");
+    }
+    if (elements.playType && document.activeElement !== elements.playType) {
+      const savedPlayType = String(data.audio?.lastPlayback?.type || "").trim().toLowerCase();
+      if (savedPlayType && [...elements.playType.options].some((option) => option.value === savedPlayType)) {
+        elements.playType.value = savedPlayType;
+      }
     }
     populateButtonActionSelects();
     syncPeripheralProfilesFromSettings(data);
@@ -341,6 +395,9 @@ export function createConfigurationSettingsPersistenceModule({
     if (state.settings.audio.enabled === undefined) {
       state.settings.audio.enabled = true;
     }
+    if (state.settings.audio.rememberLastPlayed === undefined) {
+      state.settings.audio.rememberLastPlayed = true;
+    }
     state.settings.ui = normalizeUiSettings(state.settings.ui);
     state.peripheralDiagramPositions = cloneSettingsObject(state.settings.ui.peripheralDiagramPositions) || {};
     restoreGpioBoardPreferences();
@@ -398,6 +455,8 @@ export function createConfigurationSettingsPersistenceModule({
     settingsSubsetMatches,
     refreshSettingsAfterSave,
     saveDirtyBatteryMeasurement,
+    loadPeripheralDiagramPositions,
+    savePeripheralDiagramPositions,
     fillForm,
     collectForm,
     queueSettingsSave,

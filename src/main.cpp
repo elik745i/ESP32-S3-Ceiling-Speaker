@@ -265,6 +265,7 @@ struct RuntimeAudioAutomation {
     bool restartForcePending = false;
     bool webUiLockPending = false;
     bool pendingCommandAfterNotification = false;
+    bool resumeSavedPlaybackPending = false;
     uint8_t ambientPreviousVolume = 0;
     unsigned long ambientEligibleAt = 0;
     unsigned long restartForceAt = 0;
@@ -310,6 +311,7 @@ bool previousMqttConnected = false;
 bool previousCharging = false;
 String previousPlaybackState = "idle";
 String previousPlaybackSource = "none";
+String previousPlaybackType = "idle";
 String lastPublishedOtaSignature;
 bool transitionStateInitialized = false;
 bool otaPendingVerification = false;
@@ -339,6 +341,141 @@ constexpr char kOtaLastBadReasonKey[] = "bad_reason";
 bool playRequest(const String& url, const String& label, const String& type, const String& source, String& error, bool addToHistory);
 void flushPendingSettingsNow();
 void restoreAmbientVolumeIfNeeded();
+
+bool isResumablePlaybackSelection(const String& url, const String& type, const String& source) {
+    String normalizedUrl = url;
+    normalizedUrl.trim();
+    if (normalizedUrl.isEmpty()) {
+        return false;
+    }
+
+    String normalizedType = type;
+    normalizedType.trim();
+    normalizedType.toLowerCase();
+    if (normalizedType != "stream" && normalizedType != "media") {
+        return false;
+    }
+
+    String normalizedSource = source;
+    normalizedSource.trim();
+    normalizedSource.toLowerCase();
+    return !normalizedSource.startsWith("effect-");
+}
+
+bool parseSavedPlaybackReference(const String& raw, StorageTarget& target, String& path) {
+    String value = raw;
+    value.trim();
+    value.replace('\\', '/');
+
+    const int separatorIndex = value.indexOf(':');
+    if (separatorIndex <= 0) {
+        return false;
+    }
+
+    String targetId = value.substring(0, separatorIndex);
+    targetId.trim();
+    targetId.toLowerCase();
+    if (targetId == "sd") {
+        target = StorageTarget::Sd;
+    } else if (targetId == "flash") {
+        target = StorageTarget::Flash;
+    } else {
+        return false;
+    }
+
+    path = value.substring(separatorIndex + 1);
+    path.trim();
+    if (path.isEmpty()) {
+        return false;
+    }
+    if (!path.startsWith("/")) {
+        path = "/" + path;
+    }
+    while (path.indexOf("//") >= 0) {
+        path.replace("//", "/");
+    }
+    if (path.indexOf("..") >= 0) {
+        return false;
+    }
+
+    return true;
+}
+
+String canonicalPlaybackReference(const String& url) {
+    StorageTarget storageTarget = StorageTarget::Flash;
+    String storagePath;
+    if (parseSavedPlaybackReference(url, storageTarget, storagePath)) {
+        return String(storageTargetId(storageTarget)) + ":" + storagePath;
+    }
+    return PlaybackText::normalizeUrl(url);
+}
+
+void syncPendingLastPlaybackSettings() {
+    if (deferredActions != nullptr && deferredActions->settingsApplyPending) {
+        deferredActions->pendingSettings.audio.lastPlayback = settings->audio.lastPlayback;
+    }
+}
+
+void persistResumablePlaybackSelection(const String& url, const String& label, const String& type, const String& source, bool resumeAfterBoot = true) {
+    if (settings == nullptr || settingsManager == nullptr || !settings->audio.rememberLastPlayed || !isResumablePlaybackSelection(url, type, source)) {
+        return;
+    }
+
+    const String normalizedUrl = canonicalPlaybackReference(url);
+    StorageTarget storageTarget = StorageTarget::Flash;
+    String storagePath;
+    const bool storageReference = parseSavedPlaybackReference(normalizedUrl, storageTarget, storagePath);
+    const String normalizedLabel = storageReference
+        ? PlaybackText::normalizeTitle(label, storagePath)
+        : PlaybackText::normalizeTitle(label, normalizedUrl);
+    String normalizedType = type;
+    normalizedType.trim();
+    normalizedType.toLowerCase();
+    String normalizedSource = source;
+    normalizedSource.trim();
+
+    AudioSettings::LastPlaybackSettings& lastPlayback = settings->audio.lastPlayback;
+    if (lastPlayback.url == normalizedUrl && lastPlayback.label == normalizedLabel && lastPlayback.type == normalizedType &&
+        lastPlayback.source == normalizedSource && lastPlayback.resumeAfterBoot == resumeAfterBoot) {
+        return;
+    }
+
+    lastPlayback.url = normalizedUrl;
+    lastPlayback.label = normalizedLabel;
+    lastPlayback.type = normalizedType;
+    lastPlayback.source = normalizedSource;
+    lastPlayback.resumeAfterBoot = resumeAfterBoot;
+    syncPendingLastPlaybackSettings();
+    settingsManager->save(*settings);
+}
+
+void clearPersistedPlaybackResumeFlag() {
+    if (settings == nullptr || settingsManager == nullptr || !settings->audio.lastPlayback.resumeAfterBoot) {
+        return;
+    }
+
+    settings->audio.lastPlayback.resumeAfterBoot = false;
+    syncPendingLastPlaybackSettings();
+    settingsManager->save(*settings);
+}
+
+bool queueSavedPlaybackResume() {
+    if (settings == nullptr) {
+        return false;
+    }
+
+    const AudioSettings::LastPlaybackSettings& lastPlayback = settings->audio.lastPlayback;
+    if (!settings->audio.rememberLastPlayed || !lastPlayback.resumeAfterBoot || !isResumablePlaybackSelection(lastPlayback.url, lastPlayback.type, lastPlayback.source)) {
+        return false;
+    }
+
+    String error;
+    const bool queued = playRequest(lastPlayback.url, lastPlayback.label, lastPlayback.type, lastPlayback.source, error, false);
+    if (!queued && !error.isEmpty()) {
+        Serial.printf("[audio] saved playback resume skipped: %s\n", error.c_str());
+    }
+    return queued;
+}
 
 bool parseStorageFileReference(const String& raw, StorageTarget& target, String& path) {
     String value = raw;
@@ -895,8 +1032,13 @@ void initializeButtons() {
 }
 
 void rememberPlaybackSelection(const String& url, const String& label, const String& type, const String& source) {
-    const String normalizedUrl = PlaybackText::normalizeUrl(url);
-    const String normalizedLabel = PlaybackText::normalizeTitle(label, normalizedUrl);
+    const String normalizedUrl = canonicalPlaybackReference(url);
+    StorageTarget storageTarget = StorageTarget::Flash;
+    String storagePath;
+    const bool storageReference = parseStorageFileReference(normalizedUrl, storageTarget, storagePath);
+    const String normalizedLabel = storageReference
+        ? PlaybackText::normalizeTitle(label, storagePath)
+        : PlaybackText::normalizeTitle(label, normalizedUrl);
 
     if (normalizedUrl.isEmpty()) {
         return;
@@ -1598,6 +1740,7 @@ void processDeferredActions() {
     if (deferredActions->stopPending) {
         audioPlayer->stop();
         deferredActions->stopPending = false;
+        clearPersistedPlaybackResumeFlag();
         mqttManager->publishState();
     }
 
@@ -1617,29 +1760,38 @@ void processDeferredActions() {
     }
 
     if (deferredActions->playPending) {
+        bool started = false;
         if (deferredActions->playSource != "effect-ambient") {
             restoreAmbientVolumeIfNeeded();
         }
         if (deferredActions->playFromStorage) {
-            audioPlayer->playStorageFile(
+            started = audioPlayer->playStorageFile(
                 deferredActions->playStorageTarget,
                 deferredActions->playStoragePath,
                 deferredActions->playLabel,
                 deferredActions->playType,
                 deferredActions->playSource);
         } else {
-            audioPlayer->play(
+            started = audioPlayer->play(
                 deferredActions->playUrl,
                 deferredActions->playLabel,
                 deferredActions->playType,
                 deferredActions->playSource);
         }
-        if (deferredActions->playAddToHistory) {
+        if (started && deferredActions->playAddToHistory) {
             rememberPlaybackSelection(
                 deferredActions->playUrl,
                 deferredActions->playLabel,
                 deferredActions->playType,
                 deferredActions->playSource);
+        }
+        if (started) {
+            persistResumablePlaybackSelection(
+                deferredActions->playUrl,
+                deferredActions->playLabel,
+                deferredActions->playType,
+                deferredActions->playSource,
+                true);
         }
         deferredActions->playPending = false;
         mqttManager->publishState();
@@ -1787,6 +1939,7 @@ void setup() {
 #endif
     runtimeAudio.ambientEligibleAt = millis() + kAmbientResumeDelayMs;
     runtimeAudio.bootUpdateCheckQueued = settings->ota.autoCheck || settings->ota.autoUpdate;
+    runtimeAudio.resumeSavedPlaybackPending = settings->audio.rememberLastPlayed && settings->audio.lastPlayback.resumeAfterBoot && !settings->audio.lastPlayback.url.isEmpty();
     if (settings->oled.displayType == "wape" && settings->oled.wapeTriggerEvent == "device_start") {
         requestWapeTriggerPulse();
     }
@@ -1824,6 +1977,7 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
         previousMqttConnected = snapshot.network.mqttConnected;
         previousPlaybackState = snapshot.playback.state;
         previousPlaybackSource = snapshot.playback.source;
+        previousPlaybackType = snapshot.playback.type;
         previousCharging = snapshot.battery.charging;
         transitionStateInitialized = true;
         return;
@@ -1849,6 +2003,9 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
         }
     } else if (playbackStopped) {
         soundEffects->playPlaybackStop();
+        if (isResumablePlaybackSelection(String("resume-marker"), previousPlaybackType, previousPlaybackSource)) {
+            clearPersistedPlaybackResumeFlag();
+        }
     }
 
     if (playbackStopped) {
@@ -1928,6 +2085,7 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
     previousMqttConnected = snapshot.network.mqttConnected;
     previousPlaybackState = snapshot.playback.state;
     previousPlaybackSource = snapshot.playback.source;
+    previousPlaybackType = snapshot.playback.type;
     previousCharging = snapshot.battery.charging;
 }
 
@@ -1947,6 +2105,17 @@ void serviceRuntimeAudioAutomation(const AppStateSnapshot& snapshot) {
     if (runtimeAudio.bootUpdateCheckQueued && wifiManager != nullptr && wifiManager->isConnected() && otaManager != nullptr && !snapshot.ota.busy) {
         runtimeAudio.bootUpdateCheckQueued = false;
         otaManager->triggerCheck(false);
+    }
+
+    if (runtimeAudio.resumeSavedPlaybackPending && snapshot.playback.state != "playing" && snapshot.playback.state != "buffering") {
+        StorageTarget storageTarget = StorageTarget::Flash;
+        String storagePath;
+        const bool storageReference = settings != nullptr && parseStorageFileReference(settings->audio.lastPlayback.url, storageTarget, storagePath);
+        const bool resumeReady = storageReference || (wifiManager != nullptr && wifiManager->isConnected());
+        if (resumeReady) {
+            runtimeAudio.resumeSavedPlaybackPending = false;
+            queueSavedPlaybackResume();
+        }
     }
 
     const uint8_t batteryPercent = estimateBatteryPercent(snapshot.battery.voltage);

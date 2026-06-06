@@ -8,6 +8,8 @@ import {
 } from "./peripheral-diagram-label-editor.js";
 
 const PERIPHERAL_DIAGRAM_WIRE_CURVES_KEY = "__wireCurves";
+const PERIPHERAL_DIAGRAM_CUSTOM_LABEL_WIRES_KEY = "__customLabelWires";
+const PERIPHERAL_DIAGRAM_HIDDEN_CONNECTIONS_KEY = "__hiddenConnections";
 
 function normalizeSignalLabel(label) {
   return String(label || "")
@@ -23,8 +25,16 @@ function signalKey(label) {
   return normalizeSignalLabel(label).toUpperCase();
 }
 
+function labelReferenceKey(nodeId, labelKey) {
+  return `${String(nodeId || "")}:${String(labelKey || "")}`;
+}
+
+function customLabelConnectionKey(connection) {
+  return `${labelReferenceKey(connection?.fromNodeId, connection?.fromLabelKey)}->${labelReferenceKey(connection?.toNodeId, connection?.toLabelKey)}`;
+}
+
 function isPositivePowerSignal(label) {
-  return ["VCC", "VIN", "PWR", "VBUS", "5V", "3V3", "3.3V", "3VO"].includes(signalKey(label));
+  return ["VCC", "VIN", "PWR", "VBUS", "5V", "12V", "3V3", "3.3V", "3VO"].includes(signalKey(label));
 }
 
 function isGroundSignal(label) {
@@ -35,6 +45,9 @@ function powerRailLabelForNode(node, label) {
   const key = signalKey(label);
   if (key === "GND" || key === "GROUND") {
     return "GND";
+  }
+  if (key === "12V") {
+    return "12V";
   }
   if (key === "5V" || key === "VIN" || key === "VBUS") {
     return "5V";
@@ -74,6 +87,29 @@ function classifyWireColor(connection) {
     return { stroke: "#7c3aed", glow: "rgba(124, 58, 237, 0.18)", badge: "#7c3aed", text: "#ffffff" };
   }
   return { stroke: "#0f766e", glow: "rgba(15, 118, 110, 0.18)", badge: "#0f766e", text: "#ffffff" };
+}
+
+function colorWithAlpha(color, alpha = 0.18) {
+  const value = String(color || "").trim();
+  const match = /^#([0-9a-f]{6})$/i.exec(value);
+  if (!match) {
+    return `rgba(15, 118, 110, ${alpha})`;
+  }
+  const hex = match[1];
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function normalizeWirePalette(palette) {
+  const stroke = String(palette?.stroke || palette?.badge || "#0f766e");
+  return {
+    stroke,
+    glow: String(palette?.glow || colorWithAlpha(stroke)),
+    badge: String(palette?.badge || stroke),
+    text: String(palette?.text || "#ffffff"),
+  };
 }
 
 function boardTargetKey(connection) {
@@ -206,31 +242,148 @@ function controlPointFromHandlePoint(startPoint, endPoint, handlePoint) {
   };
 }
 
-function connectionGeometry(nodeAnchor, boardAnchor, nodeOwnerRect, boardOwnerRect, manualCurvePoint = null) {
-  const startDetour = anchorDetourPoint(nodeAnchor, nodeOwnerRect, boardAnchor);
-  const endDetour = anchorDetourPoint(boardAnchor, boardOwnerRect, nodeAnchor);
-  const controlPoint = manualCurvePoint || defaultConnectionControlPoint(nodeAnchor, startDetour, endDetour);
-  const hasCurve = Math.abs(startDetour.x - endDetour.x) > 0.5 || Math.abs(startDetour.y - endDetour.y) > 0.5;
-  const points = [
-    `M ${nodeAnchor.x} ${nodeAnchor.y}`,
-    `L ${startDetour.x} ${startDetour.y}`,
-  ];
+function anchorSideFromVector(deltaX, deltaY) {
+  if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+    return deltaX < 0 ? "left" : "right";
+  }
+  return deltaY < 0 ? "top" : "bottom";
+}
 
-  if (hasCurve) {
-    points.push(`Q ${controlPoint.x} ${controlPoint.y} ${endDetour.x} ${endDetour.y}`);
-  } else {
-    points.push(`L ${endDetour.x} ${endDetour.y}`);
+function anchorLeadPoint(anchor, fallbackPoint, distance = 26) {
+  const tangentX = Number(anchor?.tangentX);
+  const tangentY = Number(anchor?.tangentY);
+  if (Number.isFinite(tangentX) && Number.isFinite(tangentY)) {
+    return {
+      x: Number(anchor.x || 0) + (tangentX * distance),
+      y: Number(anchor.y || 0) + (tangentY * distance),
+    };
+  }
+  return {
+    x: Number(fallbackPoint?.x || anchor?.x || 0),
+    y: Number(fallbackPoint?.y || anchor?.y || 0),
+  };
+}
+
+function cloneCurvePoints(points) {
+  return Array.isArray(points)
+    ? points
+      .map((point) => ({
+        x: Number(point?.x),
+        y: Number(point?.y),
+      }))
+      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+    : [];
+}
+
+function dedupeAdjacentPoints(points, threshold = 0.75) {
+  const deduped = [];
+  points.forEach((point) => {
+    const previous = deduped[deduped.length - 1];
+    if (!previous || Math.hypot(previous.x - point.x, previous.y - point.y) > threshold) {
+      deduped.push(point);
+    }
+  });
+  return deduped;
+}
+
+function pointDistance(left, right) {
+  return Math.hypot(Number(right?.x || 0) - Number(left?.x || 0), Number(right?.y || 0) - Number(left?.y || 0));
+}
+
+function pointOnSegmentDistance(point, start, end) {
+  const dx = Number(end?.x || 0) - Number(start?.x || 0);
+  const dy = Number(end?.y || 0) - Number(start?.y || 0);
+  const lengthSquared = (dx * dx) + (dy * dy);
+  if (lengthSquared <= 0.001) {
+    return pointDistance(point, start);
+  }
+  const t = Math.max(0, Math.min(1, (((point.x - start.x) * dx) + ((point.y - start.y) * dy)) / lengthSquared));
+  return pointDistance(point, {
+    x: start.x + (dx * t),
+    y: start.y + (dy * t),
+  });
+}
+
+function insertPointIntoRoute(routePoints, point, start, end) {
+  if (!routePoints.length) {
+    return { points: [point], index: 0 };
   }
 
-  points.push(`L ${boardAnchor.x} ${boardAnchor.y}`);
-  return {
-    path: points.join(" "),
+  const anchors = [start, ...routePoints, end];
+  let bestIndex = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < anchors.length - 1; index += 1) {
+    const distance = pointOnSegmentDistance(point, anchors[index], anchors[index + 1]);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  }
+
+  const nextPoints = [...routePoints];
+  nextPoints.splice(bestIndex, 0, point);
+  return { points: nextPoints, index: bestIndex };
+}
+
+function smoothBezierPath(points) {
+  if (points.length < 2) {
+    return "";
+  }
+  if (points.length === 2) {
+    return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+  }
+
+  const commands = [`M ${points[0].x} ${points[0].y}`];
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const previous = points[index - 1] || points[index];
+    const current = points[index];
+    const next = points[index + 1];
+    const afterNext = points[index + 2] || next;
+    const control1 = {
+      x: current.x + ((next.x - previous.x) / 6),
+      y: current.y + ((next.y - previous.y) / 6),
+    };
+    const control2 = {
+      x: next.x - ((afterNext.x - current.x) / 6),
+      y: next.y - ((afterNext.y - current.y) / 6),
+    };
+    commands.push(`C ${control1.x} ${control1.y} ${control2.x} ${control2.y} ${next.x} ${next.y}`);
+  }
+  return commands.join(" ");
+}
+
+function defaultRoutePoints(nodeAnchor, boardAnchor, nodeOwnerRect, boardOwnerRect) {
+  const startLead = anchorLeadPoint(
+    nodeAnchor,
+    anchorDetourPoint(nodeAnchor, nodeOwnerRect, boardAnchor),
+  );
+  const endLead = anchorLeadPoint(
+    boardAnchor,
+    anchorDetourPoint(boardAnchor, boardOwnerRect, nodeAnchor),
+  );
+  const controlPoint = defaultConnectionControlPoint(nodeAnchor, startLead, endLead);
+  return dedupeAdjacentPoints([
+    startLead,
     controlPoint,
-    handlePoint: hasCurve
-      ? quadraticPointAt(startDetour, controlPoint, endDetour, 0.5)
-      : { x: (startDetour.x + endDetour.x) / 2, y: (startDetour.y + endDetour.y) / 2 },
-    startDetour,
-    endDetour,
+    endLead,
+  ]);
+}
+
+function connectionGeometry(nodeAnchor, boardAnchor, nodeOwnerRect, boardOwnerRect, manualCurvePoints = []) {
+  const routePoints = cloneCurvePoints(manualCurvePoints);
+  const defaultPoints = defaultRoutePoints(nodeAnchor, boardAnchor, nodeOwnerRect, boardOwnerRect);
+  const points = dedupeAdjacentPoints([
+    { x: nodeAnchor.x, y: nodeAnchor.y },
+    ...(routePoints.length ? routePoints : defaultPoints),
+    { x: boardAnchor.x, y: boardAnchor.y },
+  ]);
+
+  return {
+    path: smoothBezierPath(points),
+    controlPoint: routePoints[0] || points[Math.min(2, points.length - 2)] || boardAnchor,
+    handlePoint: routePoints[0] || points[Math.min(2, points.length - 2)] || boardAnchor,
+    handlePoints: routePoints.length ? routePoints : defaultPoints,
+    manualCurvePoints: routePoints,
   };
 }
 
@@ -330,29 +483,156 @@ function clearWireCurveStore(state) {
   return true;
 }
 
+function ensureCustomLabelWireStore(state) {
+  state.peripheralDiagramPositions ||= {};
+  const current = state.peripheralDiagramPositions[PERIPHERAL_DIAGRAM_CUSTOM_LABEL_WIRES_KEY];
+  if (!Array.isArray(current)) {
+    state.peripheralDiagramPositions[PERIPHERAL_DIAGRAM_CUSTOM_LABEL_WIRES_KEY] = [];
+  }
+  return state.peripheralDiagramPositions[PERIPHERAL_DIAGRAM_CUSTOM_LABEL_WIRES_KEY];
+}
+
+function readCustomLabelConnections(state) {
+  return ensureCustomLabelWireStore(state)
+    .map((entry) => ({
+      fromNodeId: String(entry?.fromNodeId || ""),
+      fromLabelKey: String(entry?.fromLabelKey || ""),
+      toNodeId: String(entry?.toNodeId || ""),
+      toLabelKey: String(entry?.toLabelKey || ""),
+    }))
+    .filter((entry) => entry.fromNodeId && entry.fromLabelKey && entry.toNodeId && entry.toLabelKey);
+}
+
+function writeCustomLabelConnections(state, connections) {
+  const normalized = Array.isArray(connections)
+    ? connections
+      .map((entry) => ({
+        fromNodeId: String(entry?.fromNodeId || ""),
+        fromLabelKey: String(entry?.fromLabelKey || ""),
+        toNodeId: String(entry?.toNodeId || ""),
+        toLabelKey: String(entry?.toLabelKey || ""),
+      }))
+      .filter((entry) => entry.fromNodeId && entry.fromLabelKey && entry.toNodeId && entry.toLabelKey)
+    : [];
+  if (!normalized.length) {
+    delete state.peripheralDiagramPositions?.[PERIPHERAL_DIAGRAM_CUSTOM_LABEL_WIRES_KEY];
+    return;
+  }
+  state.peripheralDiagramPositions ||= {};
+  state.peripheralDiagramPositions[PERIPHERAL_DIAGRAM_CUSTOM_LABEL_WIRES_KEY] = normalized;
+}
+
+function upsertCustomLabelConnection(state, connection) {
+  const current = readCustomLabelConnections(state);
+  const key = customLabelConnectionKey(connection);
+  if (current.some((entry) => customLabelConnectionKey(entry) === key)) {
+    return false;
+  }
+  writeCustomLabelConnections(state, [...current, connection]);
+  return true;
+}
+
+function clearCustomLabelWireStore(state) {
+  const current = state.peripheralDiagramPositions?.[PERIPHERAL_DIAGRAM_CUSTOM_LABEL_WIRES_KEY];
+  if (!Array.isArray(current) || !current.length) {
+    delete state.peripheralDiagramPositions?.[PERIPHERAL_DIAGRAM_CUSTOM_LABEL_WIRES_KEY];
+    return false;
+  }
+  delete state.peripheralDiagramPositions[PERIPHERAL_DIAGRAM_CUSTOM_LABEL_WIRES_KEY];
+  return true;
+}
+
+function ensureHiddenConnectionStore(state) {
+  state.peripheralDiagramPositions ||= {};
+  const current = state.peripheralDiagramPositions[PERIPHERAL_DIAGRAM_HIDDEN_CONNECTIONS_KEY];
+  if (!current || typeof current !== "object" || Array.isArray(current)) {
+    state.peripheralDiagramPositions[PERIPHERAL_DIAGRAM_HIDDEN_CONNECTIONS_KEY] = {};
+  }
+  return state.peripheralDiagramPositions[PERIPHERAL_DIAGRAM_HIDDEN_CONNECTIONS_KEY];
+}
+
+function isConnectionHidden(state, connectionKey) {
+  return Boolean(ensureHiddenConnectionStore(state)[String(connectionKey || "")]);
+}
+
+function hideConnection(state, connectionKey) {
+  const key = String(connectionKey || "").trim();
+  if (!key) {
+    return false;
+  }
+  const store = ensureHiddenConnectionStore(state);
+  if (store[key]) {
+    return false;
+  }
+  store[key] = true;
+  return true;
+}
+
+function clearHiddenConnectionStore(state) {
+  const current = state.peripheralDiagramPositions?.[PERIPHERAL_DIAGRAM_HIDDEN_CONNECTIONS_KEY];
+  if (!current || typeof current !== "object" || Array.isArray(current) || !Object.keys(current).length) {
+    delete state.peripheralDiagramPositions?.[PERIPHERAL_DIAGRAM_HIDDEN_CONNECTIONS_KEY];
+    return false;
+  }
+  delete state.peripheralDiagramPositions[PERIPHERAL_DIAGRAM_HIDDEN_CONNECTIONS_KEY];
+  return true;
+}
+
+function clearStoredWireCurveByKey(state, connectionKey) {
+  const key = String(connectionKey || "").trim();
+  if (!key) {
+    return false;
+  }
+  const store = ensureWireCurveStore(state);
+  if (!Object.prototype.hasOwnProperty.call(store, key)) {
+    return false;
+  }
+  delete store[key];
+  return true;
+}
+
 function readStoredWireCurve(state, key, stageRect) {
   const entry = ensureWireCurveStore(state)[key];
   if (!entry || !stageRect?.width || !stageRect?.height) {
-    return null;
+    return [];
+  }
+  if (Array.isArray(entry.points)) {
+    return entry.points
+      .map((point) => {
+        const xFactor = Number(point?.xFactor);
+        const yFactor = Number(point?.yFactor);
+        if (!Number.isFinite(xFactor) || !Number.isFinite(yFactor)) {
+          return null;
+        }
+        return {
+          x: clampValue(xFactor * stageRect.width, 0, stageRect.width),
+          y: clampValue(yFactor * stageRect.height, 0, stageRect.height),
+        };
+      })
+      .filter(Boolean);
   }
   const xFactor = Number(entry.xFactor);
   const yFactor = Number(entry.yFactor);
   if (!Number.isFinite(xFactor) || !Number.isFinite(yFactor)) {
-    return null;
+    return [];
   }
-  return {
+  return [{
     x: clampValue(xFactor * stageRect.width, 0, stageRect.width),
     y: clampValue(yFactor * stageRect.height, 0, stageRect.height),
-  };
+  }];
 }
 
-function writeStoredWireCurve(state, key, point, stageRect) {
-  if (!point || !stageRect?.width || !stageRect?.height) {
+function writeStoredWireCurve(state, key, points, stageRect) {
+  const normalized = cloneCurvePoints(points);
+  if (!normalized.length || !stageRect?.width || !stageRect?.height) {
+    delete ensureWireCurveStore(state)[key];
     return;
   }
   ensureWireCurveStore(state)[key] = {
-    xFactor: clampValue(point.x / stageRect.width, 0, 1),
-    yFactor: clampValue(point.y / stageRect.height, 0, 1),
+    points: normalized.map((point) => ({
+      xFactor: clampValue(point.x / stageRect.width, 0, 1),
+      yFactor: clampValue(point.y / stageRect.height, 0, 1),
+    })),
   };
 }
 
@@ -419,6 +699,8 @@ function renderSignalLabels(layer, labelEntries) {
     const centerY = stageHeight > 0 ? clampValue(rawCenterY, labelPadding, stageHeight - labelPadding) : rawCenterY;
     const element = document.createElement("div");
     element.className = "peripheral-diagram-floating-label";
+    element.dataset.nodeId = String(entry.nodeId || "");
+    element.dataset.labelKey = String(entry.labelKey || entry.label || "");
     element.style.left = `${centerX}px`;
     element.style.top = `${centerY}px`;
     element.style.transform = `translate(-50%, -50%) rotate(${Number(entry.layout.rotation || 0)}deg)`;
@@ -431,6 +713,31 @@ function renderSignalLabels(layer, labelEntries) {
     element.appendChild(pill);
     layer.appendChild(element);
   });
+}
+
+function renderedLabelRects(layer, stageRect) {
+  const rects = new Map();
+  if (!layer || !stageRect) {
+    return rects;
+  }
+  layer.querySelectorAll(".peripheral-diagram-floating-label[data-node-id][data-label-key]").forEach((element) => {
+    const rect = element.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      return;
+    }
+    const nodeId = String(element.dataset.nodeId || "");
+    const labelKey = String(element.dataset.labelKey || "");
+    if (!nodeId || !labelKey) {
+      return;
+    }
+    rects.set(`${nodeId}:${labelKey}`, {
+      left: rect.left - stageRect.left,
+      top: rect.top - stageRect.top,
+      width: rect.width,
+      height: rect.height,
+    });
+  });
+  return rects;
 }
 
 function labelDisplayCenter(entry, stageWidth, stageHeight, labelPadding = 36) {
@@ -450,43 +757,49 @@ function floatingLabelSize(label) {
   };
 }
 
-function labelAnchorAwayFromOwner(entry, ownerRect, stageWidth, stageHeight) {
-  const center = labelDisplayCenter(entry, stageWidth, stageHeight);
-  const rotation = (Number(entry.layout?.rotation || 0) * Math.PI) / 180;
+function labelAnchorAwayFromOwner(entry, ownerRect, stageWidth, stageHeight, renderedRect = null) {
+  const center = renderedRect
+    ? {
+      x: renderedRect.left + (renderedRect.width / 2),
+      y: renderedRect.top + (renderedRect.height / 2),
+    }
+    : labelDisplayCenter(entry, stageWidth, stageHeight);
   const size = floatingLabelSize(entry.label);
-  const halfWidth = size.width / 2;
-  const halfHeight = size.height / 2;
+  const halfWidth = Number(size.width || 0) / 2;
+  const halfHeight = Number(size.height || 0) / 2;
   const ownerCenterX = Number(ownerRect?.left || 0) + (Number(ownerRect?.width || 0) / 2);
   const ownerCenterY = Number(ownerRect?.top || 0) + (Number(ownerRect?.height || 0) / 2);
   const deltaX = center.x - ownerCenterX;
   const deltaY = center.y - ownerCenterY;
 
   if (Math.abs(deltaX) < 0.001 && Math.abs(deltaY) < 0.001) {
-    return { x: center.x, y: center.y, side: "right" };
+    return { x: center.x + halfWidth, y: center.y, side: "right", tangentX: 1, tangentY: 0 };
   }
 
-  const cos = Math.cos(-rotation);
-  const sin = Math.sin(-rotation);
-  const localX = (deltaX * cos) - (deltaY * sin);
-  const localY = (deltaX * sin) + (deltaY * cos);
-  const scaleX = Math.abs(localX) > 0.001 ? (halfWidth / Math.abs(localX)) : Number.POSITIVE_INFINITY;
-  const scaleY = Math.abs(localY) > 0.001 ? (halfHeight / Math.abs(localY)) : Number.POSITIVE_INFINITY;
-  const scale = Math.min(scaleX, scaleY);
-  const edgeLocalX = localX * scale;
-  const edgeLocalY = localY * scale;
-  const worldCos = Math.cos(rotation);
-  const worldSin = Math.sin(rotation);
-  const edgeWorldX = center.x + (edgeLocalX * worldCos) - (edgeLocalY * worldSin);
-  const edgeWorldY = center.y + (edgeLocalX * worldSin) + (edgeLocalY * worldCos);
-  const side = Math.abs(edgeLocalX / Math.max(halfWidth, 1)) >= Math.abs(edgeLocalY / Math.max(halfHeight, 1))
-    ? (edgeLocalX < 0 ? "left" : "right")
-    : (edgeLocalY < 0 ? "top" : "bottom");
+  const rotationRadians = (Number(entry?.layout?.rotation || 0) * Math.PI) / 180;
+  const axisX = Math.cos(rotationRadians);
+  const axisY = Math.sin(rotationRadians);
+  const projection = (deltaX * axisX) + (deltaY * axisY);
+  const direction = projection >= 0 ? 1 : -1;
+  const edgeWorldX = center.x + (axisX * halfWidth * direction);
+  const edgeWorldY = center.y + (axisY * halfWidth * direction);
+  const tangentX = axisX * direction;
+  const tangentY = axisY * direction;
+  const side = anchorSideFromVector(tangentX, tangentY);
 
   return {
     x: edgeWorldX,
     y: edgeWorldY,
     side,
+    tangentX,
+    tangentY,
   };
+}
+
+function hasFiniteAnchorPoint(point) {
+  return Boolean(point)
+    && Number.isFinite(Number(point.x))
+    && Number.isFinite(Number(point.y));
 }
 
 export function createPeripheralDiagramWiringModule({
@@ -500,12 +813,34 @@ export function createPeripheralDiagramWiringModule({
   peripheralHelperBindingValue,
   setPeripheralHelperBindingValue,
   savePeripheralDiagramPositions,
+  syncGpioMappingControls,
+  queueSettingsSave,
 }) {
   let lastRenderedNodes = [];
+  let lastRenderedLabelEntries = new Map();
+  let lastRenderedLabelRects = new Map();
   const curveDragState = {
     key: "",
     pointerId: null,
     group: null,
+    overlay: null,
+    pointIndex: -1,
+    seedRoutePoints: [],
+  };
+  const labelConnectDragState = {
+    pointerId: null,
+    overlay: null,
+    sourceRef: "",
+    sourceAnchor: null,
+    sourcePalette: null,
+    previewPath: null,
+  };
+  const boardEndpointDragState = {
+    pointerId: null,
+    overlay: null,
+    connectionGroup: null,
+    previewPath: null,
+    sourceRoutePoints: [],
   };
   function defaultSignalLabelEntries(node) {
     const groupKey = String(node?.groupKey || "");
@@ -513,25 +848,29 @@ export function createPeripheralDiagramWiringModule({
     const index = Number(node?.index || 0);
     const entries = [];
     const used = new Set();
-
-    for (const definition of realPeripheralBindingDefinitions(groupKey, profileValue, state.settings || {}, index)) {
-      const label = normalizeSignalLabel(definition.label);
+    const pushEntry = (rawLabel) => {
+      const label = normalizeSignalLabel(rawLabel);
       const id = peripheralDiagramLabelId(label);
       if (!label || used.has(id)) {
-        continue;
+        return;
       }
       used.add(id);
       entries.push({ id, label, order: entries.length });
+    };
+
+    for (const definition of realPeripheralBindingDefinitions(groupKey, profileValue, state.settings || {}, index)) {
+      pushEntry(definition.label);
     }
 
     for (const signalLabel of helperSignalLabels(groupKey, profileValue)) {
-      const label = normalizeSignalLabel(signalLabel);
-      const id = peripheralDiagramLabelId(label);
-      if (!label || used.has(id)) {
+      pushEntry(signalLabel);
+    }
+
+    for (const pinLabel of Array.isArray(node?.pins) ? node.pins : []) {
+      if (!isPositivePowerSignal(pinLabel) && !isGroundSignal(pinLabel)) {
         continue;
       }
-      used.add(id);
-      entries.push({ id, label, order: entries.length });
+      pushEntry(pinLabel);
     }
 
     return entries;
@@ -646,8 +985,456 @@ export function createPeripheralDiagramWiringModule({
     return { matchedAssignments };
   }
 
-  function updateCurveGroupPath(group, controlPoint) {
-    if (!group || !controlPoint) {
+  function clearLabelConnectionPreview() {
+    labelConnectDragState.previewPath?.remove();
+    labelConnectDragState.pointerId = null;
+    labelConnectDragState.overlay = null;
+    labelConnectDragState.sourceRef = "";
+    labelConnectDragState.sourceAnchor = null;
+    labelConnectDragState.sourcePalette = null;
+    labelConnectDragState.previewPath = null;
+    window.removeEventListener("pointermove", handleLabelConnectionPointerMove);
+    window.removeEventListener("pointerup", finishLabelConnectionDrag);
+    window.removeEventListener("pointercancel", finishLabelConnectionDrag);
+  }
+
+  function clearBoardEndpointPreview() {
+    boardEndpointDragState.previewPath?.remove();
+    boardEndpointDragState.connectionGroup?.classList.remove("is-endpoint-dragging");
+    boardEndpointDragState.pointerId = null;
+    boardEndpointDragState.overlay = null;
+    boardEndpointDragState.connectionGroup = null;
+    boardEndpointDragState.previewPath = null;
+    boardEndpointDragState.sourceRoutePoints = [];
+    window.removeEventListener("pointermove", handleBoardEndpointPointerMove);
+    window.removeEventListener("pointerup", finishBoardEndpointDrag);
+    window.removeEventListener("pointercancel", finishBoardEndpointDrag);
+  }
+
+  function previewConnectionPath(sourceAnchor, pointerPoint) {
+    if (!hasFiniteAnchorPoint(sourceAnchor) || !hasFiniteAnchorPoint(pointerPoint)) {
+      return "";
+    }
+    return smoothBezierPath(dedupeAdjacentPoints([
+      { x: sourceAnchor.x, y: sourceAnchor.y },
+      anchorLeadPoint(sourceAnchor, sourceAnchor),
+      { x: pointerPoint.x, y: pointerPoint.y },
+    ]));
+  }
+
+  function handleLabelConnectionPointerMove(event) {
+    if (labelConnectDragState.pointerId !== event.pointerId || !labelConnectDragState.previewPath || !labelConnectDragState.sourceAnchor) {
+      return;
+    }
+    const stageRect = elements.peripheralDiagramStage?.getBoundingClientRect();
+    if (!stageRect?.width || !stageRect?.height) {
+      return;
+    }
+    const pointerPoint = {
+      x: clampValue(event.clientX - stageRect.left, 0, stageRect.width),
+      y: clampValue(event.clientY - stageRect.top, 0, stageRect.height),
+    };
+    labelConnectDragState.previewPath.setAttribute("d", previewConnectionPath(labelConnectDragState.sourceAnchor, pointerPoint));
+    event.preventDefault();
+  }
+
+  function finishLabelConnectionDrag(event) {
+    if (labelConnectDragState.pointerId !== event.pointerId || !labelConnectDragState.sourceRef) {
+      return;
+    }
+    const targetElement = document.elementFromPoint(event.clientX, event.clientY)?.closest?.(".peripheral-diagram-floating-label[data-node-id][data-label-key]");
+    const sourceRef = labelConnectDragState.sourceRef;
+    const targetRef = targetElement
+      ? labelReferenceKey(targetElement.dataset.nodeId, targetElement.dataset.labelKey)
+      : "";
+    const shouldSave = targetRef && targetRef !== sourceRef;
+    if (shouldSave) {
+      const [fromNodeId, fromLabelKey] = sourceRef.split(":");
+      const [toNodeId, toLabelKey] = targetRef.split(":");
+      const changed = upsertCustomLabelConnection(state, {
+        fromNodeId,
+        fromLabelKey,
+        toNodeId,
+        toLabelKey,
+      });
+      if (changed) {
+        savePeripheralDiagramPositions?.();
+        render(lastRenderedNodes);
+      }
+    }
+    clearLabelConnectionPreview();
+    event.preventDefault();
+  }
+
+  function beginLabelConnectionDrag(event, overlay, sourceEntry, sourceRect) {
+    if (event.button !== 0 || !sourceEntry || !overlay) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const sourceRef = labelReferenceKey(sourceEntry.nodeId, sourceEntry.labelKey);
+    const sourceAnchor = labelAnchorAwayFromOwner(
+      sourceEntry,
+      sourceEntry.nodeRect,
+      overlay.viewBox.baseVal.width,
+      overlay.viewBox.baseVal.height,
+      sourceRect || null,
+    );
+    const previewPath = createSvgElement("path");
+    const sourcePalette = normalizeWirePalette(sourceEntry.palette);
+    previewPath.setAttribute("class", "peripheral-diagram-wire peripheral-diagram-wire-preview");
+    previewPath.setAttribute("stroke", sourcePalette.stroke);
+    overlay.appendChild(previewPath);
+
+    labelConnectDragState.pointerId = event.pointerId;
+    labelConnectDragState.overlay = overlay;
+    labelConnectDragState.sourceRef = sourceRef;
+    labelConnectDragState.sourceAnchor = sourceAnchor;
+    labelConnectDragState.sourcePalette = sourcePalette;
+    labelConnectDragState.previewPath = previewPath;
+
+    handleLabelConnectionPointerMove(event);
+    window.addEventListener("pointermove", handleLabelConnectionPointerMove);
+    window.addEventListener("pointerup", finishLabelConnectionDrag);
+    window.addEventListener("pointercancel", finishLabelConnectionDrag);
+  }
+
+  function bindLabelConnectionInteractions(labelLayer, overlay) {
+    labelLayer.querySelectorAll(".peripheral-diagram-floating-label-pill").forEach((pill) => {
+      pill.addEventListener("pointerdown", (event) => {
+        const labelElement = pill.closest(".peripheral-diagram-floating-label[data-node-id][data-label-key]");
+        if (!labelElement) {
+          return;
+        }
+        const ref = labelReferenceKey(labelElement.dataset.nodeId, labelElement.dataset.labelKey);
+        beginLabelConnectionDrag(event, overlay, lastRenderedLabelEntries.get(ref) || null, lastRenderedLabelRects.get(ref) || null);
+      });
+    });
+  }
+
+  function boardEndpointGeometry(group, boardAnchor, routePoints) {
+    const nodeAnchor = {
+      x: Number(group?.dataset.nodeAnchorX || 0),
+      y: Number(group?.dataset.nodeAnchorY || 0),
+      side: String(group?.dataset.nodeAnchorSide || "right"),
+    };
+    const nodeRect = {
+      left: Number(group?.dataset.nodeRectLeft || 0),
+      top: Number(group?.dataset.nodeRectTop || 0),
+      width: Number(group?.dataset.nodeRectWidth || 0),
+      height: Number(group?.dataset.nodeRectHeight || 0),
+    };
+    const boardRect = {
+      left: Number(group?.dataset.boardRectLeft || 0),
+      top: Number(group?.dataset.boardRectTop || 0),
+      width: Number(group?.dataset.boardRectWidth || 0),
+      height: Number(group?.dataset.boardRectHeight || 0),
+    };
+    return connectionGeometry(nodeAnchor, boardAnchor, nodeRect, boardRect, routePoints);
+  }
+
+  function boardLabelEntryFromPoint(clientX, clientY) {
+    const boardNodeId = peripheralDiagramBoardNodeId(activeGpioBoardProfile());
+    const targetElement = document.elementFromPoint(clientX, clientY)?.closest?.(".peripheral-diagram-floating-label[data-node-id][data-label-key]");
+    if (targetElement) {
+      const targetRef = labelReferenceKey(targetElement.dataset.nodeId, targetElement.dataset.labelKey);
+      const entry = lastRenderedLabelEntries.get(targetRef);
+      if (entry?.nodeId === boardNodeId && Number.isFinite(Number(entry.pin))) {
+        return entry;
+      }
+    }
+
+    let nearestEntry = null;
+    let nearestDistance = Infinity;
+    for (const entry of lastRenderedLabelEntries.values()) {
+      if (entry?.nodeId !== boardNodeId || !Number.isFinite(Number(entry.pin))) {
+        continue;
+      }
+      const rect = lastRenderedLabelRects.get(labelReferenceKey(entry.nodeId, entry.labelKey));
+      if (!rect) {
+        continue;
+      }
+      const centerX = rect.left + (rect.width / 2);
+      const centerY = rect.top + (rect.height / 2);
+      const stageRect = elements.peripheralDiagramStage?.getBoundingClientRect();
+      if (!stageRect) {
+        continue;
+      }
+      const deltaX = clientX - stageRect.left - centerX;
+      const deltaY = clientY - stageRect.top - centerY;
+      const distance = Math.hypot(deltaX, deltaY);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestEntry = entry;
+      }
+    }
+    return nearestDistance <= 42 ? nearestEntry : null;
+  }
+
+  function clearRealBindingPin(element) {
+    if (!element) {
+      return false;
+    }
+    const fallbackOption = [...element.options].find((option) => {
+      const value = String(option.value ?? "").trim();
+      return value === "" || value === "0" || Number(value) < 0;
+    });
+    if (!fallbackOption) {
+      return false;
+    }
+    const nextValue = String(fallbackOption.value ?? "");
+    const changed = String(element.value ?? "") !== nextValue;
+    element.value = nextValue;
+    return changed;
+  }
+
+  function applyConnectionPinAssignment(connectionGroup, targetBoardEntry) {
+    const nodeId = String(connectionGroup?.dataset.nodeId || "");
+    const targetPin = Number(targetBoardEntry?.pin ?? NaN);
+    const signal = String(connectionGroup?.dataset.signal || "").trim().toUpperCase();
+    const node = state.peripheralDiagramNodeMap?.[nodeId];
+    if (!nodeId || !signal || !node || !Number.isFinite(targetPin) || targetPin < 0) {
+      return false;
+    }
+
+    const groupKey = String(node.groupKey || "");
+    const profileValue = String(node.profileValue || "none");
+    const index = Number(node.index || 0);
+    let changed = false;
+
+    for (const definition of realPeripheralBindingDefinitions(groupKey, profileValue, state.settings || {}, index)) {
+      if (signalKey(definition.label) !== signal) {
+        continue;
+      }
+      const optionValue = matchingOptionValue(definition.element, targetPin);
+      if (!optionValue) {
+        return false;
+      }
+      changed = applyRealBindingPin(definition.element, targetPin);
+      if (changed) {
+        definition.element.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      break;
+    }
+
+    if (!changed) {
+      for (const helperSignal of helperSignalLabels(groupKey, profileValue)) {
+        if (signalKey(helperSignal) !== signal) {
+          continue;
+        }
+        const nextValue = String(targetPin);
+        const existingValue = String(peripheralHelperBindingValue(groupKey, index, helperSignal) || "").trim();
+        if (existingValue !== nextValue) {
+          setPeripheralHelperBindingValue(groupKey, index, helperSignal, nextValue);
+          changed = true;
+        }
+        break;
+      }
+    }
+
+    if (!changed) {
+      return false;
+    }
+
+    syncGpioMappingControls?.();
+    queueSettingsSave?.(0);
+    render(lastRenderedNodes);
+    return true;
+  }
+
+  function clearConnectionPinAssignment(connectionGroup) {
+    const nodeId = String(connectionGroup?.dataset.nodeId || "");
+    const signal = String(connectionGroup?.dataset.signal || "").trim().toUpperCase();
+    const node = state.peripheralDiagramNodeMap?.[nodeId];
+    if (!nodeId || !signal || !node) {
+      return false;
+    }
+
+    const groupKey = String(node.groupKey || "");
+    const profileValue = String(node.profileValue || "none");
+    const index = Number(node.index || 0);
+    let changed = false;
+
+    for (const definition of realPeripheralBindingDefinitions(groupKey, profileValue, state.settings || {}, index)) {
+      if (signalKey(definition.label) !== signal) {
+        continue;
+      }
+      changed = clearRealBindingPin(definition.element);
+      if (changed) {
+        definition.element.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      break;
+    }
+
+    if (!changed) {
+      for (const helperSignal of helperSignalLabels(groupKey, profileValue)) {
+        if (signalKey(helperSignal) !== signal) {
+          continue;
+        }
+        const existingValue = String(peripheralHelperBindingValue(groupKey, index, helperSignal) || "").trim();
+        if (existingValue) {
+          setPeripheralHelperBindingValue(groupKey, index, helperSignal, "");
+          changed = true;
+        }
+        break;
+      }
+    }
+
+    if (!changed) {
+      return false;
+    }
+
+    syncGpioMappingControls?.();
+    queueSettingsSave?.(0);
+    render(lastRenderedNodes);
+    return true;
+  }
+
+  function removeCustomLabelConnection(connectionKey) {
+    const normalizedKey = String(connectionKey || "").replace(/^custom:/, "");
+    const current = readCustomLabelConnections(state);
+    const next = current.filter((entry) => customLabelConnectionKey(entry) !== normalizedKey);
+    if (next.length === current.length) {
+      return false;
+    }
+    writeCustomLabelConnections(state, next);
+    clearStoredWireCurveByKey(state, connectionKey);
+    savePeripheralDiagramPositions?.();
+    render(lastRenderedNodes);
+    return true;
+  }
+
+  function deleteWireConnection(connectionGroup) {
+    if (!connectionGroup) {
+      return false;
+    }
+    const connectionKind = String(connectionGroup.dataset.connectionKind || "auto");
+    const connectionType = String(connectionGroup.dataset.connectionType || "");
+    const connectionKey = String(connectionGroup.dataset.connectionKey || "");
+
+    if (connectionKind === "custom") {
+      return removeCustomLabelConnection(connectionKey);
+    }
+
+    if (connectionType === "gpio") {
+      const changed = clearConnectionPinAssignment(connectionGroup);
+      if (changed) {
+        clearStoredWireCurveByKey(state, connectionKey);
+        savePeripheralDiagramPositions?.();
+      }
+      return changed;
+    }
+
+    const hidden = hideConnection(state, connectionKey);
+    if (!hidden) {
+      return false;
+    }
+    clearStoredWireCurveByKey(state, connectionKey);
+    savePeripheralDiagramPositions?.();
+    render(lastRenderedNodes);
+    return true;
+  }
+
+  function handleBoardEndpointPointerMove(event) {
+    if (boardEndpointDragState.pointerId !== event.pointerId || !boardEndpointDragState.previewPath || !boardEndpointDragState.connectionGroup) {
+      return;
+    }
+    const stageRect = elements.peripheralDiagramStage?.getBoundingClientRect();
+    if (!stageRect?.width || !stageRect?.height) {
+      return;
+    }
+    const boardAnchor = {
+      x: clampValue(event.clientX - stageRect.left, 0, stageRect.width),
+      y: clampValue(event.clientY - stageRect.top, 0, stageRect.height),
+      side: String(boardEndpointDragState.connectionGroup.dataset.boardAnchorSide || "left"),
+    };
+    const geometry = boardEndpointGeometry(boardEndpointDragState.connectionGroup, boardAnchor, boardEndpointDragState.sourceRoutePoints);
+    boardEndpointDragState.previewPath.setAttribute("d", geometry.path);
+    event.preventDefault();
+  }
+
+  function finishBoardEndpointDrag(event) {
+    if (boardEndpointDragState.pointerId !== event.pointerId || !boardEndpointDragState.connectionGroup) {
+      return;
+    }
+    const targetBoardEntry = boardLabelEntryFromPoint(event.clientX, event.clientY);
+    if (targetBoardEntry) {
+      applyConnectionPinAssignment(boardEndpointDragState.connectionGroup, targetBoardEntry);
+    } else {
+      clearConnectionPinAssignment(boardEndpointDragState.connectionGroup);
+    }
+    clearBoardEndpointPreview();
+    event.preventDefault();
+  }
+
+  function beginBoardEndpointDrag(event, overlay, connectionGroup) {
+    if (event.button !== 0 || !overlay || !connectionGroup) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveConnection(overlay, connectionGroup);
+    connectionGroup.classList.add("is-active", "is-endpoint-dragging");
+
+    const previewPath = createSvgElement("path");
+    const stroke = String(connectionGroup.querySelector(".peripheral-diagram-wire")?.getAttribute("stroke") || "#0f766e");
+    previewPath.setAttribute("class", "peripheral-diagram-wire peripheral-diagram-wire-preview");
+    previewPath.setAttribute("stroke", stroke);
+    overlay.appendChild(previewPath);
+
+    boardEndpointDragState.pointerId = event.pointerId;
+    boardEndpointDragState.overlay = overlay;
+    boardEndpointDragState.connectionGroup = connectionGroup;
+    boardEndpointDragState.previewPath = previewPath;
+    boardEndpointDragState.sourceRoutePoints = cloneCurvePoints(JSON.parse(connectionGroup.dataset.routePoints || "[]"));
+
+    handleBoardEndpointPointerMove(event);
+    window.addEventListener("pointermove", handleBoardEndpointPointerMove);
+    window.addEventListener("pointerup", finishBoardEndpointDrag);
+    window.addEventListener("pointercancel", finishBoardEndpointDrag);
+  }
+
+  function renderCurveHandles(group, overlay, connectionKey, geometry) {
+    if (!group || !geometry) {
+      return;
+    }
+    group.querySelectorAll(".peripheral-diagram-wire-handle").forEach((handle) => handle.remove());
+    const handlePoints = cloneCurvePoints(geometry.handlePoints);
+    handlePoints.forEach((point, index) => {
+      const handle = createSvgElement("circle");
+      handle.setAttribute("class", "peripheral-diagram-wire-handle");
+      handle.setAttribute("cx", String(point.x));
+      handle.setAttribute("cy", String(point.y));
+      handle.setAttribute("r", "6");
+      handle.addEventListener("pointerdown", (event) => beginCurvePointerDrag(event, overlay, group, connectionKey, index, false, handlePoints));
+      handle.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        removeCurvePoint(group, overlay, connectionKey, index, handlePoints);
+      });
+      group.appendChild(handle);
+    });
+  }
+
+  function removeCurvePoint(group, overlay, connectionKey, pointIndex, seedRoutePoints = null) {
+    if (!group || pointIndex < 0) {
+      return;
+    }
+    const routePoints = cloneCurvePoints(seedRoutePoints?.length ? seedRoutePoints : JSON.parse(group.dataset.routePoints || "[]"));
+    if (pointIndex >= routePoints.length) {
+      return;
+    }
+    routePoints.splice(pointIndex, 1);
+    updateCurveGroupPath(group, overlay, connectionKey, routePoints);
+    const stageRect = elements.peripheralDiagramStage?.getBoundingClientRect();
+    if (stageRect?.width && stageRect?.height) {
+      writeStoredWireCurve(state, connectionKey, routePoints, stageRect);
+      savePeripheralDiagramPositions?.();
+    }
+  }
+
+  function updateCurveGroupPath(group, overlay, connectionKey, routePoints) {
+    if (!group) {
       return;
     }
     const nodeAnchor = {
@@ -672,18 +1459,20 @@ export function createPeripheralDiagramWiringModule({
       width: Number(group.dataset.boardRectWidth || 0),
       height: Number(group.dataset.boardRectHeight || 0),
     };
-    const geometry = connectionGeometry(nodeAnchor, boardAnchor, nodeRect, boardRect, controlPoint);
+    const geometry = connectionGeometry(nodeAnchor, boardAnchor, nodeRect, boardRect, routePoints);
     group.querySelector(".peripheral-diagram-wire-glow")?.setAttribute("d", geometry.path);
     group.querySelector(".peripheral-diagram-wire")?.setAttribute("d", geometry.path);
     group.querySelector(".peripheral-diagram-wire-hit")?.setAttribute("d", geometry.path);
-    const handle = group.querySelector(".peripheral-diagram-wire-handle");
-    handle?.setAttribute("cx", String(geometry.handlePoint.x));
-    handle?.setAttribute("cy", String(geometry.handlePoint.y));
+    group.dataset.routePoints = JSON.stringify(geometry.manualCurvePoints);
     group.dataset.controlX = String(geometry.controlPoint.x);
     group.dataset.controlY = String(geometry.controlPoint.y);
+    renderCurveHandles(group, overlay, connectionKey, geometry);
   }
 
-  function beginCurvePointerDrag(event, overlay, connectionGroup, connectionKey, placeHandleUnderPointer = false) {
+  function beginCurvePointerDrag(event, overlay, connectionGroup, connectionKey, pointIndex = -1, insertUnderPointer = false, seedRoutePoints = null) {
+    if (event.button !== 0) {
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     connectionGroup.classList.add("is-active", "is-dragging");
@@ -691,8 +1480,15 @@ export function createPeripheralDiagramWiringModule({
     curveDragState.key = connectionKey;
     curveDragState.pointerId = event.pointerId;
     curveDragState.group = connectionGroup;
+    curveDragState.overlay = overlay;
+    curveDragState.pointIndex = pointIndex;
+    curveDragState.seedRoutePoints = cloneCurvePoints(seedRoutePoints?.length ? seedRoutePoints : JSON.parse(connectionGroup.dataset.routePoints || "[]"));
 
-    if (placeHandleUnderPointer) {
+    if (!JSON.parse(connectionGroup.dataset.routePoints || "[]").length && curveDragState.seedRoutePoints.length) {
+      connectionGroup.dataset.routePoints = JSON.stringify(curveDragState.seedRoutePoints);
+    }
+
+    if (insertUnderPointer) {
       handleCurvePointerMove(event);
     }
 
@@ -720,24 +1516,21 @@ export function createPeripheralDiagramWiringModule({
       y: Number(group.dataset.boardAnchorY || 0),
       side: String(group.dataset.boardAnchorSide || "left"),
     };
-    const nodeRect = {
-      left: Number(group.dataset.nodeRectLeft || 0),
-      top: Number(group.dataset.nodeRectTop || 0),
-      width: Number(group.dataset.nodeRectWidth || 0),
-      height: Number(group.dataset.nodeRectHeight || 0),
-    };
-    const boardRect = {
-      left: Number(group.dataset.boardRectLeft || 0),
-      top: Number(group.dataset.boardRectTop || 0),
-      width: Number(group.dataset.boardRectWidth || 0),
-      height: Number(group.dataset.boardRectHeight || 0),
-    };
-    const geometry = connectionGeometry(nodeAnchor, boardAnchor, nodeRect, boardRect);
-    const handlePoint = {
+    const routePoints = cloneCurvePoints(JSON.parse(group.dataset.routePoints || "[]"));
+    const pointerPoint = {
       x: clampValue(event.clientX - stageRect.left, 0, stageRect.width),
       y: clampValue(event.clientY - stageRect.top, 0, stageRect.height),
     };
-    updateCurveGroupPath(group, controlPointFromHandlePoint(geometry.startDetour, geometry.endDetour, handlePoint));
+    let nextRoutePoints = routePoints;
+    if (curveDragState.pointIndex < 0) {
+      const insertion = insertPointIntoRoute(routePoints, pointerPoint, nodeAnchor, boardAnchor);
+      nextRoutePoints = insertion.points;
+      curveDragState.pointIndex = insertion.index;
+    } else {
+      nextRoutePoints = [...routePoints];
+      nextRoutePoints[curveDragState.pointIndex] = pointerPoint;
+    }
+    updateCurveGroupPath(group, curveDragState.overlay, curveDragState.key, nextRoutePoints);
     event.preventDefault();
   }
 
@@ -747,16 +1540,21 @@ export function createPeripheralDiagramWiringModule({
     }
     const stageRect = elements.peripheralDiagramStage?.getBoundingClientRect();
     if (stageRect?.width && stageRect?.height) {
-      writeStoredWireCurve(state, curveDragState.key, {
-        x: Number(curveDragState.group.dataset.controlX || 0),
-        y: Number(curveDragState.group.dataset.controlY || 0),
-      }, stageRect);
+      writeStoredWireCurve(
+        state,
+        curveDragState.key,
+        cloneCurvePoints(JSON.parse(curveDragState.group.dataset.routePoints || "[]")),
+        stageRect,
+      );
       savePeripheralDiagramPositions?.();
     }
     curveDragState.group.classList.remove("is-dragging");
     curveDragState.key = "";
     curveDragState.pointerId = null;
     curveDragState.group = null;
+    curveDragState.overlay = null;
+    curveDragState.pointIndex = -1;
+    curveDragState.seedRoutePoints = [];
     window.removeEventListener("pointermove", handleCurvePointerMove);
     window.removeEventListener("pointerup", finishCurvePointerDrag);
     window.removeEventListener("pointercancel", finishCurvePointerDrag);
@@ -764,7 +1562,10 @@ export function createPeripheralDiagramWiringModule({
   }
 
   function resetManualWireCurves(nodes = lastRenderedNodes.length ? lastRenderedNodes : Object.values(state.peripheralDiagramNodeMap || {})) {
-    const cleared = clearWireCurveStore(state);
+    const clearedCurves = clearWireCurveStore(state);
+    const clearedCustomConnections = clearCustomLabelWireStore(state);
+    const clearedHiddenConnections = clearHiddenConnectionStore(state);
+    const cleared = clearedCurves || clearedCustomConnections || clearedHiddenConnections;
     if (cleared) {
       savePeripheralDiagramPositions?.();
     }
@@ -783,12 +1584,17 @@ export function createPeripheralDiagramWiringModule({
       overlay = createSvgElement("svg");
       overlay.classList.add("peripheral-diagram-wiring-overlay");
       overlay.setAttribute("aria-hidden", "true");
+      overlay.addEventListener("contextmenu", (event) => event.preventDefault());
       const boardImage = elements.peripheralDiagramBoardImage;
       if (boardImage?.parentElement === stage) {
         stage.insertBefore(overlay, boardImage.nextSibling);
       } else {
         stage.appendChild(overlay);
       }
+    }
+    if (!stage.dataset.contextMenuDisabled) {
+      stage.addEventListener("contextmenu", (event) => event.preventDefault());
+      stage.dataset.contextMenuDisabled = "true";
     }
     return overlay;
   }
@@ -838,6 +1644,7 @@ export function createPeripheralDiagramWiringModule({
     const primary = gpioBoardLayouts[boardProfile] || { left: [], right: [] };
     const extra = gpioBoardExtraLayouts[boardProfile] || { left: [], right: [] };
     const labels = [];
+    const seenRailLabels = new Set();
 
     const pushLabels = (entries, side, lane) => {
       const validEntries = entries.filter((entry) => entry && (entry.pin !== undefined || entry.label));
@@ -845,6 +1652,13 @@ export function createPeripheralDiagramWiringModule({
         const label = String(entry.label || (entry.pin != null ? `GPIO${entry.pin}` : "")).trim();
         if (!label) {
           return;
+        }
+        const railKey = signalKey(label);
+        if ((isPositivePowerSignal(label) || isGroundSignal(label)) && seenRailLabels.has(railKey)) {
+          return;
+        }
+        if (isPositivePowerSignal(label) || isGroundSignal(label)) {
+          seenRailLabels.add(railKey);
         }
         labels.push({
           id: peripheralDiagramBoardLabelEntryId({ pin: entry.pin, label, side, lane, index }),
@@ -995,6 +1809,7 @@ export function createPeripheralDiagramWiringModule({
     ring.setAttribute("stroke", palette.stroke);
     ring.setAttribute("stroke-width", "2.4");
     container.appendChild(ring);
+    return ring;
   }
 
   function drawBoardBadge(container, anchor, boardLabel, palette) {
@@ -1038,6 +1853,7 @@ export function createPeripheralDiagramWiringModule({
     ring.setAttribute("fill", palette.stroke);
     ring.setAttribute("fill-opacity", "0.98");
     container.appendChild(ring);
+    return ring;
   }
 
   function render(nodes = Object.values(state.peripheralDiagramNodeMap || {})) {
@@ -1092,6 +1908,7 @@ export function createPeripheralDiagramWiringModule({
     overlay.setAttribute("height", String(stageRect.height));
 
     const signalLabels = new Map();
+    const labelEntriesByRef = new Map();
     const boardProfile = activeGpioBoardProfile();
     const boardLabelDefaults = editableBoardLabels(boardProfile);
     const resolvedBoardLabels = resolvePeripheralDiagramNodeLabels(
@@ -1100,14 +1917,39 @@ export function createPeripheralDiagramWiringModule({
       boardLabelDefaults,
     );
     const boardDefaultsById = new Map(boardLabelDefaults.map((entry) => [entry.id, entry]));
+    const dedupedResolvedBoardLabels = [];
+    const railLabelIndexByKey = new Map();
+
+    resolvedBoardLabels.forEach((entry) => {
+      const railLabel = String(entry.label || "").trim().toUpperCase();
+      const isRailLabel = railLabel && (isPositivePowerSignal(railLabel) || isGroundSignal(railLabel));
+      if (!isRailLabel) {
+        dedupedResolvedBoardLabels.push(entry);
+        return;
+      }
+
+      const existingIndex = railLabelIndexByKey.get(railLabel);
+      if (existingIndex === undefined) {
+        railLabelIndexByKey.set(railLabel, dedupedResolvedBoardLabels.length);
+        dedupedResolvedBoardLabels.push(entry);
+        return;
+      }
+
+      if (entry.isCustom) {
+        dedupedResolvedBoardLabels[existingIndex] = entry;
+      }
+    });
     const resolvedBoardLabelsByTarget = new Map();
 
-    resolvedBoardLabels.forEach((entry, index) => {
-      const fallback = boardDefaultsById.get(entry.id) || boardLabelDefaults[index];
+    dedupedResolvedBoardLabels.forEach((entry) => {
+      const fallback = boardDefaultsById.get(entry.id) || null;
+      const railLabel = String(entry.label || fallback?.label || "").trim().toUpperCase();
+      const isRailLabel = railLabel && (isPositivePowerSignal(railLabel) || isGroundSignal(railLabel));
       const resolvedEntry = {
         labelKey: entry.id,
         nodeId: peripheralDiagramBoardNodeId(boardProfile),
         label: entry.label,
+        pin: Number.isFinite(Number(fallback?.pin)) ? Number(fallback.pin) : null,
         palette: peripheralDiagramLabelPalette(entry.label),
         nodeRect: boardRect,
         layout: {
@@ -1118,24 +1960,28 @@ export function createPeripheralDiagramWiringModule({
         },
       };
       signalLabels.set(`board:${entry.id}`, resolvedEntry);
+      labelEntriesByRef.set(labelReferenceKey(resolvedEntry.nodeId, resolvedEntry.labelKey), resolvedEntry);
 
       if (Number.isFinite(Number(fallback?.pin))) {
         resolvedBoardLabelsByTarget.set(`gpio:${Number(fallback.pin)}`, resolvedEntry);
-      } else {
-        const railLabel = String(fallback?.label || entry.label || "").trim().toUpperCase();
-        if (railLabel) {
-          resolvedBoardLabelsByTarget.set(`rail:${railLabel}`, resolvedEntry);
-        }
+      }
+      if (railLabel && (isRailLabel || !Number.isFinite(Number(fallback?.pin)))) {
+        resolvedBoardLabelsByTarget.set(`rail:${railLabel}`, resolvedEntry);
       }
     });
 
     const groupedConnections = new Map();
     for (const connection of collectConnections(nodes)) {
+      if (isConnectionHidden(state, connectionStorageKey(connection))) {
+        continue;
+      }
       if (!groupedConnections.has(connection.nodeId)) {
         groupedConnections.set(connection.nodeId, []);
       }
       groupedConnections.get(connection.nodeId).push(connection);
     }
+
+    const resolvedLabelsByNode = new Map();
 
     for (const node of nodes) {
       const nodeRect = nodeRects.get(node.id);
@@ -1191,25 +2037,94 @@ export function createPeripheralDiagramWiringModule({
         };
         resolvedLabelsById.set(entry.id, resolvedEntry);
         signalLabels.set(`${node.id}:${entry.id}`, resolvedEntry);
+        labelEntriesByRef.set(labelReferenceKey(resolvedEntry.nodeId, resolvedEntry.labelKey), resolvedEntry);
       });
+
+      resolvedLabelsByNode.set(node.id, resolvedLabelsById);
+    }
+
+    const customLabelConnections = readCustomLabelConnections(state).filter((connection) => (
+      labelEntriesByRef.has(labelReferenceKey(connection.fromNodeId, connection.fromLabelKey))
+      && labelEntriesByRef.has(labelReferenceKey(connection.toNodeId, connection.toLabelKey))
+    ));
+
+    for (const [nodeId, connections] of groupedConnections.entries()) {
+      connections.forEach((connection) => {
+        const palette = classifyWireColor(connection);
+        const sourceRef = labelReferenceKey(nodeId, peripheralDiagramLabelId(connection.signalLabel));
+        const sourceEntry = labelEntriesByRef.get(sourceRef);
+        if (sourceEntry) {
+          sourceEntry.palette = palette;
+        }
+        const boardEntry = resolvedBoardLabelsByTarget.get(boardTargetKey(connection));
+        if (boardEntry) {
+          boardEntry.palette = palette;
+        }
+      });
+    }
+
+    customLabelConnections.forEach((connection) => {
+      const sourceEntry = labelEntriesByRef.get(labelReferenceKey(connection.fromNodeId, connection.fromLabelKey));
+      const targetEntry = labelEntriesByRef.get(labelReferenceKey(connection.toNodeId, connection.toLabelKey));
+      if (sourceEntry && targetEntry) {
+        targetEntry.palette = normalizeWirePalette(sourceEntry.palette);
+      }
+    });
+
+    renderSignalLabels(labelLayer, [...signalLabels.values()]);
+    const actualLabelRects = renderedLabelRects(labelLayer, stageRect);
+    lastRenderedLabelEntries = new Map(labelEntriesByRef);
+    lastRenderedLabelRects = new Map(actualLabelRects);
+    bindLabelConnectionInteractions(labelLayer, overlay);
+
+    for (const node of nodes) {
+      const nodeRect = nodeRects.get(node.id);
+      const visualRect = visualRects.get(node.id) || nodeRect;
+      const connections = groupedConnections.get(node.id) || [];
+      if (!nodeRect) {
+        continue;
+      }
+
+      const resolvedLabelsById = resolvedLabelsByNode.get(node.id) || new Map();
 
       connections.forEach((connection, index) => {
         const defaultAnchor = nodeAnchorForConnection(nodeRect, boardRect, index, connections.length);
         const boardLabelEntry = resolvedBoardLabelsByTarget.get(boardTargetKey(connection)) || null;
         const boardAnchor = boardLabelEntry
-          ? labelAnchorAwayFromOwner(boardLabelEntry, boardRect, stageRect.width, stageRect.height)
+          ? {
+            ...labelAnchorAwayFromOwner(
+              boardLabelEntry,
+              boardRect,
+              stageRect.width,
+              stageRect.height,
+              actualLabelRects.get(`${boardLabelEntry.nodeId}:${boardLabelEntry.labelKey}`) || null,
+            ),
+            boardLabel: boardLabelEntry.label,
+          }
           : chooseBoardAnchor(anchorCandidates, connection, defaultAnchor);
         if (!boardAnchor) {
           return;
         }
         const resolvedLabel = resolvedLabelsById.get(peripheralDiagramLabelId(connection.signalLabel));
         const nodeAnchor = resolvedLabel
-          ? labelAnchorAwayFromOwner(resolvedLabel, visualRect, stageRect.width, stageRect.height)
+          ? labelAnchorAwayFromOwner(
+            resolvedLabel,
+            visualRect,
+            stageRect.width,
+            stageRect.height,
+            actualLabelRects.get(`${resolvedLabel.nodeId}:${resolvedLabel.labelKey}`) || null,
+          )
           : defaultAnchor;
+        if (!hasFiniteAnchorPoint(nodeAnchor) || !hasFiniteAnchorPoint(boardAnchor)) {
+          return;
+        }
         const palette = classifyWireColor(connection);
         const connectionKey = connectionStorageKey(connection);
-        const savedCurvePoint = readStoredWireCurve(state, connectionKey, stageRect);
-        const geometry = connectionGeometry(nodeAnchor, boardAnchor, visualRect, boardRect, savedCurvePoint);
+        const savedCurvePoints = readStoredWireCurve(state, connectionKey, stageRect);
+        const geometry = connectionGeometry(nodeAnchor, boardAnchor, visualRect, boardRect, savedCurvePoints);
+        if (!hasFiniteAnchorPoint(geometry?.controlPoint) || !hasFiniteAnchorPoint(geometry?.handlePoint)) {
+          return;
+        }
 
         const glow = createSvgElement("path");
         glow.setAttribute("class", "peripheral-diagram-wire peripheral-diagram-wire-glow");
@@ -1223,7 +2138,10 @@ export function createPeripheralDiagramWiringModule({
 
         const connectionGroup = createSvgElement("g");
         connectionGroup.setAttribute("class", "peripheral-diagram-wire-connection");
+        connectionGroup.dataset.connectionKind = "auto";
+        connectionGroup.dataset.nodeId = String(node.id);
         connectionGroup.dataset.signal = signalKey(connection.signalLabel);
+        connectionGroup.dataset.connectionType = String(connection.type || "gpio");
         connectionGroup.dataset.board = String(boardAnchor.boardLabel || "");
         connectionGroup.dataset.connectionKey = connectionKey;
         connectionGroup.dataset.nodeAnchorX = String(nodeAnchor.x);
@@ -1240,23 +2158,22 @@ export function createPeripheralDiagramWiringModule({
         connectionGroup.dataset.boardRectTop = String(boardRect.top);
         connectionGroup.dataset.boardRectWidth = String(boardRect.width);
         connectionGroup.dataset.boardRectHeight = String(boardRect.height);
+        connectionGroup.dataset.routePoints = JSON.stringify(geometry.manualCurvePoints);
         connectionGroup.dataset.controlX = String(geometry.controlPoint.x);
         connectionGroup.dataset.controlY = String(geometry.controlPoint.y);
 
         const hit = createSvgElement("path");
         hit.setAttribute("class", "peripheral-diagram-wire-hit");
         hit.setAttribute("d", geometry.path);
-        hit.addEventListener("pointerdown", (event) => beginCurvePointerDrag(event, overlay, connectionGroup, connectionKey, true));
+        hit.addEventListener("pointerdown", (event) => beginCurvePointerDrag(event, overlay, connectionGroup, connectionKey, -1, true));
+        hit.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          deleteWireConnection(connectionGroup);
+        });
 
         const title = createSvgElement("title");
         title.textContent = `${normalizeSignalLabel(connection.signalLabel)} -> ${boardAnchor.boardLabel}`;
-
-        const handle = createSvgElement("circle");
-        handle.setAttribute("class", "peripheral-diagram-wire-handle");
-        handle.setAttribute("cx", String(geometry.handlePoint.x));
-        handle.setAttribute("cy", String(geometry.handlePoint.y));
-        handle.setAttribute("r", "6");
-        handle.addEventListener("pointerdown", (event) => beginCurvePointerDrag(event, overlay, connectionGroup, connectionKey, false));
 
         connectionGroup.addEventListener("pointerenter", () => setActiveConnection(overlay, connectionGroup));
         connectionGroup.addEventListener("pointerleave", () => {
@@ -1269,20 +2186,121 @@ export function createPeripheralDiagramWiringModule({
         connectionGroup.appendChild(glow);
         connectionGroup.appendChild(path);
         connectionGroup.appendChild(hit);
-        connectionGroup.appendChild(handle);
+        renderCurveHandles(connectionGroup, overlay, connectionKey, geometry);
+        let boardEndpointMarker = null;
         if (!boardLabelEntry) {
-          drawBoardMarker(connectionGroup, boardAnchor, palette);
+          boardEndpointMarker = drawBoardMarker(connectionGroup, boardAnchor, palette);
           drawBoardBadge(connectionGroup, boardAnchor, boardAnchor.boardLabel, palette);
         }
         drawNodeMarker(connectionGroup, nodeAnchor, palette);
         if (boardLabelEntry) {
-          drawNodeMarker(connectionGroup, boardAnchor, palette);
+          boardEndpointMarker = drawNodeMarker(connectionGroup, boardAnchor, palette);
+        }
+        if (connection.type === "gpio" && boardEndpointMarker) {
+          boardEndpointMarker.classList.add("peripheral-diagram-wire-endpoint-handle");
+          boardEndpointMarker.addEventListener("pointerdown", (event) => beginBoardEndpointDrag(event, overlay, connectionGroup));
         }
         overlay.appendChild(connectionGroup);
       });
     }
 
-    renderSignalLabels(labelLayer, [...signalLabels.values()]);
+    customLabelConnections.forEach((connection) => {
+      const sourceEntry = labelEntriesByRef.get(labelReferenceKey(connection.fromNodeId, connection.fromLabelKey));
+      const targetEntry = labelEntriesByRef.get(labelReferenceKey(connection.toNodeId, connection.toLabelKey));
+      if (!sourceEntry || !targetEntry) {
+        return;
+      }
+      const sourceAnchor = labelAnchorAwayFromOwner(
+        sourceEntry,
+        sourceEntry.nodeRect,
+        stageRect.width,
+        stageRect.height,
+        actualLabelRects.get(`${sourceEntry.nodeId}:${sourceEntry.labelKey}`) || null,
+      );
+      const targetAnchor = labelAnchorAwayFromOwner(
+        targetEntry,
+        targetEntry.nodeRect,
+        stageRect.width,
+        stageRect.height,
+        actualLabelRects.get(`${targetEntry.nodeId}:${targetEntry.labelKey}`) || null,
+      );
+      if (!hasFiniteAnchorPoint(sourceAnchor) || !hasFiniteAnchorPoint(targetAnchor)) {
+        return;
+      }
+
+      const palette = normalizeWirePalette(sourceEntry.palette);
+      const connectionKey = `custom:${customLabelConnectionKey(connection)}`;
+      const savedCurvePoints = readStoredWireCurve(state, connectionKey, stageRect);
+      const geometry = connectionGeometry(sourceAnchor, targetAnchor, sourceEntry.nodeRect, targetEntry.nodeRect, savedCurvePoints);
+      if (!hasFiniteAnchorPoint(geometry?.controlPoint) || !hasFiniteAnchorPoint(geometry?.handlePoint)) {
+        return;
+      }
+
+      const glow = createSvgElement("path");
+      glow.setAttribute("class", "peripheral-diagram-wire peripheral-diagram-wire-glow");
+      glow.setAttribute("d", geometry.path);
+      glow.setAttribute("stroke", palette.glow);
+
+      const path = createSvgElement("path");
+      path.setAttribute("class", "peripheral-diagram-wire");
+      path.setAttribute("d", geometry.path);
+      path.setAttribute("stroke", palette.stroke);
+
+      const connectionGroup = createSvgElement("g");
+      connectionGroup.setAttribute("class", "peripheral-diagram-wire-connection");
+      connectionGroup.dataset.connectionKind = "custom";
+      connectionGroup.dataset.nodeId = String(sourceEntry.nodeId);
+      connectionGroup.dataset.connectionType = "custom";
+      connectionGroup.dataset.signal = signalKey(sourceEntry.label);
+      connectionGroup.dataset.board = String(targetEntry.label || "");
+      connectionGroup.dataset.connectionKey = connectionKey;
+      connectionGroup.dataset.nodeAnchorX = String(sourceAnchor.x);
+      connectionGroup.dataset.nodeAnchorY = String(sourceAnchor.y);
+      connectionGroup.dataset.nodeAnchorSide = String(sourceAnchor.side || "right");
+      connectionGroup.dataset.boardAnchorX = String(targetAnchor.x);
+      connectionGroup.dataset.boardAnchorY = String(targetAnchor.y);
+      connectionGroup.dataset.boardAnchorSide = String(targetAnchor.side || "left");
+      connectionGroup.dataset.nodeRectLeft = String(sourceEntry.nodeRect.left);
+      connectionGroup.dataset.nodeRectTop = String(sourceEntry.nodeRect.top);
+      connectionGroup.dataset.nodeRectWidth = String(sourceEntry.nodeRect.width);
+      connectionGroup.dataset.nodeRectHeight = String(sourceEntry.nodeRect.height);
+      connectionGroup.dataset.boardRectLeft = String(targetEntry.nodeRect.left);
+      connectionGroup.dataset.boardRectTop = String(targetEntry.nodeRect.top);
+      connectionGroup.dataset.boardRectWidth = String(targetEntry.nodeRect.width);
+      connectionGroup.dataset.boardRectHeight = String(targetEntry.nodeRect.height);
+      connectionGroup.dataset.routePoints = JSON.stringify(geometry.manualCurvePoints);
+      connectionGroup.dataset.controlX = String(geometry.controlPoint.x);
+      connectionGroup.dataset.controlY = String(geometry.controlPoint.y);
+
+      const hit = createSvgElement("path");
+      hit.setAttribute("class", "peripheral-diagram-wire-hit");
+      hit.setAttribute("d", geometry.path);
+      hit.addEventListener("pointerdown", (event) => beginCurvePointerDrag(event, overlay, connectionGroup, connectionKey, -1, true));
+      hit.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        deleteWireConnection(connectionGroup);
+      });
+
+      const title = createSvgElement("title");
+      title.textContent = `${normalizeSignalLabel(sourceEntry.label)} -> ${normalizeSignalLabel(targetEntry.label)}`;
+
+      connectionGroup.addEventListener("pointerenter", () => setActiveConnection(overlay, connectionGroup));
+      connectionGroup.addEventListener("pointerleave", () => {
+        if (curveDragState.key !== connectionKey) {
+          setActiveConnection(overlay, null);
+        }
+      });
+
+      connectionGroup.appendChild(title);
+      connectionGroup.appendChild(glow);
+      connectionGroup.appendChild(path);
+      connectionGroup.appendChild(hit);
+      renderCurveHandles(connectionGroup, overlay, connectionKey, geometry);
+      drawNodeMarker(connectionGroup, sourceAnchor, palette);
+      drawNodeMarker(connectionGroup, targetAnchor, palette);
+      overlay.appendChild(connectionGroup);
+    });
   }
 
   return {

@@ -196,6 +196,61 @@ export function writePeripheralDiagramLabelLayout(state, nodeId, labelId, layout
   writePeripheralDiagramNodeLabels(state, nodeId, next);
 }
 
+  function normalizeQuarterTurns(deltaDegrees) {
+    if (!Number.isFinite(deltaDegrees)) {
+      return 0;
+    }
+    const quarterTurns = Math.round(deltaDegrees / 90) % 4;
+    return quarterTurns < 0 ? quarterTurns + 4 : quarterTurns;
+  }
+
+  function rotateVisualPointClockwise(dx, dy, turns) {
+    let nextX = dx;
+    let nextY = dy;
+    for (let index = 0; index < turns; index += 1) {
+      const rotatedX = -nextY;
+      const rotatedY = nextX;
+      nextX = rotatedX;
+      nextY = rotatedY;
+    }
+    return { x: nextX, y: nextY };
+  }
+
+  export function rotatePeripheralDiagramNodeLabels(state, nodeId, {
+    deltaDegrees = 90,
+    visualWidth = 1,
+    visualHeight = 1,
+  } = {}) {
+    const turns = normalizeQuarterTurns(deltaDegrees);
+    if (!turns) {
+      return;
+    }
+
+    const width = Math.max(Number(visualWidth) || 0, 1);
+    const height = Math.max(Number(visualHeight) || 0, 1);
+    const labels = readPeripheralDiagramNodeLabels(state, nodeId);
+    if (!labels.length) {
+      return;
+    }
+
+    const nextLabels = labels.map((entry) => {
+      const rotated = rotateVisualPointClockwise(
+        Number(entry.xFactor || 0) * width,
+        Number(entry.yFactor || 0) * height,
+        turns,
+      );
+      return {
+        ...entry,
+        xFactor: rotated.x / width,
+        yFactor: rotated.y / height,
+        rotation: (Number(entry.rotation || 0) + (turns * 90)) % 360,
+        coordinateSpace: String(entry.coordinateSpace || "visual"),
+      };
+    });
+
+    writePeripheralDiagramNodeLabels(state, nodeId, nextLabels);
+  }
+
 function rectHasArea(rect) {
   return Boolean(rect?.width) && Boolean(rect?.height);
 }
@@ -655,7 +710,7 @@ export function createPeripheralDiagramLabelEditorModule({
     setTimeout(renderEditorLabels, 0);
   }
 
-  function saveCurrentDrafts() {
+  async function saveCurrentDrafts() {
     if (!currentNode) {
       return;
     }
@@ -679,11 +734,11 @@ export function createPeripheralDiagramLabelEditorModule({
         coordinateSpace: String(entry.coordinateSpace || "visual"),
       }));
     writePeripheralDiagramNodeLabels(state, currentNode.id, savedEntries.concat(removedDefaults));
-    savePeripheralDiagramPositions();
+    await savePeripheralDiagramPositions({ immediate: true });
   }
 
-  function closeEditor() {
-    saveCurrentDrafts();
+  async function closeEditor() {
+    await saveCurrentDrafts();
     elements.peripheralDiagramLabelEditorModal?.close();
     renderPeripheralDiagram();
   }
