@@ -7,6 +7,7 @@ export function createStorageTab({
   activateTabByName,
   clearStorageSelection,
   closeStoragePreview,
+  createStorageFolder,
   deleteSelectedStorageItems,
   flashStorageAvailable,
   handleError,
@@ -23,6 +24,7 @@ export function createStorageTab({
   selectedStoragePlaybackEntry,
   shouldDeferSdReads,
   storageParentPath,
+  uploadStorageFiles,
   toggleStoragePreviewPlayback,
   toggleStorageSelection,
   selectAllStorageEntries,
@@ -173,6 +175,23 @@ export function createStorageTab({
         return;
       }
       queueStoragePlayback(entry, state.activeStorageTarget).catch(handleError);
+    });
+    elements.storageUploadButton?.addEventListener("click", () => {
+      if (!elements.storageFileInput || elements.storageUploadButton.disabled || state.storageUploadInProgress) {
+        return;
+      }
+      elements.storageFileInput.value = "";
+      elements.storageFileInput.click();
+    });
+    elements.storageFileInput?.addEventListener("change", () => {
+      const files = [...(elements.storageFileInput?.files || [])];
+      if (!files.length) {
+        return;
+      }
+      uploadStorageFiles(files).catch(handleError);
+    });
+    elements.storageNewFolderButton?.addEventListener("click", () => {
+      createStorageFolder().catch(handleError);
     });
     elements.storageFileList?.addEventListener("click", (event) => {
       const checkbox = event.target.closest("[data-storage-checkbox]");

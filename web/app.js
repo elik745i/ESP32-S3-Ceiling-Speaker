@@ -1494,6 +1494,7 @@ storageTab = createStorageTab({
   activateTabByName,
   clearStorageSelection,
   closeStoragePreview,
+  createStorageFolder,
   deleteSelectedStorageItems,
   flashStorageAvailable,
   handleError,
@@ -1510,6 +1511,7 @@ storageTab = createStorageTab({
   selectedStoragePlaybackEntry,
   shouldDeferSdReads,
   storageParentPath,
+  uploadStorageFiles,
   toggleStoragePreviewPlayback,
   toggleStorageSelection,
   selectAllStorageEntries,
@@ -5917,96 +5919,109 @@ async function createStorageFolder() {
   toast(result.message || `Created ${trimmedName}`);
 }
 
-async function uploadStorageFile() {
-  const file = elements.storageFileInput?.files?.[0];
-  if (!file) {
-    setStorageStatus("Select an audio file first.", true);
-    return;
-  }
-
-  const info = state.storageInfoByTarget[state.activeStorageTarget] || (await refreshStorageManager(state.activeStorageTarget)).storage || {};
-  const maxUploadBytes = Number(info.maxUploadBytes || 0);
-  if (file.size <= 0) {
-    setStorageStatus("Selected file is empty.", true);
-    return;
-  }
-  if (maxUploadBytes <= 0 || file.size > maxUploadBytes) {
-    setStorageStatus(`File exceeds remaining space. Max upload is ${formatBytes(maxUploadBytes)}.`, true);
+async function uploadStorageFiles(selectedFiles = [...(elements.storageFileInput?.files || [])]) {
+  const files = [...selectedFiles].filter((file) => file instanceof File);
+  if (!files.length) {
+    setStorageStatus("Select one or more audio files first.", true);
     return;
   }
 
   state.storageUploadInProgress = true;
-  renderStorageManager({ storage: info, files: [] });
-  setStorageStatus(`Uploading ${file.name}...`);
-  elements.storageProgressFill.style.width = "0%";
-  elements.storageProgressLabel.textContent = `Uploading ${file.name}... 0%`;
+  let completedUploads = 0;
 
-  const formData = new FormData();
-  formData.append("file", file, file.name);
-  const uploadStartedAt = performance.now();
-
-  await new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", `/api/storage/upload?target=${encodeURIComponent(state.activeStorageTarget)}&dir=${encodeURIComponent(state.currentStoragePathByTarget[state.activeStorageTarget] || "/")}`);
-
-    xhr.upload.addEventListener("progress", (event) => {
-      if (!event.lengthComputable) {
-        return;
+  try {
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      const info = state.storageInfoByTarget[state.activeStorageTarget] || (await refreshStorageManager(state.activeStorageTarget)).storage || {};
+      const maxUploadBytes = Number(info.maxUploadBytes || 0);
+      if (file.size <= 0) {
+        throw new Error(`${file.name} is empty.`);
       }
-      const percent = Math.max(0, Math.min(100, Math.round((event.loaded * 100) / event.total)));
-      const elapsedSeconds = Math.max((performance.now() - uploadStartedAt) / 1000, 0.001);
-      const rate = event.loaded / elapsedSeconds;
-      elements.storageProgressFill.style.width = `${percent}%`;
-      elements.storageProgressLabel.textContent = `Uploading ${file.name}... ${percent}% (${formatBytes(event.loaded)} / ${formatBytes(event.total)} at ${formatTransferRate(rate)})`;
-    });
-
-    xhr.addEventListener("load", () => {
-      let payload = {};
-      try {
-        payload = JSON.parse(xhr.responseText || "{}");
-      } catch {
-        payload = {};
+      if (maxUploadBytes <= 0 || file.size > maxUploadBytes) {
+        throw new Error(`${file.name} exceeds remaining space. Max upload is ${formatBytes(maxUploadBytes)}.`);
       }
 
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(payload);
-        return;
-      }
-      reject(new Error(payload.error || xhr.statusText || "Storage upload failed."));
-    });
+      renderStorageManager({ storage: info, files: [] });
+      setStorageStatus(`Uploading ${file.name} (${index + 1}/${files.length})...`);
+      elements.storageProgressFill.style.width = "0%";
+      elements.storageProgressLabel.textContent = `Uploading ${file.name} (${index + 1}/${files.length})... 0%`;
 
-    xhr.addEventListener("error", () => reject(new Error("Storage upload failed.")));
-    xhr.send(formData);
-  }).then(async (payload) => {
-    renderStorageManager(payload);
-    injectVisibleStorageEntry(state.activeStorageTarget, {
-      path: payload.path,
-      name: storageBaseName(payload.path || file.name),
-      isDirectory: false,
-      sizeBytes: file.size,
-      url: `/api/storage/file?target=${encodeURIComponent(state.activeStorageTarget)}&path=${encodeURIComponent(payload.path || "")}`,
-    });
-    await loadStatus();
-    if (state.activeStorageTarget === "sd" && normalizeStorageDirectoryPath(storageParentPath(payload.path || "")) === "/media/wav") {
-      mergeEffectFileOptions([{
-        value: `sd:${payload.path}`,
-        label: `SD: ${storageBaseName(payload.path || file.name)}`,
-      }]);
-      renderEffectFileOptions(state.settings);
+      const formData = new FormData();
+      formData.append("file", file, file.name);
+      const uploadStartedAt = performance.now();
+
+      const payload = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `/api/storage/upload?target=${encodeURIComponent(state.activeStorageTarget)}&dir=${encodeURIComponent(state.currentStoragePathByTarget[state.activeStorageTarget] || "/")}`);
+
+        xhr.upload.addEventListener("progress", (event) => {
+          if (!event.lengthComputable) {
+            return;
+          }
+          const percent = Math.max(0, Math.min(100, Math.round((event.loaded * 100) / event.total)));
+          const elapsedSeconds = Math.max((performance.now() - uploadStartedAt) / 1000, 0.001);
+          const rate = event.loaded / elapsedSeconds;
+          elements.storageProgressFill.style.width = `${percent}%`;
+          elements.storageProgressLabel.textContent = `Uploading ${file.name} (${index + 1}/${files.length})... ${percent}% (${formatBytes(event.loaded)} / ${formatBytes(event.total)} at ${formatTransferRate(rate)})`;
+        });
+
+        xhr.addEventListener("load", () => {
+          let responsePayload = {};
+          try {
+            responsePayload = JSON.parse(xhr.responseText || "{}");
+          } catch {
+            responsePayload = {};
+          }
+
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(responsePayload);
+            return;
+          }
+          reject(new Error(responsePayload.error || xhr.statusText || "Storage upload failed."));
+        });
+
+        xhr.addEventListener("error", () => reject(new Error("Storage upload failed.")));
+        xhr.send(formData);
+      });
+
+      renderStorageManager(payload);
+      injectVisibleStorageEntry(state.activeStorageTarget, {
+        path: payload.path,
+        name: storageBaseName(payload.path || file.name),
+        isDirectory: false,
+        sizeBytes: file.size,
+        url: `/api/storage/file?target=${encodeURIComponent(state.activeStorageTarget)}&path=${encodeURIComponent(payload.path || "")}`,
+      });
+      await loadStatus();
+      if (state.activeStorageTarget === "sd" && normalizeStorageDirectoryPath(storageParentPath(payload.path || "")) === "/media/wav") {
+        mergeEffectFileOptions([{
+          value: `sd:${payload.path}`,
+          label: `SD: ${storageBaseName(payload.path || file.name)}`,
+        }]);
+        renderEffectFileOptions(state.settings);
+      }
+      completedUploads += 1;
+      setStorageStatus(payload.message || `Uploaded ${file.name}`);
     }
-    setStorageStatus(payload.message || `Uploaded ${file.name}`);
-    toast(payload.message || `Uploaded ${file.name}`);
-  }).catch(async (error) => {
+
+    const completionMessage = files.length === 1
+      ? `Uploaded ${files[0].name}`
+      : `Uploaded ${completedUploads} files`;
+    toast(completionMessage);
+  } catch (error) {
     await refreshStorageManager(state.activeStorageTarget);
+    if (completedUploads > 0 && completedUploads < files.length) {
+      throw new Error(`${error.message} (${completedUploads}/${files.length} uploaded)`);
+    }
     throw error;
-  }).finally(() => {
+  } finally {
     state.storageUploadInProgress = false;
     elements.storageFileInput.value = "";
     if (state.storageInfoByTarget[state.activeStorageTarget]) {
-      elements.storageUploadButton.disabled = !state.storageInfoByTarget[state.activeStorageTarget].mounted;
+      elements.storageUploadButton.disabled = !state.storageInfoByTarget[state.activeStorageTarget].mounted || state.storageUploadInProgress;
     }
     loadStatus().catch((error) => console.error(error));
-  });
+  }
 }
 
 function settingsSubsetMatches(actual, expected) {
