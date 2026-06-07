@@ -2,6 +2,10 @@
 
 Custom PlatformIO firmware for ESP32 and ESP32-S3 Wi-Fi speaker/notifier hardware with a MAX98357A I2S amplifier path, browser-based configuration UI, MQTT and Home Assistant integration, local storage management, GitHub-release-based update discovery, and configurable pin mapping for audio, OLED, battery, SD, and status hardware.
 
+Project story and current device write-up:
+
+- Drive2 article: https://www.drive2.ru/c/735319567747779562/
+
 
 ## Current Release
 
@@ -17,10 +21,11 @@ This version is intended to be published as a standard GitHub release using the 
 - Plays MP3, internet radio, URL streams, and TTS over I2S audio.
 - Targets the MAX98357A mono amplifier path for the ceiling-speaker ESP32-S3 build.
 - Exposes a local web UI for playback, Wi-Fi, MQTT, battery, OLED, GPIO reference, storage, firmware, and device monitoring.
+- Exposes a Configuration workspace with board-aware peripheral planning, pin remapping, and a dynamic wiring diagram for the active build.
 - Publishes MQTT state and accepts MQTT playback, transport, OTA, and control commands.
 - Supports Home Assistant through standard MQTT topics and the HACS `mqtt_media_player` flow.
 - Browses GitHub Releases for matching firmware assets and supports local firmware uploads.
-- Supports OLED status display, touch buttons, buzzer, battery monitoring, low-battery sleep, SD storage, and configurable pin mapping.
+- Supports OLED status display, touch buttons, buzzer, battery monitoring, low-battery sleep, SD storage, configurable pin mapping, and a broader peripheral catalog for audio, inputs, displays, storage, communications, controls, sensors, and expanders.
 
 ## Hardware Target
 
@@ -39,6 +44,7 @@ Repository hardware references:
 - ESP32-S3 pinout image: [Docs/esp32-s3_pinout.jpeg](Docs/esp32-s3_pinout.jpeg)
 - 3D assets: [3D](3D)
 - STL folder: [3D/STL](3D/STL)
+- Device story article: https://www.drive2.ru/c/735319567747779562/
 
 ![Current ceiling-speaker circuit diagram](Docs/circuit.png)
 
@@ -124,6 +130,8 @@ Current UI highlights:
 - Previous, play or stop, and next station transport controls from the top playback card.
 - Audio Effects tab for assigning local files to startup, alert, ambient, and OTA cues.
 - Audio Effects ambient playback now uses the real looping ambient source and automatically returns after manual playback or streams stop.
+- Configuration tab with board selection, peripheral-profile selectors, conflict-aware GPIO mapping, and a live peripheral diagram.
+- Peripheral diagram editing with draggable modules, label editing, node rotation, saved layout, and label-based rewiring.
 - I2S pin remapping for MAX98357A wiring.
 - OLED pin remapping plus display-mode selection between OLED and Wape trigger mode.
 - Battery configuration, charging-sense pin selection, calibration helpers, and low-battery sleep controls.
@@ -135,6 +143,171 @@ Current UI highlights:
 - Firmware release browsing, local firmware upload, and firmware action dashboard.
 - Password reveal toggles, reboot, and factory-reset actions, with backup and restore available from the Device tab.
 - Embedded favicon served from the device web UI.
+
+## Configuration Tab And Peripheral Capabilities
+
+The Configuration area is intended to let the device be adapted beyond the default ceiling-speaker wiring. The current frontend supports board-aware planning, persistent peripheral profile selection, helper bindings for unsupported combinations, and a dynamic wiring diagram that reflects the active configuration.
+
+Current configuration capabilities:
+
+- Board selector with autodetect-aware ESP board guidance and SVG board imagery.
+- Conflict-aware pin sanitization for audio, OLED, SD, battery ADC, charging sense, status LED, and Wape trigger paths.
+- Persistent peripheral-profile selection stored in browser UI state and reused across sessions.
+- Dynamic peripheral diagram with drag positioning, label editing, rotation, saved layouts, and automatic wire routing.
+- Diagram rewiring that can map current peripheral labels onto board labels and apply matching GPIO assignments.
+- Storage-aware local file routing for sound effects and external-storage browsing, uploads, folder creation, deletion, reindex, and preview playback.
+
+Current peripheral slot counts:
+
+- Audio outputs: up to 3
+- Audio inputs: up to 3
+- Displays: up to 2
+- Sensors: up to 10
+- Inputs: up to 10
+- Storage devices: up to 3
+- Communication modules: up to 4
+- Control devices: up to 16
+- Expansion devices: up to 4
+
+Supported peripheral profiles currently exposed by the Configuration tab:
+
+Audio output profiles:
+
+- None
+- MAX98357A I2S Amp
+- PCM5102 I2S DAC
+- UDA1334A I2S DAC
+- ES9023 I2S DAC
+- PT8211 I2S DAC
+- CS4344 I2S DAC
+- Internal DAC GPIO25/26
+- PWM / Class-D Amp
+- Analog Line-Out via DAC
+- PAM8403 Analog Amp
+- TPA3110 / TPA3116 Analog Amp
+- Buzzer
+- WM8960 Audio Codec
+- ES8388 Audio Codec
+- Bluetooth Audio Source
+- Custom
+
+Audio input profiles:
+
+- None
+- I2S Microphone Generic
+- INMP441 I2S Mic
+- SPH0645 / ICS-43434 I2S Mic
+- MSM2615 I2S Mic
+- PDM Microphone
+- Analog Electret Mic ADC
+- MAX9814 Mic ADC
+- MAX4466 Mic ADC
+- Line-In ADC
+- External I2S ADC
+- ES7243 / ES7210 I2S ADC
+- WM8960 Audio Codec
+- ES8388 Audio Codec
+- Bluetooth Audio Sink
+- Custom
+
+Display profiles:
+
+- None
+- I2C OLED
+- SPI TFT
+- Waveshare Screen
+- Custom
+
+Sensor profiles:
+
+- None
+- BNO055
+- BNO085 / BNO080
+- MPU6050
+- DS18B20
+- Battery Voltage Divider (2x 220kOhms)
+- Custom
+
+Input profiles:
+
+- None
+- TTP223 Touch Button
+- Physical Button
+- Toggle Switch
+- Rotary Encoder
+- IR Receiver
+- PIR Motion Sensor
+- Reed Switch
+- Limit Switch
+- Joystick Analog
+- Analog Potentiometer
+- ESP32 Native Touch Pad
+- Water Leak / Rain Sensor
+- Vibration / Shock Sensor
+- Hall Sensor
+- Flow Meter Pulse Sensor
+- Keypad Matrix
+- RF 433MHz Receiver
+- Wake Button
+- Custom
+
+Storage profiles:
+
+- None
+- MicroSD SPI
+- MicroSD SDMMC
+- Custom
+
+Communication profiles:
+
+- None
+- UART
+- RS485
+- LoRa E22/E220
+- I2C
+- SPI
+- Custom
+
+Control profiles:
+
+- None
+- Servo
+- Dual Servo
+- PWM Fan
+- DC Motor Driver Generic
+- DRV8833 Dual Motor Driver
+- TB6612FNG Dual Motor Driver
+- L298N Dual Motor Driver
+- BTS7960 High Power Motor Driver
+- Stepper Driver A4988 / DRV8825
+- Stepper Driver TMC2208 / TMC2209
+- Relay Module
+- MOSFET Switch
+- Solenoid / Valve Driver
+- LED / PWM Dimmer
+- WS2812 / NeoPixel LED Strip
+- Buzzer
+- Vibration Motor
+- Pump Driver
+- Custom
+
+Expansion profiles:
+
+- None
+- I2C GPIO Expander
+- MCP23017 16-bit I/O Expander
+- PCF8574 8-bit I/O Expander
+- PCF8575 16-bit I/O Expander
+- Shift Register 74HC595 Output Expander
+- Shift Register 74HC165 Input Expander
+- Analog Multiplexer CD4051 / 74HC4051 8-channel
+- Analog Multiplexer CD74HC4067 16-channel
+- External ADC ADS1115 16-bit I2C
+- External ADC ADS1015 12-bit I2C
+- External ADC MCP3008 SPI
+- External DAC MCP4725 I2C
+- PWM Expander PCA9685
+- Custom
 
 ## Build Profiles
 
