@@ -3868,6 +3868,15 @@ function activeTabName() {
   return tabNavigation?.activeTabName() || "";
 }
 
+function refreshVisiblePeripheralDiagram() {
+  renderPeripheralDiagram();
+  window.setTimeout(() => {
+    if (activeTabName() === "gpio") {
+      renderPeripheralDiagram();
+    }
+  }, 0);
+}
+
 async function refreshExternalStorageTab(directoryPath = state.currentStoragePathByTarget.sd || "/", options = {}) {
   return storageTab?.refreshExternalStorageTab(directoryPath, options);
 }
@@ -7301,6 +7310,10 @@ function setupTabs() {
   tabNavigation = initTabNavigation({
     storageKey: ACTIVE_TAB_STORAGE_KEY,
     onActivate(resolvedTabName) {
+      if (resolvedTabName === "gpio") {
+        refreshVisiblePeripheralDiagram();
+      }
+
       if (resolvedTabName === "firmware") {
         refreshFirmwareInfo(true).catch(handleError);
       }

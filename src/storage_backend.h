@@ -22,6 +22,7 @@ struct StorageBackendSummary {
 void beginStorageBackends(const SettingsBundle& settings);
 void applyStorageSettings(const SettingsBundle& settings);
 void pollStorageBackends();
+bool remountActiveStorageBackend(StorageTarget target);
 bool remountStorageBackend(StorageTarget target, const SettingsBundle& settings);
 StorageTarget parseStorageTarget(const String& rawTarget);
 const char* storageTargetId(StorageTarget target);

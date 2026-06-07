@@ -299,6 +299,24 @@ void applyStorageSettings(const SettingsBundle& settings) {
     }
 }
 
+bool remountActiveStorageBackend(StorageTarget target) {
+    if (target == StorageTarget::Flash) {
+        if (flashMounted) {
+            LittleFS.end();
+            flashMounted = false;
+        }
+        mountFlashStorage();
+        return flashMounted;
+    }
+
+    if (sdWriteInProgress() || sdReadInProgress()) {
+        return false;
+    }
+
+    mountSdStorage(activeSdSettings);
+    return sdMounted;
+}
+
 bool remountStorageBackend(StorageTarget target, const SettingsBundle& settings) {
     if (target == StorageTarget::Flash) {
         if (flashMounted) {
@@ -384,24 +402,13 @@ StorageBackendSummary getStorageSummary(StorageTarget target) {
     }
 
     summary.available = activeSdSettings.enabled;
+    summary = cachedSdSummary();
+    summary.available = activeSdSettings.enabled;
+    summary.mounted = sdMounted;
     if (!sdMounted) {
-        const StorageBackendSummary cached = cachedSdSummary();
-        summary.cardSizeBytes = cached.cardSizeBytes;
-        summary.totalBytes = cached.totalBytes;
         summary.usedBytes = 0;
-        summary.freeBytes = cached.totalBytes;
-        return summary;
+        summary.freeBytes = summary.totalBytes;
     }
-
-    if (sdWriteInProgress() || sdReadInProgress()) {
-        summary = cachedSdSummary();
-        summary.available = activeSdSettings.enabled;
-        summary.mounted = sdMounted;
-        return summary;
-    }
-
-    summary = readLiveSdSummary();
-    cacheSdSummary(summary);
     return summary;
 }
 
@@ -446,7 +453,10 @@ fs::FS* getStorageFs(StorageTarget target) {
 }
 
 bool storageMounted(StorageTarget target) {
-    return getStorageSummary(target).mounted;
+    if (target == StorageTarget::Sd) {
+        return sdMounted;
+    }
+    return LittleFS.totalBytes() > 0;
 }
 
 bool storageConfigured(StorageTarget target) {

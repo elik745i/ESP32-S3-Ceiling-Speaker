@@ -5,10 +5,10 @@ Custom PlatformIO firmware for ESP32 and ESP32-S3 Wi-Fi speaker/notifier hardwar
 
 ## Current Release
 
-- Firmware version: `v0.1.20`
+- Firmware version: `v0.1.21`
 - Primary release repository: `elik745i/ESP32-S3-Ceiling-Speaker`
 - GitHub Releases feed: `https://api.github.com/repos/elik745i/ESP32-S3-Ceiling-Speaker/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.20.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.21.bin`
 
 This version is intended to be published as a standard GitHub release using the normal OTA asset names without a prerelease suffix.
 
@@ -98,7 +98,11 @@ Current behavior:
 - Configurable effect-file routing is available for startup, alarm, notification, ambient, low-battery, shutdown, update-available, and update-success events.
 - Ambient selection now starts the dedicated ambient playback source, resumes automatically after other playback stops, and keeps non-ambient effect dropdowns as one-shot previews.
 - Ambient and alert cues can be selected from local storage and triggered without replacing the normal release asset flow.
+- Remembered last-played stream and media selections now keep both the last source and whether it was stopped or active, so a reboot restores the correct stopped-versus-playing behavior instead of always resuming.
+- Effect-file previews now use the full stop-preview-resume path, which restores interrupted playback more reliably after one-shot preview sounds finish or fail.
+- Startup effects are now deferred briefly after boot and retried across transient SD mount instability so boot cues can start after the device finishes its early storage bring-up.
 - Active SD-backed playback now keeps storage-summary reads on cached values so background status polling does not probe the card mid-stream.
+- Live SD-to-SD playback switches now add a short settle delay and remount-retry path so changing SD-backed effects no longer drops into a false missing-file or SD removal state.
 - SD folder navigation now keeps the requested path in sync with the rendered list during playback-safe cached views.
 - SD folder paging now keeps loading indexed batches during playback instead of stopping at the first 20 entries.
 - Low-battery handling can play a cue before entering deep sleep when that mode is enabled.
@@ -291,19 +295,23 @@ Current MQTT behavior:
 - Credential or client-ID rejections still surface as an explicit frontend error.
 - Automatic broker reconnect now uses the same configure-and-connect path as the manual Connect button.
 
+Current OTA and rollback behavior:
+
+- OTA rollback bookkeeping now suppresses harmless `Preferences` `NOT_FOUND` log spam on normal boots when no pending or bad-version keys exist in NVS.
+
 ## Firmware And Releases
 
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.20`:
+Release asset names for `v0.1.21`:
 
-- `esp32-notifier-v0.1.20.bin`
-- `esp32-notifier-hacs-v0.1.20.bin`
-- `esp32-notifier-hacs-slim-v0.1.20.bin`
-- `esp32s3-notifier-v0.1.20.bin`
-- `esp32s3-notifier-hacs-v0.1.20.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.20.bin`
+- `esp32-notifier-v0.1.21.bin`
+- `esp32-notifier-hacs-v0.1.21.bin`
+- `esp32-notifier-hacs-slim-v0.1.21.bin`
+- `esp32s3-notifier-v0.1.21.bin`
+- `esp32s3-notifier-hacs-v0.1.21.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.21.bin`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard release variants and upload the matching OTA assets back to that release.
 
@@ -384,4 +392,4 @@ Key files and directories:
 
 Current release notes live here:
 
-- [release-assets/v0.1.20/release-notes.md](release-assets/v0.1.20/release-notes.md)
+- [release-assets/v0.1.21/release-notes.md](release-assets/v0.1.21/release-notes.md)

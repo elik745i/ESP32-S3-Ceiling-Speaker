@@ -528,17 +528,21 @@ bool AudioPlayer::playStorageFile(StorageTarget target, const String& path, cons
     }
 
     fs::FS* fs = getStorageFs(target);
-    if (fs == nullptr || !storageMounted(target) || !storageExists(target, path)) {
+    if (fs == nullptr || !storageMounted(target)) {
         return false;
     }
 
     const String normalizedTitle = title.isEmpty() ? fallbackTitleFromPath(path) : title;
     const String sourceUrl = String(storageTargetId(target)) + ":" + path;
+    const bool switchingSdTrack = impl_->storageLeaseActive && impl_->storageTarget == StorageTarget::Sd && target == StorageTarget::Sd;
 
     if (impl_->audio.isRunning() || impl_->state == "playing" || impl_->state == "buffering") {
         impl_->fadeToPercent(0, kSwitchFadeOutMs);
         impl_->audio.stopSong();
         delay(kSwitchQuietTimeMs);
+        if (switchingSdTrack) {
+            delay(90);
+        }
     }
     clearOverlay(impl_);
     acquireStorageLease(impl_, target);
@@ -559,6 +563,23 @@ bool AudioPlayer::playStorageFile(StorageTarget target, const String& path, cons
         delay(120);
         connected = impl_->audio.connecttoFS(*fs, path.c_str());
     }
+    if (!connected && target == StorageTarget::Sd) {
+        releaseStorageLease(impl_);
+        if (remountActiveStorageBackend(target)) {
+            acquireStorageLease(impl_, target);
+            fs = getStorageFs(target);
+            if (fs != nullptr) {
+                Serial.printf("[audio] retrying SD playback after remount path=%s\n", path.c_str());
+                connected = impl_->audio.connecttoFS(*fs, path.c_str());
+                if (!connected) {
+                    delay(120);
+                    connected = impl_->audio.connecttoFS(*fs, path.c_str());
+                }
+            }
+        } else {
+            acquireStorageLease(impl_, target);
+        }
+    }
     if (!connected) {
         releaseStorageLease(impl_);
         impl_->applyHardwareVolumePercent(impl_->volume);
@@ -571,6 +592,7 @@ bool AudioPlayer::playStorageFile(StorageTarget target, const String& path, cons
     impl_->activeSampleRateHz = impl_->audio.getSampleRate();
     impl_->bitsPerSample = impl_->audio.getBitsPerSample();
     impl_->channelCount = impl_->audio.getChannels();
+    impl_->applyHardwareVolumePercent(impl_->volume);
     Serial.printf("[audio] connecttoFS ok target=%s path=%s\n", storageTargetId(target), path.c_str());
     Serial.printf("[audio] local playback started rate=%lu bits=%u channels=%u lib_volume=%u\n",
                   static_cast<unsigned long>(impl_->activeSampleRateHz),
@@ -578,7 +600,6 @@ bool AudioPlayer::playStorageFile(StorageTarget target, const String& path, cons
                   static_cast<unsigned>(impl_->channelCount),
                   static_cast<unsigned>(impl_->hardwareAudioVolume));
     impl_->markPlaying();
-    impl_->fadeToPercent(impl_->volume, kStartFadeInMs);
     return true;
 }
 
