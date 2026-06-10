@@ -33,30 +33,64 @@ function customLabelConnectionKey(connection) {
   return `${labelReferenceKey(connection?.fromNodeId, connection?.fromLabelKey)}->${labelReferenceKey(connection?.toNodeId, connection?.toLabelKey)}`;
 }
 
-function isPositivePowerSignal(label) {
-  return ["VCC", "VIN", "PWR", "VBUS", "5V", "12V", "3V3", "3.3V", "3VO"].includes(signalKey(label));
+function isLimitSwitchNode(node) {
+  return String(node?.groupKey || "") === "input"
+    && String(node?.profileValue || "none").trim().toLowerCase().includes("limit-switch");
 }
 
-function isGroundSignal(label) {
-  return signalKey(label) === "GND" || signalKey(label) === "GROUND";
-}
-
-function powerRailLabelForNode(node, label) {
+function limitSwitchSourceValueForBoardEntry(entry) {
+  const label = String(entry?.label || entry?.boardLabel || "").trim();
   const key = signalKey(label);
   if (key === "GND" || key === "GROUND") {
     return "GND";
   }
-  if (key === "12V") {
+  if (["VCC", "VIN", "PWR", "VBUS", "5V", "12V", "3V3", "3.3V", "3VO"].includes(key)) {
+    return "VCC";
+  }
+  return null;
+}
+
+function limitSwitchBoardLabelForSource(node, sourceValue) {
+  return String(sourceValue || "").trim().toUpperCase() === "VCC"
+    ? (powerRailLabelForNode(node, "VCC") || "3V3")
+    : "GND";
+}
+
+function isPositivePowerSignal(label) {
+  const key = signalKey(label);
+  return ["VCC", "VIN", "PWR", "VBUS", "5V", "12V", "3V3", "3.3V", "3VO"].includes(key)
+    || key.startsWith("VCC ")
+    || key.startsWith("VIN ")
+    || key.startsWith("5V ")
+    || key.startsWith("12V ")
+    || key.startsWith("3V3 ")
+    || key.startsWith("3.3V ");
+}
+
+function isGroundSignal(label) {
+  const key = signalKey(label);
+  return key === "GND" || key === "GROUND" || key.startsWith("GND ") || key.startsWith("GROUND ");
+}
+
+function powerRailLabelForNode(node, label) {
+  const key = signalKey(label);
+  if (key === "GND" || key === "GROUND" || key.startsWith("GND ") || key.startsWith("GROUND ")) {
+    return "GND";
+  }
+  if (key === "12V" || key.startsWith("12V ")) {
     return "12V";
   }
-  if (key === "5V" || key === "VIN" || key === "VBUS") {
+  if (key === "5V" || key === "VIN" || key === "VBUS" || key.startsWith("5V ") || key.startsWith("VIN ")) {
     return "5V";
   }
-  if (key === "3V3" || key === "3.3V" || key === "3VO") {
+  if (key === "3V3" || key === "3.3V" || key === "3VO" || key.startsWith("3V3 ") || key.startsWith("3.3V ")) {
     return "3V3";
   }
-  if (!["VCC", "PWR"].includes(key)) {
+  if (!["VCC", "PWR"].includes(key) && !key.startsWith("VCC ")) {
     return null;
+  }
+  if (String(node?.groupKey || "") === "power") {
+    return "5V";
   }
   return ["audio", "control"].includes(String(node?.groupKey || "")) ? "5V" : "3V3";
 }
@@ -65,25 +99,25 @@ function classifyWireColor(connection) {
   const signal = signalKey(connection.signalLabel);
   const board = signalKey(connection.boardLabel);
 
-  if (signal === "GND" || board === "GND") {
+  if (isGroundSignal(signal) || board === "GND") {
     return { stroke: "#111827", glow: "rgba(17, 24, 39, 0.18)", badge: "#111827", text: "#ffffff" };
   }
-  if (board === "5V" || signal === "5V" || signal === "VIN" || signal === "VBUS") {
+  if (board === "5V" || signal === "5V" || signal === "VIN" || signal === "VBUS" || signal.startsWith("5V ") || signal.startsWith("VIN ")) {
     return { stroke: "#dc2626", glow: "rgba(220, 38, 38, 0.18)", badge: "#dc2626", text: "#ffffff" };
   }
-  if (board === "3V3" || signal === "3V3" || signal === "3.3V" || signal === "VCC" || signal === "PWR") {
+  if (board === "3V3" || signal === "3V3" || signal === "3.3V" || signal === "VCC" || signal === "PWR" || signal.startsWith("VCC ") || signal.startsWith("3V3 ") || signal.startsWith("3.3V ")) {
     return { stroke: "#ea580c", glow: "rgba(234, 88, 12, 0.18)", badge: "#ea580c", text: "#ffffff" };
   }
-  if (["SDA", "MOSI", "DIN", "DOUT", "DATA", "DQ", "RX"].includes(signal)) {
+  if (["SDA", "MOSI", "DIN", "DOUT", "DATA", "DQ", "RX", "NO"].includes(signal)) {
     return { stroke: "#0284c7", glow: "rgba(2, 132, 199, 0.18)", badge: "#0284c7", text: "#ffffff" };
   }
   if (["SCL", "SCK", "CLK", "BCLK", "WS", "PCLK", "TX"].includes(signal)) {
     return { stroke: "#ca8a04", glow: "rgba(202, 138, 4, 0.18)", badge: "#ca8a04", text: "#ffffff" };
   }
-  if (["CS", "RST", "RESET", "DC", "BL", "INT", "EN", "STBY", "TRIG", "TRIGGER", "CTRL", "CMD"].includes(signal)) {
+  if (["CS", "RST", "RESET", "DC", "BL", "INT", "EN", "STBY", "TRIG", "TRIGGER", "CTRL", "CMD", "NC"].includes(signal)) {
     return { stroke: "#16a34a", glow: "rgba(22, 163, 74, 0.18)", badge: "#16a34a", text: "#ffffff" };
   }
-  if (["PWM", "PWM1", "PWM2", "OUT", "IN", "SIG", "GPIO", "A", "B", "SW", "BUS"].includes(signal)) {
+  if (["PWM", "PWM1", "PWM2", "OUT", "IN", "SIG", "COM", "GPIO", "A", "B", "SW", "BUS"].includes(signal)) {
     return { stroke: "#7c3aed", glow: "rgba(124, 58, 237, 0.18)", badge: "#7c3aed", text: "#ffffff" };
   }
   return { stroke: "#0f766e", glow: "rgba(15, 118, 110, 0.18)", badge: "#0f766e", text: "#ffffff" };
@@ -796,6 +830,46 @@ function labelAnchorAwayFromOwner(entry, ownerRect, stageWidth, stageHeight, ren
   };
 }
 
+function boardLabelAnchor(entry, boardRect, stageWidth, stageHeight, renderedRect = null) {
+  const center = renderedRect
+    ? {
+      x: renderedRect.left + (renderedRect.width / 2),
+      y: renderedRect.top + (renderedRect.height / 2),
+    }
+    : labelDisplayCenter(entry, stageWidth, stageHeight);
+  const size = floatingLabelSize(entry.label);
+  const halfWidth = Number(size.width || 0) / 2;
+  const halfHeight = Number(size.height || 0) / 2;
+  const boardCenterX = Number(boardRect?.left || 0) + (Number(boardRect?.width || 0) / 2);
+  const boardCenterY = Number(boardRect?.top || 0) + (Number(boardRect?.height || 0) / 2);
+  const deltaX = center.x - boardCenterX;
+  const deltaY = center.y - boardCenterY;
+
+  if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+    const direction = deltaX >= 0 ? 1 : -1;
+    return {
+      x: renderedRect
+        ? (direction > 0 ? (renderedRect.left + renderedRect.width) : renderedRect.left)
+        : (center.x + (halfWidth * direction)),
+      y: center.y,
+      side: direction > 0 ? "right" : "left",
+      tangentX: direction,
+      tangentY: 0,
+    };
+  }
+
+  const direction = deltaY >= 0 ? 1 : -1;
+  return {
+    x: center.x,
+    y: renderedRect
+      ? (direction > 0 ? (renderedRect.top + renderedRect.height) : renderedRect.top)
+      : (center.y + (halfHeight * direction)),
+    side: direction > 0 ? "bottom" : "top",
+    tangentX: 0,
+    tangentY: direction,
+  };
+}
+
 function hasFiniteAnchorPoint(point) {
   return Boolean(point)
     && Number.isFinite(Number(point.x))
@@ -862,12 +936,16 @@ export function createPeripheralDiagramWiringModule({
       pushEntry(definition.label);
     }
 
-    for (const signalLabel of helperSignalLabels(groupKey, profileValue)) {
+    const defaultHelperSignals = isLimitSwitchNode(node)
+      ? ["COM"]
+      : helperSignalLabels(groupKey, profileValue);
+
+    for (const signalLabel of defaultHelperSignals) {
       pushEntry(signalLabel);
     }
 
     for (const pinLabel of Array.isArray(node?.pins) ? node.pins : []) {
-      if (!isPositivePowerSignal(pinLabel) && !isGroundSignal(pinLabel)) {
+      if (!isLimitSwitchNode(node) && !isPositivePowerSignal(pinLabel) && !isGroundSignal(pinLabel)) {
         continue;
       }
       pushEntry(pinLabel);
@@ -1190,16 +1268,61 @@ export function createPeripheralDiagramWiringModule({
 
   function applyConnectionPinAssignment(connectionGroup, targetBoardEntry) {
     const nodeId = String(connectionGroup?.dataset.nodeId || "");
-    const targetPin = Number(targetBoardEntry?.pin ?? NaN);
     const signal = String(connectionGroup?.dataset.signal || "").trim().toUpperCase();
     const node = state.peripheralDiagramNodeMap?.[nodeId];
-    if (!nodeId || !signal || !node || !Number.isFinite(targetPin) || targetPin < 0) {
+    if (!nodeId || !signal || !node) {
       return false;
     }
 
     const groupKey = String(node.groupKey || "");
     const profileValue = String(node.profileValue || "none");
     const index = Number(node.index || 0);
+
+    if (isLimitSwitchNode(node)) {
+      if (signal === "COM") {
+        const targetPin = Number(targetBoardEntry?.pin ?? NaN);
+        if (!Number.isFinite(targetPin) || targetPin < 0) {
+          return false;
+        }
+        const nextValue = String(targetPin);
+        const existingValue = String(peripheralHelperBindingValue(groupKey, index, "COM") || peripheralHelperBindingValue(groupKey, index, "SIG") || "").trim();
+        if (existingValue === nextValue) {
+          return false;
+        }
+        setPeripheralHelperBindingValue(groupKey, index, "COM", nextValue);
+        if (existingValue && existingValue !== nextValue) {
+          setPeripheralHelperBindingValue(groupKey, index, "SIG", "");
+        }
+        syncGpioMappingControls?.();
+        queueSettingsSave?.(0);
+        render(lastRenderedNodes);
+        return true;
+      }
+
+      if (signal === "NC" || signal === "NO") {
+        const sourceValue = limitSwitchSourceValueForBoardEntry(targetBoardEntry);
+        if (!sourceValue) {
+          return false;
+        }
+        const currentContact = String(peripheralHelperBindingValue(groupKey, index, "CONTACT") || "NO").trim().toUpperCase() === "NC" ? "NC" : "NO";
+        const currentSource = String(peripheralHelperBindingValue(groupKey, index, "SOURCE") || "GND").trim().toUpperCase() === "VCC" ? "VCC" : "GND";
+        if (currentContact === signal && currentSource === sourceValue) {
+          return false;
+        }
+        setPeripheralHelperBindingValue(groupKey, index, "CONTACT", signal);
+        setPeripheralHelperBindingValue(groupKey, index, "SOURCE", sourceValue);
+        syncGpioMappingControls?.();
+        queueSettingsSave?.(0);
+        render(lastRenderedNodes);
+        return true;
+      }
+    }
+
+    const targetPin = Number(targetBoardEntry?.pin ?? NaN);
+    if (!Number.isFinite(targetPin) || targetPin < 0) {
+      return false;
+    }
+
     let changed = false;
 
     for (const definition of realPeripheralBindingDefinitions(groupKey, profileValue, state.settings || {}, index)) {
@@ -1253,6 +1376,20 @@ export function createPeripheralDiagramWiringModule({
     const groupKey = String(node.groupKey || "");
     const profileValue = String(node.profileValue || "none");
     const index = Number(node.index || 0);
+
+    if (isLimitSwitchNode(node) && (signal === "NC" || signal === "NO")) {
+      const currentContact = String(peripheralHelperBindingValue(groupKey, index, "CONTACT") || "NO").trim().toUpperCase() === "NC" ? "NC" : "NO";
+      const currentSource = String(peripheralHelperBindingValue(groupKey, index, "SOURCE") || "").trim();
+      if (currentContact !== signal || !currentSource) {
+        return false;
+      }
+      setPeripheralHelperBindingValue(groupKey, index, "SOURCE", "");
+      syncGpioMappingControls?.();
+      queueSettingsSave?.(0);
+      render(lastRenderedNodes);
+      return true;
+    }
+
     let changed = false;
 
     for (const definition of realPeripheralBindingDefinitions(groupKey, profileValue, state.settings || {}, index)) {
@@ -1725,7 +1862,24 @@ export function createPeripheralDiagramWiringModule({
         usedSignals.add(signalKey(normalizedSignal));
       }
 
+      if (isLimitSwitchNode(node)) {
+        const contactSignal = String(peripheralHelperBindingValue(groupKey, index, "CONTACT") || "NO").trim().toUpperCase() === "NC" ? "NC" : "NO";
+        const sourceValue = String(peripheralHelperBindingValue(groupKey, index, "SOURCE") || "GND").trim().toUpperCase() === "VCC" ? "VCC" : "GND";
+        if (!usedSignals.has(contactSignal)) {
+          connections.push({
+            nodeId: node.id,
+            signalLabel: contactSignal,
+            type: "rail",
+            boardLabel: limitSwitchBoardLabelForSource(node, sourceValue),
+          });
+          usedSignals.add(contactSignal);
+        }
+      }
+
       for (const pinLabel of Array.isArray(node.pins) ? node.pins : []) {
+        if (groupKey === "power") {
+          continue;
+        }
         if (!isPositivePowerSignal(pinLabel) && !isGroundSignal(pinLabel)) {
           continue;
         }
@@ -1993,6 +2147,26 @@ export function createPeripheralDiagramWiringModule({
 
       const nodeSignalLabels = new Map();
 
+      if (isLimitSwitchNode(node)) {
+        const defaultPins = Array.isArray(node.pins)
+          ? node.pins.filter((pinLabel) => ["COM", "NC", "NO"].includes(signalKey(pinLabel)))
+          : [];
+        defaultPins.forEach((pinLabel, index) => {
+          const label = normalizeSignalLabel(pinLabel);
+          const labelId = peripheralDiagramLabelId(label);
+          if (nodeSignalLabels.has(labelId)) {
+            return;
+          }
+          const defaultAnchor = nodeAnchorForConnection(nodeRect, boardRect, index, Math.max(defaultPins.length, 1));
+          nodeSignalLabels.set(labelId, {
+            id: labelId,
+            label,
+            palette: peripheralDiagramLabelPalette(label),
+            defaultLayout: signalLabelDefaultLayout(visualRect, defaultAnchor, label),
+          });
+        });
+      }
+
       connections.forEach((connection, index) => {
         const defaultAnchor = nodeAnchorForConnection(nodeRect, boardRect, index, connections.length);
         const labelId = peripheralDiagramLabelId(connection.signalLabel);
@@ -2092,7 +2266,7 @@ export function createPeripheralDiagramWiringModule({
         const boardLabelEntry = resolvedBoardLabelsByTarget.get(boardTargetKey(connection)) || null;
         const boardAnchor = boardLabelEntry
           ? {
-            ...labelAnchorAwayFromOwner(
+            ...boardLabelAnchor(
               boardLabelEntry,
               boardRect,
               stageRect.width,

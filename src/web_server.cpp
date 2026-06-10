@@ -23,6 +23,8 @@ void WebServerManager::begin(
     VolumeHandler,
     OtaHandler,
     MqttHandler,
+    MotorRunHandler,
+    StatusAppender,
     SimpleHandler,
     SimpleHandler,
     SimpleHandler,
@@ -879,6 +881,8 @@ void WebServerManager::begin(
     VolumeHandler volumeHandler,
     OtaHandler otaHandler,
     MqttHandler mqttHandler,
+    MotorRunHandler motorRunHandler,
+    StatusAppender motorStatusAppender,
     SimpleHandler displayTriggerHandler,
     SimpleHandler serverShutdownHandler,
     SimpleHandler rebootHandler,
@@ -894,6 +898,8 @@ void WebServerManager::begin(
     volumeHandler_ = volumeHandler;
     otaHandler_ = otaHandler;
     mqttHandler_ = mqttHandler;
+    motorRunHandler_ = motorRunHandler;
+    motorStatusAppender_ = motorStatusAppender;
     displayTriggerHandler_ = displayTriggerHandler;
     serverShutdownHandler_ = serverShutdownHandler;
     rebootHandler_ = rebootHandler;
@@ -984,6 +990,9 @@ void WebServerManager::registerApiRoutes() {
     #endif
         firmware["buttonEventTopic"] = settingsGetter_().mqtt.baseTopic + "/event/button_action";
         otaManager_->appendStatusJson(doc["otaManager"].to<JsonObject>());
+        if (motorStatusAppender_) {
+            motorStatusAppender_(doc["motor"].to<JsonObject>());
+        }
         sendJson(request, doc);
     });
 
@@ -1090,6 +1099,40 @@ void WebServerManager::registerApiRoutes() {
         stopHandler_();
         request->send(200, "application/json", "{\"ok\":true}");
     });
+
+    auto* motorRunHandler = new AsyncCallbackJsonWebHandler(
+        "/api/motor/run",
+        [this](AsyncWebServerRequest* request, JsonVariant& json) {
+            if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+                return;
+            }
+            if (json.isNull()) {
+                request->send(400, "application/json", "{\"error\":\"invalid json\"}");
+                return;
+            }
+            if (!motorRunHandler_) {
+                request->send(503, "application/json", "{\"error\":\"motor control unavailable\"}");
+                return;
+            }
+
+            const uint8_t channelIndex = json["channel"] | 0;
+            const String directionValue = String(static_cast<const char*>(json["direction"] | "forward"));
+            const bool forward = !directionValue.equalsIgnoreCase("backward");
+            const uint32_t durationMs = json["durationMs"] | 0;
+            const int8_t limitInputIndex = json["limitInputIndex"].isNull()
+                ? static_cast<int8_t>(-1)
+                : static_cast<int8_t>(json["limitInputIndex"].as<int>());
+
+            String error;
+            if (!motorRunHandler_(channelIndex, forward, durationMs, limitInputIndex, error)) {
+                request->send(400, "application/json", String("{\"error\":\"") + error + "\"}");
+                return;
+            }
+
+            request->send(200, "application/json", "{\"ok\":true}");
+        });
+    motorRunHandler->setMethod(HTTP_POST);
+    server_.addHandler(motorRunHandler);
 
     server_.on("/api/display-trigger", HTTP_POST, [this](AsyncWebServerRequest* request) {
         if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {

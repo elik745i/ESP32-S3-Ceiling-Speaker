@@ -30,6 +30,9 @@ export const STANDARD_PERIPHERAL_DIAGRAM_LABELS = [
   { value: "CLK", label: "CLK", badge: "#a16207", text: "#ffffff" },
   { value: "DATA", label: "DATA", badge: "#0ea5e9", text: "#ffffff" },
   { value: "SIG", label: "SIG", badge: "#0f766e", text: "#ffffff" },
+  { value: "COM", label: "COM", badge: "#7c3aed", text: "#ffffff" },
+  { value: "NC", label: "NC", badge: "#16a34a", text: "#ffffff" },
+  { value: "NO", label: "NO", badge: "#0284c7", text: "#ffffff" },
   { value: "PWM", label: "PWM", badge: "#7c3aed", text: "#ffffff" },
   { value: "INT", label: "INT", badge: "#4f46e5", text: "#ffffff" },
   { value: "EN", label: "EN", badge: "#9333ea", text: "#ffffff" },
@@ -285,16 +288,16 @@ export function peripheralDiagramLabelPalette(label, fallback = null) {
   if (["3V3", "3_3V", "3VO", "PWR"].includes(key)) {
     return { badge: "#ea580c", text: "#ffffff" };
   }
-  if (["SDA", "RX", "DIN", "DATA", "DOUT"].includes(key)) {
+  if (["SDA", "RX", "DIN", "DATA", "DOUT", "NO"].includes(key)) {
     return { badge: "#0284c7", text: "#ffffff" };
   }
   if (["SCL", "TX", "BCLK", "WS", "CLK", "SCK"].includes(key)) {
     return { badge: "#ca8a04", text: "#ffffff" };
   }
-  if (["CS", "RST", "RESET", "BL", "DC", "INT", "EN"].includes(key)) {
+  if (["CS", "RST", "RESET", "BL", "DC", "INT", "EN", "NC"].includes(key)) {
     return { badge: "#16a34a", text: "#ffffff" };
   }
-  if (["PWM", "SIG", "OUT", "IN", "A", "B"].includes(key)) {
+  if (["PWM", "SIG", "COM", "OUT", "IN", "A", "B"].includes(key)) {
     return { badge: "#7c3aed", text: "#ffffff" };
   }
   return fallback || { badge: "#0f766e", text: "#ffffff" };

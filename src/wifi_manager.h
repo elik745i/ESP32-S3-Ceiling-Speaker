@@ -61,6 +61,7 @@ class WiFiManager {
     bool apShutdownPending_ = false;
     bool hadConnection_ = false;
     bool recoveryRebootRecommended_ = false;
+    bool skipBssidSelectionForNextConnect_ = false;
     bool lastScanCompleted_ = false;
     bool lastDisconnectReasonValid_ = false;
     uint8_t consecutiveFailureCount_ = 0;

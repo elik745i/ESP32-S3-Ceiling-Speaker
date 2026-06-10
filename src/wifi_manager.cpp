@@ -97,7 +97,8 @@ void WiFiManager::startStation() {
         startAccessPoint();
     }
 
-    const PreferredAccessPoint preferredAccessPoint = findPreferredAccessPoint();
+    const bool usePreferredBssid = !skipBssidSelectionForNextConnect_;
+    const PreferredAccessPoint preferredAccessPoint = usePreferredBssid ? findPreferredAccessPoint() : PreferredAccessPoint{};
     if (preferredAccessPoint.found && preferredAccessPoint.channel > 0) {
         WiFi.begin(settings_.wifi.ssid.c_str(), settings_.wifi.password.c_str(), preferredAccessPoint.channel,
                    preferredAccessPoint.bssid, true);
@@ -109,9 +110,11 @@ void WiFiManager::startStation() {
                       preferredAccessPoint.bssid[3], preferredAccessPoint.bssid[4], preferredAccessPoint.bssid[5]);
     } else {
         WiFi.begin(settings_.wifi.ssid.c_str(), settings_.wifi.password.c_str());
-        Serial.printf("[wifi] no matching BSSID scan result for ssid='%s', using default station connect\n",
+        Serial.printf("[wifi] %s for ssid='%s', using default station connect\n",
+                      usePreferredBssid ? "no matching BSSID scan result" : "skipping BSSID pin after auth failure",
                       settings_.wifi.ssid.c_str());
     }
+    skipBssidSelectionForNextConnect_ = false;
     stationAttemptActive_ = true;
     connectAttemptStartedAt_ = millis();
     lastConnectAttemptAt_ = connectAttemptStartedAt_;
@@ -240,6 +243,7 @@ void WiFiManager::registerFailedAttempt(const char* reason) {
                   static_cast<unsigned>(WIFI_MAX_CONSECUTIVE_FAILURES));
 
     if (lastDisconnectReasonValid_ && isCredentialFailureReason(lastDisconnectReason_)) {
+        skipBssidSelectionForNextConnect_ = true;
         setFrontendError("Wi-Fi credentials were rejected for saved network '" + settings_.wifi.ssid + "'.");
         recoveryRebootRecommended_ = false;
         return;

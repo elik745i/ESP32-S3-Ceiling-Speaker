@@ -117,6 +117,16 @@ void AppState::setOta(bool busy, bool updateAvailable, const String& latestVersi
     unlockAppState(mutex_);
 }
 
+void AppState::setInputs(const InputChannelSnapshot& button1, const InputChannelSnapshot& button2) {
+    if (!ensureMutex()) {
+        return;
+    }
+    lockAppState(mutex_);
+    state_.input.button1 = button1;
+    state_.input.button2 = button2;
+    unlockAppState(mutex_);
+}
+
 void AppState::setLastError(const String& lastError) {
     if (!ensureMutex()) {
         return;
@@ -193,6 +203,29 @@ void AppState::toJson(JsonObject root) const {
 
     JsonObject settings = root["settings"].to<JsonObject>();
     settings["usingSaved"] = copy.settings.usingSaved;
+
+    JsonObject input = root["input"].to<JsonObject>();
+    JsonObject button1 = input["button1"].to<JsonObject>();
+    button1["configuredIndex"] = copy.input.button1.configuredIndex;
+    button1["pin"] = copy.input.button1.pin;
+    button1["profile"] = copy.input.button1.profile;
+    button1["nativeTouch"] = copy.input.button1.nativeTouch;
+    button1["touchSupported"] = copy.input.button1.touchSupported;
+    button1["active"] = copy.input.button1.active;
+    button1["sensitivityPercent"] = copy.input.button1.sensitivityPercent;
+    button1["rawValue"] = copy.input.button1.rawValue;
+    button1["baselineValue"] = copy.input.button1.baselineValue;
+
+    JsonObject button2 = input["button2"].to<JsonObject>();
+    button2["configuredIndex"] = copy.input.button2.configuredIndex;
+    button2["pin"] = copy.input.button2.pin;
+    button2["profile"] = copy.input.button2.profile;
+    button2["nativeTouch"] = copy.input.button2.nativeTouch;
+    button2["touchSupported"] = copy.input.button2.touchSupported;
+    button2["active"] = copy.input.button2.active;
+    button2["sensitivityPercent"] = copy.input.button2.sensitivityPercent;
+    button2["rawValue"] = copy.input.button2.rawValue;
+    button2["baselineValue"] = copy.input.button2.baselineValue;
 
     JsonObject system = root["system"].to<JsonObject>();
     system["freeHeap"] = copy.system.freeHeap;

@@ -389,16 +389,20 @@ export function createConfigurationSettingsPersistenceModule({
   }
 
   async function loadSettings() {
-    state.settings = await request("/api/settings");
-    state.settings.audio ||= {};
-    state.settings.sd ||= {};
-    if (state.settings.audio.enabled === undefined) {
-      state.settings.audio.enabled = true;
+    const loadedSettings = await request("/api/settings");
+    loadedSettings.audio ||= {};
+    loadedSettings.sd ||= {};
+    if (loadedSettings.audio.enabled === undefined) {
+      loadedSettings.audio.enabled = true;
     }
-    if (state.settings.audio.rememberLastPlayed === undefined) {
-      state.settings.audio.rememberLastPlayed = true;
+    if (loadedSettings.audio.rememberLastPlayed === undefined) {
+      loadedSettings.audio.rememberLastPlayed = true;
     }
-    state.settings.ui = normalizeUiSettings(state.settings.ui);
+    loadedSettings.ui = normalizeUiSettings(loadedSettings.ui);
+    if (state.settingsDirty || state.settingsSaving) {
+      return;
+    }
+    state.settings = loadedSettings;
     state.peripheralDiagramPositions = cloneSettingsObject(state.settings.ui.peripheralDiagramPositions) || {};
     restoreGpioBoardPreferences();
     state.batteryMeasuredVoltageInput = Number(state.settings?.battery?.measuredVoltage || 0) > 0

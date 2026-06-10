@@ -365,24 +365,34 @@ export function createConfigurationGpioTab({
     const roleState = gpioConfigRoleState(state.settings || {});
     const currentRoleKey = roleState.pinToRole.get(numericPin) || "";
     const currentDefinition = currentRoleKey ? roleState.byKey.get(currentRoleKey) : null;
+    const assignDefinitionValue = (definition, value) => {
+      if (!definition) {
+        return;
+      }
+      if (typeof definition.setValue === "function") {
+        definition.setValue(value);
+      } else if (definition.element) {
+        definition.element.value = String(value ?? "");
+        if (definition.key === "battery.adcPin") {
+          definition.element.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      }
+    };
 
     if (selectedRoleKey === "__unused__") {
-      if (!currentDefinition?.element) {
+      if (!currentDefinition?.element && typeof currentDefinition?.setValue !== "function") {
         state.gpioRoleMenuOpen = false;
         renderGpioOverview();
         return;
       }
       if (currentDefinition.unusedValue !== undefined) {
-        currentDefinition.element.value = String(currentDefinition.unusedValue);
-        if (currentDefinition.key === "battery.adcPin") {
-          currentDefinition.element.dispatchEvent(new Event("change", { bubbles: true }));
-        }
+        assignDefinitionValue(currentDefinition, currentDefinition.unusedValue);
         syncGpioMappingControls();
         state.gpioRoleMenuOpen = false;
         queueSettingsSave(150);
         return;
       }
-      currentDefinition.element.value = "";
+      assignDefinitionValue(currentDefinition, "");
       state.gpioRoleMenuOpen = false;
       setMessage(`${currentDefinition.label} marked Unused. Select another GPIO to reassign it.`);
       renderGpioOverview();
@@ -396,7 +406,7 @@ export function createConfigurationGpioTab({
     }
 
     const selectedDefinition = roleState.byKey.get(selectedRoleKey);
-    if (!selectedDefinition?.element) {
+    if (!selectedDefinition?.element && typeof selectedDefinition?.setValue !== "function") {
       state.gpioRoleMenuOpen = false;
       renderGpioOverview();
       return;
@@ -415,16 +425,11 @@ export function createConfigurationGpioTab({
       return;
     }
 
-    selectedDefinition.element.value = String(numericPin);
-    if (selectedDefinition.key === "battery.adcPin") {
-      selectedDefinition.element.dispatchEvent(new Event("change", { bubbles: true }));
-    }
+    assignDefinitionValue(selectedDefinition, numericPin);
 
     if (currentRoleKey && previousPinForSelectedRole !== null && previousPinForSelectedRole !== numericPin) {
       const displacedDefinition = roleState.byKey.get(currentRoleKey);
-      if (displacedDefinition?.element) {
-        displacedDefinition.element.value = String(previousPinForSelectedRole);
-      }
+      assignDefinitionValue(displacedDefinition, previousPinForSelectedRole);
     }
 
     syncGpioMappingControls();

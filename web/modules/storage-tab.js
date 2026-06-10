@@ -77,18 +77,12 @@ export function createStorageTab({
     const internalStoragePanel = document.getElementById("tab-storage-internal");
 
     if (internalStorageTabButton) {
-      internalStorageTabButton.hidden = !flashAvailable;
-      internalStorageTabButton.disabled = !flashAvailable;
-      if (!flashAvailable) {
-        internalStorageTabButton.setAttribute("aria-selected", "false");
-      }
+      internalStorageTabButton.hidden = false;
+      internalStorageTabButton.disabled = false;
     }
 
     if (internalStoragePanel) {
-      internalStoragePanel.hidden = !flashAvailable;
-      if (!flashAvailable) {
-        internalStoragePanel.classList.remove("active");
-      }
+      internalStoragePanel.hidden = false;
     }
 
     if (elements.storageFlashButton) {

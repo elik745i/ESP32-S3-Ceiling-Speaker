@@ -79,21 +79,21 @@ namespace DefaultConfig {
 constexpr char WIFI_SSID[] = "";
 constexpr char WIFI_PASSWORD[] = "";
 constexpr bool WIFI_AP_FALLBACK_ENABLED = true;
-constexpr char WIFI_AP_SSID_PREFIX[] = "ESP32-Notifier";
+constexpr char WIFI_AP_SSID_PREFIX[] = "ELMA-IoT";
 constexpr char WIFI_AP_PASSWORD[] = "12345678";
 
-constexpr char DEVICE_NAME[] = "esp32-notifier";
-constexpr char FRIENDLY_NAME[] = "ESP32 Notifier";
+constexpr char DEVICE_NAME[] = "elma-iot";
+constexpr char FRIENDLY_NAME[] = "ELMA IoT";
 
 constexpr char MQTT_HOST[] = "";
 constexpr uint16_t MQTT_PORT = 1883;
 constexpr char MQTT_USERNAME[] = "";
 constexpr char MQTT_PASSWORD[] = "";
-constexpr char MQTT_BASE_TOPIC[] = "esp32_notifier";
+constexpr char MQTT_BASE_TOPIC[] = "elma_iot";
 constexpr bool MQTT_DISCOVERY_ENABLED = true;
 
-constexpr char OTA_OWNER[] = "elik745i";
-constexpr char OTA_REPOSITORY[] = "ESP32-S3-Ceiling-Speaker";
+constexpr char OTA_OWNER[] = "elma-iot";
+constexpr char OTA_REPOSITORY[] = "ELMA-IoT";
 constexpr char OTA_CHANNEL[] = "stable";
 constexpr char OTA_ASSET_TEMPLATE[] = "esp32-notifier-${version}.bin";
 constexpr char OTA_MANIFEST_URL[] = "";
@@ -119,6 +119,8 @@ constexpr int AUDIO_BUFFER_SIZE_PSRAM = 1024 * 1024;
 constexpr bool LOW_BATTERY_SLEEP_ENABLED = false;
 constexpr uint8_t LOW_BATTERY_SLEEP_THRESHOLD_PERCENT = 20;
 constexpr uint16_t LOW_BATTERY_WAKE_INTERVAL_MINUTES = 15;
+constexpr bool POWER_CYCLE_FACTORY_RESET_ENABLED = true;
+constexpr bool TOUCH_HOLD_FACTORY_RESET_ENABLED = true;
 
 constexpr bool WEB_AUTH_ENABLED = false;
 constexpr char WEB_USERNAME[] = "admin";

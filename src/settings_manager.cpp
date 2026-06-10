@@ -1,5 +1,6 @@
 #include "settings_manager.h"
 
+#include <ctype.h>
 #include <math.h>
 
 #include "default_config.h"
@@ -9,6 +10,18 @@ constexpr char PREF_NAMESPACE[] = "notifier";
 constexpr char PREF_MARKER[] = "saved";
 constexpr float kLegacyEsp32BatteryCalibration = 3.866f;
 constexpr uint8_t kDocumentedBuzzerPin = 7;
+
+String defaultPeripheralHelperBindings() {
+    return "{}";
+}
+
+String defaultPeripheralProfileSelections() {
+    return "{}";
+}
+
+String defaultMotorRuntimeConfig() {
+    return "{}";
+}
 
 bool approximatelyEqual(float left, float right, float tolerance = 0.05f) {
     return fabsf(left - right) <= tolerance;
@@ -175,7 +188,7 @@ String normalizeWapeTriggerEvent(String value) {
 
 String defaultDeviceBaseName() {
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
-    return "ceiling-speaker";
+    return "elma-iot";
 #else
     return DefaultConfig::DEVICE_NAME;
 #endif
@@ -183,7 +196,7 @@ String defaultDeviceBaseName() {
 
 String defaultFriendlyBaseName() {
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
-    return "Ceiling Speaker";
+    return "ELMA IoT";
 #else
     return DefaultConfig::FRIENDLY_NAME;
 #endif
@@ -198,7 +211,11 @@ bool usesLegacyOtaRepository(const String& owner, const String& repository) {
     normalizedRepository.trim();
     normalizedRepository.toLowerCase();
 
-    return normalizedOwner == "elik745i" && normalizedRepository == "esp32-notifier-for-homeassistant";
+    return normalizedOwner == "elik745i" && (
+        normalizedRepository == "elma-iot" ||
+        normalizedRepository == "esp32-notifier-for-homeassistant" ||
+        normalizedRepository == "esp32-s3-ceiling-speaker"
+    );
 }
 
 String defaultOtaAssetTemplate() {
@@ -275,19 +292,45 @@ bool matchesAnyNormalized(const String& value, std::initializer_list<const char*
     return false;
 }
 
+bool matchesLegacyGeneratedName(const String& value, std::initializer_list<const char*> bases, char separator) {
+    for (const char* base : bases) {
+        const String prefix = String(base) + separator;
+        if (!value.startsWith(prefix)) {
+            continue;
+        }
+        const String suffix = value.substring(prefix.length());
+        if (suffix.length() != 6) {
+            continue;
+        }
+        bool valid = true;
+        for (size_t index = 0; index < suffix.length(); ++index) {
+            if (!isxdigit(static_cast<unsigned char>(suffix.charAt(index)))) {
+                valid = false;
+                break;
+            }
+        }
+        if (valid) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool isLegacyDefaultDeviceName(const String& value) {
     String normalized = value;
     normalized.trim();
     normalized.toLowerCase();
     return normalized == defaultDeviceBaseName() ||
-        matchesAnyNormalized(normalized, {"esp32-notifier", "esp32s3-notifier", "ceiling-speaker"});
+        matchesAnyNormalized(normalized, {"esp32-notifier", "esp32s3-notifier", "ceiling-speaker", "elma-iot"}) ||
+        matchesLegacyGeneratedName(normalized, {"esp32-notifier", "esp32s3-notifier", "ceiling-speaker", "elma-iot"}, '-');
 }
 
 bool isLegacyDefaultFriendlyName(const String& value) {
     String normalized = value;
     normalized.trim();
     return normalized == defaultFriendlyBaseName() ||
-        matchesAnyNormalized(normalized, {"ESP32 Notifier", "ESP32-S3 Notifier", "Ceiling Speaker"}) ||
+        matchesAnyNormalized(normalized, {"ESP32 Notifier", "ESP32-S3 Notifier", "Ceiling Speaker", "ELMA IoT"}) ||
+        matchesLegacyGeneratedName(normalized, {"ESP32 Notifier", "ESP32-S3 Notifier", "Ceiling Speaker", "ELMA IoT"}, ' ') ||
         isLegacyDefaultDeviceName(normalized);
 }
 
@@ -297,7 +340,17 @@ bool isLegacyDefaultMqttBaseTopic(const String& value) {
     normalized.toLowerCase();
     normalized.replace('-', '_');
     return normalized == DefaultConfig::MQTT_BASE_TOPIC ||
-        matchesAnyNormalized(normalized, {"esp32_notifier", "esp32s3_notifier", "ceiling_speaker"});
+        matchesAnyNormalized(normalized, {"esp32_notifier", "esp32s3_notifier", "ceiling_speaker", "elma_iot"}) ||
+        matchesLegacyGeneratedName(normalized, {"esp32_notifier", "esp32s3_notifier", "ceiling_speaker", "elma_iot"}, '_');
+}
+
+bool isLegacyDefaultMqttClientId(const String& value) {
+    String normalized = value;
+    normalized.trim();
+    normalized.toLowerCase();
+    return normalized == defaultDeviceBaseName() ||
+        matchesAnyNormalized(normalized, {"esp32-notifier", "esp32s3-notifier", "ceiling-speaker", "elma-iot"}) ||
+        matchesLegacyGeneratedName(normalized, {"esp32-notifier", "esp32s3-notifier", "ceiling-speaker", "elma-iot"}, '-');
 }
 
 String normalizeButtonAction(String value, const char* fallback) {
@@ -388,6 +441,23 @@ String normalizePeripheralHelperBindings(String value) {
 }
 
 String normalizePeripheralProfileSelections(String value) {
+    value.trim();
+    if (value.isEmpty()) {
+        return "{}";
+    }
+
+    JsonDocument document;
+    DeserializationError error = deserializeJson(document, value);
+    if (error || !document.is<JsonObject>()) {
+        return "{}";
+    }
+
+    String normalized;
+    serializeJson(document.as<JsonObjectConst>(), normalized);
+    return normalized;
+}
+
+String normalizeMotorRuntimeConfig(String value) {
     value.trim();
     if (value.isEmpty()) {
         return "{}";
@@ -497,13 +567,16 @@ SettingsBundle SettingsManager::defaults() const {
     settings.device.button1Action = DefaultConfig::BUTTON1_DEFAULT_ACTION;
     settings.device.button2Action = DefaultConfig::BUTTON2_DEFAULT_ACTION;
     settings.device.lowBatterySleepEnabled = DefaultConfig::LOW_BATTERY_SLEEP_ENABLED;
+    settings.device.powerCycleFactoryResetEnabled = DefaultConfig::POWER_CYCLE_FACTORY_RESET_ENABLED;
+    settings.device.touchHoldFactoryResetEnabled = DefaultConfig::TOUCH_HOLD_FACTORY_RESET_ENABLED;
     settings.device.lowBatterySleepThresholdPercent = DefaultConfig::LOW_BATTERY_SLEEP_THRESHOLD_PERCENT;
     settings.device.lowBatteryWakeIntervalMinutes = DefaultConfig::LOW_BATTERY_WAKE_INTERVAL_MINUTES;
     settings.ui.gpioBoardAutodetect = true;
     settings.ui.gpioBoardSelection = "";
     settings.ui.peripheralDiagramLayout = "{}";
-    settings.ui.peripheralHelperBindings = "{}";
-    settings.ui.peripheralProfileSelections = "{}";
+    settings.ui.peripheralHelperBindings = defaultPeripheralHelperBindings();
+    settings.ui.peripheralProfileSelections = defaultPeripheralProfileSelections();
+    settings.ui.motorRuntimeConfig = defaultMotorRuntimeConfig();
     settings.usingSavedSettings = false;
     return settings;
 }
@@ -516,6 +589,7 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     settings.wifi.apPassword.trim();
     settings.device.deviceName.trim();
     settings.device.friendlyName.trim();
+    settings.mqtt.clientId.trim();
     settings.mqtt.baseTopic.trim();
     settings.mqtt.host.trim();
     settings.ota.owner.trim();
@@ -538,6 +612,9 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     }
     if (settings.mqtt.baseTopic.isEmpty() || isLegacyDefaultMqttBaseTopic(settings.mqtt.baseTopic)) {
         settings.mqtt.baseTopic = defaultMqttBaseTopic();
+    }
+    if (settings.mqtt.clientId.isEmpty() || isLegacyDefaultMqttClientId(settings.mqtt.clientId)) {
+        settings.mqtt.clientId = settings.device.deviceName;
     }
     if (settings.ota.owner.isEmpty() || usesLegacyOtaRepository(settings.ota.owner, settings.ota.repository)) {
         settings.ota.owner = DefaultConfig::OTA_OWNER;
@@ -669,6 +746,7 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     settings.ui.peripheralDiagramLayout = normalizePeripheralDiagramLayout(settings.ui.peripheralDiagramLayout);
     settings.ui.peripheralHelperBindings = normalizePeripheralHelperBindings(settings.ui.peripheralHelperBindings);
     settings.ui.peripheralProfileSelections = normalizePeripheralProfileSelections(settings.ui.peripheralProfileSelections);
+    settings.ui.motorRuntimeConfig = normalizeMotorRuntimeConfig(settings.ui.motorRuntimeConfig);
     settings.usingSavedSettings = input.usingSavedSettings;
     return settings;
 }
@@ -777,6 +855,8 @@ SettingsBundle SettingsManager::load() {
     settings.device.button1Action = readString("dev_btn1", settings.device.button1Action);
     settings.device.button2Action = readString("dev_btn2", settings.device.button2Action);
     settings.device.lowBatterySleepEnabled = readBool("dev_lbs_en", settings.device.lowBatterySleepEnabled);
+    settings.device.powerCycleFactoryResetEnabled = readBool("dev_pcf_reset", settings.device.powerCycleFactoryResetEnabled);
+    settings.device.touchHoldFactoryResetEnabled = readBool("dev_thf_reset", settings.device.touchHoldFactoryResetEnabled);
     settings.device.lowBatterySleepThresholdPercent = readUInt("dev_lbs_pct", settings.device.lowBatterySleepThresholdPercent);
     settings.device.lowBatteryWakeIntervalMinutes = readUInt("dev_lbs_wk", settings.device.lowBatteryWakeIntervalMinutes);
     settings.ui.gpioBoardAutodetect = readBool("ui_gpio_auto", settings.ui.gpioBoardAutodetect);
@@ -784,6 +864,7 @@ SettingsBundle SettingsManager::load() {
     settings.ui.peripheralDiagramLayout = readString("ui_diag", settings.ui.peripheralDiagramLayout);
     settings.ui.peripheralHelperBindings = readString("ui_helpers", settings.ui.peripheralHelperBindings);
     settings.ui.peripheralProfileSelections = readString("ui_profiles", settings.ui.peripheralProfileSelections);
+    settings.ui.motorRuntimeConfig = readString("ui_motor", settings.ui.motorRuntimeConfig);
 
     settings = sanitize(settings);
     settings.mqtt.clientId = fallbackIfEmpty(settings.mqtt.clientId, settings.device.deviceName);
@@ -890,6 +971,8 @@ bool SettingsManager::save(const SettingsBundle& settings) {
     changed |= writeStringIfChanged("dev_btn1", sanitized.device.button1Action);
     changed |= writeStringIfChanged("dev_btn2", sanitized.device.button2Action);
     changed |= writeBoolIfChanged("dev_lbs_en", sanitized.device.lowBatterySleepEnabled);
+    changed |= writeBoolIfChanged("dev_pcf_reset", sanitized.device.powerCycleFactoryResetEnabled);
+    changed |= writeBoolIfChanged("dev_thf_reset", sanitized.device.touchHoldFactoryResetEnabled);
     changed |= writeUIntIfChanged("dev_lbs_pct", sanitized.device.lowBatterySleepThresholdPercent);
     changed |= writeUIntIfChanged("dev_lbs_wk", sanitized.device.lowBatteryWakeIntervalMinutes);
     changed |= writeBoolIfChanged("ui_gpio_auto", sanitized.ui.gpioBoardAutodetect);
@@ -897,6 +980,7 @@ bool SettingsManager::save(const SettingsBundle& settings) {
     changed |= writeStringIfChanged("ui_diag", sanitized.ui.peripheralDiagramLayout);
     changed |= writeStringIfChanged("ui_helpers", sanitized.ui.peripheralHelperBindings);
     changed |= writeStringIfChanged("ui_profiles", sanitized.ui.peripheralProfileSelections);
+    changed |= writeStringIfChanged("ui_motor", sanitized.ui.motorRuntimeConfig);
     changed |= writeBoolIfChanged(PREF_MARKER, true);
     return changed;
 }
@@ -1013,6 +1097,8 @@ void SettingsManager::toJson(const SettingsBundle& settings, JsonObject root) co
     device["button1Action"] = settings.device.button1Action;
     device["button2Action"] = settings.device.button2Action;
     device["lowBatterySleepEnabled"] = settings.device.lowBatterySleepEnabled;
+    device["powerCycleFactoryResetEnabled"] = settings.device.powerCycleFactoryResetEnabled;
+    device["touchHoldFactoryResetEnabled"] = settings.device.touchHoldFactoryResetEnabled;
     device["lowBatterySleepThresholdPercent"] = settings.device.lowBatterySleepThresholdPercent;
     device["lowBatteryWakeIntervalMinutes"] = settings.device.lowBatteryWakeIntervalMinutes;
 
@@ -1023,6 +1109,7 @@ void SettingsManager::toJson(const SettingsBundle& settings, JsonObject root) co
 
     ui["peripheralHelperBindings"] = settings.ui.peripheralHelperBindings;
     ui["peripheralProfiles"] = settings.ui.peripheralProfileSelections;
+    ui["motorRuntimeConfig"] = settings.ui.motorRuntimeConfig;
 
     root["usingSavedSettings"] = settings.usingSavedSettings;
 }
@@ -1169,6 +1256,8 @@ bool SettingsManager::updateFromJson(SettingsBundle& settings, JsonVariantConst 
         if (device["savedVolumePercent"].is<uint8_t>()) settings.device.savedVolumePercent = device["savedVolumePercent"].as<uint8_t>();
         if (device["audioMuted"].is<bool>()) settings.device.audioMuted = device["audioMuted"].as<bool>();
         if (device["lowBatterySleepEnabled"].is<bool>()) settings.device.lowBatterySleepEnabled = device["lowBatterySleepEnabled"].as<bool>();
+        if (device["powerCycleFactoryResetEnabled"].is<bool>()) settings.device.powerCycleFactoryResetEnabled = device["powerCycleFactoryResetEnabled"].as<bool>();
+        if (device["touchHoldFactoryResetEnabled"].is<bool>()) settings.device.touchHoldFactoryResetEnabled = device["touchHoldFactoryResetEnabled"].as<bool>();
         if (device["lowBatterySleepThresholdPercent"].is<uint8_t>()) settings.device.lowBatterySleepThresholdPercent = device["lowBatterySleepThresholdPercent"].as<uint8_t>();
         if (device["lowBatteryWakeIntervalMinutes"].is<uint16_t>()) settings.device.lowBatteryWakeIntervalMinutes = device["lowBatteryWakeIntervalMinutes"].as<uint16_t>();
     }
@@ -1197,6 +1286,13 @@ bool SettingsManager::updateFromJson(SettingsBundle& settings, JsonVariantConst 
             String serializedProfiles;
             serializeJson(ui["peripheralProfiles"], serializedProfiles);
             settings.ui.peripheralProfileSelections = serializedProfiles;
+        }
+        if (ui["motorRuntimeConfig"].is<const char*>()) {
+            settings.ui.motorRuntimeConfig = ui["motorRuntimeConfig"].as<const char*>();
+        } else if (ui["motorRuntimeConfig"].is<JsonObjectConst>()) {
+            String serializedMotorRuntimeConfig;
+            serializeJson(ui["motorRuntimeConfig"], serializedMotorRuntimeConfig);
+            settings.ui.motorRuntimeConfig = serializedMotorRuntimeConfig;
         }
     }
 

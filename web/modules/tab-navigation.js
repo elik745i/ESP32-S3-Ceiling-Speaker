@@ -7,7 +7,8 @@ export function initTabNavigation({ storageKey, onActivate } = {}) {
     ? tabName
     : (buttons.find((button) => !button.hidden && !button.disabled)?.dataset.tab || "gpio");
 
-  const activateTab = (tabName) => {
+  const activateTab = (tabName, options = {}) => {
+    const { persist = true } = options;
     const resolvedTabName = resolveTabName(tabName);
     for (const button of buttons) {
       const isActive = button.dataset.tab === resolvedTabName;
@@ -16,7 +17,7 @@ export function initTabNavigation({ storageKey, onActivate } = {}) {
     for (const panel of panels) {
       panel.classList.toggle("active", panel.id === `tab-${resolvedTabName}` && !panel.hidden);
     }
-    if (storageKey) {
+    if (persist && storageKey) {
       try {
         window.localStorage.setItem(storageKey, resolvedTabName);
       } catch {
@@ -33,16 +34,18 @@ export function initTabNavigation({ storageKey, onActivate } = {}) {
   }
 
   let initialTab = buttons[0]?.dataset.tab || "gpio";
+  let preserveSavedInitialTab = false;
   if (storageKey) {
     try {
       const savedTab = window.localStorage.getItem(storageKey);
       if (savedTab && buttons.some((button) => button.dataset.tab === savedTab)) {
         initialTab = savedTab;
+        preserveSavedInitialTab = true;
       }
     } catch {
     }
   }
-  activateTab(initialTab);
+  activateTab(initialTab, { persist: !preserveSavedInitialTab });
 
   return {
     activateTabByName(tabName) {

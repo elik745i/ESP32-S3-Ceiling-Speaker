@@ -14,8 +14,9 @@
 class MqttManager {
   public:
     using CommandHandler = std::function<void(const PlaybackCommand& command)>;
+    using MotorStatusAppender = std::function<void(JsonObject)>;
 
-    void begin(const SettingsBundle& settings, AppState& appState, WiFiManager& wifiManager, OtaManager& otaManager, CommandHandler commandHandler);
+    void begin(const SettingsBundle& settings, AppState& appState, WiFiManager& wifiManager, OtaManager& otaManager, CommandHandler commandHandler, MotorStatusAppender motorStatusAppender = nullptr);
     void applySettings(const SettingsBundle& settings);
     void loop();
     void publishState();
@@ -41,6 +42,7 @@ class MqttManager {
     WiFiManager* wifiManager_ = nullptr;
     OtaManager* otaManager_ = nullptr;
     CommandHandler commandHandler_;
+    MotorStatusAppender motorStatusAppender_;
     bool configured_ = false;
     bool connectionEnabled_ = true;
     bool recoveryRebootRecommended_ = false;

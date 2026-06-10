@@ -20,6 +20,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -445,6 +449,84 @@ body {
 
   .playback-hero-button.playing {
     background: linear-gradient(180deg, #dd6b55, #b42318);
+  }
+
+  .motor-hero-widget {
+    display: grid;
+    align-content: center;
+    justify-items: stretch;
+    gap: 10px;
+    width: 100%;
+    min-height: 100%;
+  }
+
+  .motor-hero-state {
+    text-align: center;
+    font-size: clamp(1.2rem, 2.8vw, 1.75rem);
+    font-weight: 700;
+    line-height: 1.05;
+    color: #2d2d2d;
+  }
+
+  .motor-hero-state.ok {
+    color: var(--ok);
+  }
+
+  .motor-hero-state.warn {
+    color: var(--warn);
+  }
+
+  .motor-hero-state.bad {
+    color: var(--danger);
+  }
+
+  .motor-hero-meta {
+    text-align: center;
+    font-size: 0.82rem;
+    line-height: 1.15;
+    color: var(--muted);
+    min-height: 2.3em;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .motor-hero-controls {
+    display: grid;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .motor-hero-controls[hidden] {
+    display: none !important;
+  }
+
+  .motor-hero-row {
+    display: grid;
+    grid-template-columns: minmax(24px, auto) repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    align-items: center;
+  }
+
+  .motor-hero-row-label {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--muted);
+    text-align: left;
+  }
+
+  .motor-hero-button {
+    min-height: 36px;
+    padding: 8px 10px;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    line-height: 1;
+  }
+
+  .motor-hero-button:disabled {
+    cursor: default;
+    opacity: 0.45;
+    filter: none;
+    box-shadow: none;
   }
 
   .wifi-hero-widget,
@@ -1971,6 +2053,20 @@ body {
     transition: transform 160ms ease;
   }
 
+  .peripheral-diagram-node-visual img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  .peripheral-diagram-node-drv8833 {
+    width: 138px;
+  }
+
+  .peripheral-diagram-node-drv8833 .peripheral-diagram-node-visual img {
+    max-width: 128px;
+  }
+
   .peripheral-diagram-node-edit,
   .peripheral-diagram-node-rotate,
   .peripheral-diagram-board-edit {
@@ -2209,6 +2305,201 @@ body {
     font-weight: 700;
     letter-spacing: 0.03em;
     color: #155e75;
+  }
+
+  .peripheral-diagram-touch-block {
+    width: 100%;
+    min-height: 144px;
+    padding: 10px 11px 11px;
+    display: grid;
+    gap: 8px;
+    border: 1px solid rgba(15, 118, 110, 0.28);
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(226, 232, 240, 0.96));
+    box-shadow: 0 10px 20px rgba(15, 23, 42, 0.10);
+  }
+
+  .peripheral-diagram-touch-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    align-items: flex-start;
+  }
+
+  .peripheral-diagram-touch-title {
+    font-size: 0.62rem;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #0f172a;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+  }
+
+  .peripheral-diagram-touch-pin,
+  .peripheral-diagram-touch-metrics,
+  .peripheral-diagram-touch-sensitivity-value {
+    font-size: 0.56rem;
+    font-weight: 700;
+    color: #475569;
+  }
+
+  .peripheral-diagram-touch-pin {
+    justify-self: start;
+    white-space: nowrap;
+  }
+
+  .peripheral-diagram-touch-pad {
+    min-height: 56px;
+    display: grid;
+    place-items: center;
+    gap: 6px;
+    padding: 8px;
+    border-radius: 12px;
+    background: radial-gradient(circle at top, rgba(255, 255, 255, 0.95), rgba(226, 232, 240, 0.92));
+    border: 1px solid rgba(148, 163, 184, 0.35);
+  }
+
+  .peripheral-diagram-touch-ring {
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    border: 3px solid rgba(15, 118, 110, 0.22);
+    position: relative;
+  }
+
+  .peripheral-diagram-touch-light {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    background: #94a3b8;
+    box-shadow: 0 0 0 rgba(34, 197, 94, 0);
+  }
+
+  .peripheral-diagram-touch-pad.is-active .peripheral-diagram-touch-light {
+    background: #22c55e;
+    box-shadow: 0 0 14px rgba(34, 197, 94, 0.8);
+  }
+
+  .peripheral-diagram-touch-pad.is-unsupported .peripheral-diagram-touch-light {
+    background: #f97316;
+  }
+
+  .peripheral-diagram-touch-state {
+    font-size: 0.58rem;
+    font-weight: 800;
+    color: #0f172a;
+    text-align: center;
+  }
+
+  .peripheral-diagram-touch-sensitivity {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "label value"
+      "slider slider";
+    gap: 4px 8px;
+    align-items: center;
+    font-size: 0.56rem;
+    font-weight: 700;
+    color: #334155;
+  }
+
+  .peripheral-diagram-touch-sensitivity-label {
+    grid-area: label;
+    min-width: 0;
+  }
+
+  .peripheral-diagram-touch-sensitivity input[type="range"] {
+    grid-area: slider;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .peripheral-diagram-touch-sensitivity-value {
+    grid-area: value;
+    justify-self: end;
+  }
+
+  .peripheral-diagram-touch-metrics {
+    line-height: 1.25;
+  }
+
+  .motor-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+  }
+
+  .motor-card {
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 18px;
+    padding: 1rem;
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.04), rgba(15, 23, 42, 0.01));
+  }
+
+  .motor-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.9rem;
+  }
+
+  .motor-card-header h3 {
+    margin: 0;
+  }
+
+  .motor-action-list {
+    display: grid;
+    gap: 0.85rem;
+  }
+
+  .motor-action-row {
+    display: grid;
+    grid-template-columns: minmax(120px, auto) minmax(0, 1fr);
+    gap: 0.75rem;
+    align-items: end;
+  }
+
+  .motor-action-row > button {
+    min-height: 42px;
+  }
+
+  .motor-direction-buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .motor-field-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 0.75rem;
+  }
+
+  .motor-field {
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .motor-field span {
+    font-size: 0.82rem;
+    color: var(--text-soft);
+  }
+
+  .motor-status {
+    margin: 0.9rem 0 0;
+    color: var(--text-soft);
+    font-size: 0.9rem;
+  }
+
+  @media (max-width: 720px) {
+    .motor-action-row {
+      grid-template-columns: 1fr;
+      align-items: stretch;
+    }
   }
 
   .peripheral-diagram-divider-block {

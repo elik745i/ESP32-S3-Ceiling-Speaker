@@ -30,6 +30,8 @@ export function createStatusRenderModule({
   maybeRefreshVisibleStorageTab,
   isGpioUiInteracting,
   renderGpioOverview,
+  renderPeripheralDiagram,
+  renderMotorTab,
   updateStoragePreviewProgressUi,
   showUpdateAvailablePopup,
   startFirmwareProgressPolling,
@@ -258,6 +260,10 @@ export function createStatusRenderModule({
     if (!isGpioUiInteracting()) {
       renderGpioOverview();
     }
+    if (!state.peripheralDiagramDrag) {
+      renderPeripheralDiagram();
+    }
+    renderMotorTab?.();
     updateStoragePreviewProgressUi();
 
     const previousUpdateVersion = String(previousStatus?.ota?.latestVersion || previousStatus?.otaManager?.latestVersion || "");

@@ -44,6 +44,10 @@ String otaStateTopic(const SettingsBundle& settings) {
     return settings.mqtt.baseTopic + "/state/ota";
 }
 
+String motorStateTopic(const SettingsBundle& settings) {
+    return settings.mqtt.baseTopic + "/state/motor";
+}
+
 #ifdef APP_ENABLE_HACS_MQTT
 String hacsMediaPlayerDiscoveryTopic(const SettingsBundle& settings) {
     return baseDiscoveryPrefix() + "/media_player/" + settings.device.deviceName + "/config";
@@ -129,13 +133,14 @@ String discoveryPayloadSwitch(const SettingsBundle& settings, const char* object
     return out;
 }
 
-String discoveryPayloadNumber(const SettingsBundle& settings, const char* objectId, const char* name, const char* stateTopic, const char* commandTopicValue, int minValue, int maxValue, int step, const char* unit, const char* icon, const String& configurationUrl) {
+String discoveryPayloadNumber(const SettingsBundle& settings, const char* objectId, const char* name, const char* stateTopic, const char* commandTopicValue, int minValue, int maxValue, int step, const char* unit, const char* icon, const String& configurationUrl, const char* valueTemplate) {
     JsonDocument doc;
     doc["name"] = name;
     doc["uniq_id"] = entityUniqueId(settings, objectId);
     doc["stat_t"] = stateTopic;
     doc["cmd_t"] = commandTopicValue;
     doc["avty_t"] = availabilityTopic(settings);
+    if (valueTemplate != nullptr) doc["val_tpl"] = valueTemplate;
     doc["min"] = minValue;
     doc["max"] = maxValue;
     doc["step"] = step;

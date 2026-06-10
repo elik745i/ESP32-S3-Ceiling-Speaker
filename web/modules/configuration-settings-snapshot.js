@@ -14,6 +14,7 @@ export function createConfigurationSettingsSnapshotModule({
   normalizedPeripheralExpansionProfiles,
   normalizedPeripheralStorageProfiles,
   normalizedPeripheralCommunicationProfiles,
+  normalizedPeripheralPowerProfiles,
 }) {
   function mergeSettingsObjects(baseValue, overrideValue) {
     if (Array.isArray(overrideValue)) {
@@ -65,11 +66,13 @@ export function createConfigurationSettingsSnapshotModule({
     const audioProfiles = normalizedPeripheralAudioProfiles();
     const audioInProfiles = normalizedPeripheralAudioInProfiles();
     const displayProfiles = normalizedPeripheralDisplayProfiles();
+    const persistedUi = normalizeUiSettings(baseSettings.ui);
     snapshot.ui = normalizeUiSettings({
       gpioBoardAutodetect: Boolean(elements.gpioBoardAutodetect?.checked ?? true),
       gpioBoardSelection: String(elements.gpioBoardSelector?.value || ""),
       peripheralDiagramPositions: cloneSettingsObject(state.peripheralDiagramPositions || {}) || {},
       peripheralHelperBindings: cloneSettingsObject(state.peripheralHelperBindings || {}) || {},
+      motorRuntimeConfig: cloneSettingsObject(persistedUi.motorRuntimeConfig) || {},
       peripheralProfiles: {
         audioProfile: String(audioProfiles[0] || "none"),
         audioProfiles: [...audioProfiles],
@@ -83,6 +86,7 @@ export function createConfigurationSettingsSnapshotModule({
         expansions: [...normalizedPeripheralExpansionProfiles()],
         storage: normalizedPeripheralStorageProfiles(),
         communication: [...normalizedPeripheralCommunicationProfiles()],
+        power: [...normalizedPeripheralPowerProfiles()],
       },
     });
     return snapshot;

@@ -3,8 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ESP32 Notifier</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f172a'/%3E%3Cpath d='M18 45V19h18c8.3 0 14 4.9 14 12.5C50 39.8 44.3 45 36 45H18zm8-7h9.2c4.2 0 6.8-2.4 6.8-6.5 0-4-2.6-6.5-6.8-6.5H26V38z' fill='%23fff'/%3E%3C/svg%3E" sizes="any">
+  <title>ELMA IoT</title>
+  <link rel="icon" type="image/x-icon" href="/elma_iot_favicon.ico">
+  <link rel="icon" type="image/svg+xml" href="/elma_iot_logo.svg">
+  <link rel="apple-touch-icon" href="/elma_iot_apple_only.svg">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -30,15 +32,15 @@
             </button>
           </div>
         </div>
-        <h1 id="deviceTitle">ESP32 Notifier</h1>
+        <h1 id="deviceTitle">ELMA IoT</h1>
         <div class="hero-firmware" aria-label="Current firmware version">
           <div class="hero-firmware-line">
-            <span class="hero-firmware-label">FW</span>
+            <span class="hero-firmware-label">ELMA IoT FW</span>
             <span id="heroFirmwareVersion">-</span>
           </div>
           <div class="hero-firmware-meta">
             <span id="heroFirmwareChannel">(release)</span>
-            <a id="heroFirmwareAuthorLink" href="https://github.com/elik745i/ESP32-S3-Ceiling-Speaker" target="_blank" rel="noopener noreferrer">by Elnur Mehdiyev</a>
+            <a id="heroFirmwareAuthorLink" href="https://github.com/elma-iot/ELMA-IoT" target="_blank" rel="noopener noreferrer">by Elnur Mehdiyev</a>
           </div>
         </div>
       </div>
@@ -52,7 +54,17 @@
           <div class="stat-label">MQTT</div>
           <div class="stat-value" id="mqttPill">-</div>
         </div>
-        <div class="stat">
+        <div id="motorHeroStat" class="stat" hidden>
+          <div class="stat-label">Motor</div>
+          <div class="stat-value stat-value-playback" id="motorHero">
+            <div class="motor-hero-widget">
+              <div id="motorHeroState" class="motor-hero-state">Idle</div>
+              <div id="motorHeroMeta" class="motor-hero-meta">No motor channels configured.</div>
+              <div id="motorHeroControls" class="motor-hero-controls" hidden></div>
+            </div>
+          </div>
+        </div>
+        <div class="stat" hidden>
           <div class="stat-label">Playback</div>
           <div class="stat-value stat-value-playback" id="audioPill">
             <div class="playback-hero-widget">
@@ -66,7 +78,7 @@
             </div>
           </div>
         </div>
-        <div class="stat">
+        <div class="stat" hidden>
           <div class="stat-label">Battery</div>
           <div class="stat-value" id="batteryHero">-</div>
         </div>
@@ -75,14 +87,17 @@
 
     <div class="grid">
       <section class="panel panel-wide">
-        <div class="tabs" role="tablist" aria-label="Notifier tabs">
+        <div class="tabs" role="tablist" aria-label="ELMA IoT tabs">
           <button class="tab-button tab-button-icon tab-gpio" type="button" role="tab" aria-label="Configuration" data-tooltip="Configuration" title="Configuration" aria-selected="true" aria-controls="tab-gpio" data-tab="gpio">
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h4v4H6z"></path><path d="M14 6h4v4h-4z"></path><path d="M6 14h4v4H6z"></path><path d="M14 14h4v4h-4z"></path><path d="M10 8h4"></path><path d="M8 10v4"></path><path d="M16 10v4"></path><path d="M10 16h4"></path></svg>
           </button>
-          <button class="tab-button tab-button-icon tab-audio" type="button" role="tab" aria-label="Audio" data-tooltip="Audio" title="Audio" aria-selected="false" aria-controls="tab-playback" data-tab="playback">
+          <button id="motorTabButton" class="tab-button tab-button-icon tab-motor" type="button" role="tab" aria-label="Motor" data-tooltip="Motor" title="Motor" aria-selected="false" aria-controls="tab-motor" data-tab="motor" hidden>
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="8" height="8" rx="2"></rect><rect x="13" y="8" width="8" height="8" rx="2"></rect><path d="M11 12h2"></path><path d="M6 8V5"></path><path d="M18 8V5"></path><path d="M6 19v-3"></path><path d="M18 19v-3"></path></svg>
+          </button>
+          <button class="tab-button tab-button-icon tab-audio" type="button" role="tab" aria-label="Audio" data-tooltip="Audio" title="Audio" aria-selected="false" aria-controls="tab-playback" data-tab="playback" hidden>
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15h4l5 4V5l-5 4H5z"></path><path d="M18 9a4 4 0 0 1 0 6"></path><path d="M20.5 6.5a7.5 7.5 0 0 1 0 11"></path></svg>
           </button>
-          <button class="tab-button tab-button-icon tab-effects" type="button" role="tab" aria-label="Audio Effects" data-tooltip="Audio Effects" title="Audio Effects" aria-selected="false" aria-controls="tab-effects" data-tab="effects">
+          <button class="tab-button tab-button-icon tab-effects" type="button" role="tab" aria-label="Audio Effects" data-tooltip="Audio Effects" title="Audio Effects" aria-selected="false" aria-controls="tab-effects" data-tab="effects" hidden>
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18h3"></path><path d="M4 12h8"></path><path d="M4 6h13"></path><path d="M18 18h2"></path><path d="M15 12h5"></path><path d="M12 6h8"></path></svg>
           </button>
           <button class="tab-button tab-button-icon tab-wifi" type="button" role="tab" aria-label="Wi-Fi" data-tooltip="Wi-Fi" title="Wi-Fi" aria-selected="false" aria-controls="tab-wifi" data-tab="wifi">
@@ -91,13 +106,13 @@
           <button class="tab-button tab-button-icon tab-mqtt" type="button" role="tab" aria-label="MQTT" data-tooltip="MQTT" title="MQTT" aria-selected="false" aria-controls="tab-mqtt" data-tab="mqtt">
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8h12l3 3v7H3v-7z"></path><path d="M9 8V5h6v3"></path><path d="M9 13h.01"></path><path d="M12 13h.01"></path><path d="M15 13h.01"></path></svg>
           </button>
-          <button class="tab-button tab-button-icon tab-battery" type="button" role="tab" aria-label="Battery" data-tooltip="Battery" title="Battery" aria-selected="false" aria-controls="tab-battery" data-tab="battery">
+          <button class="tab-button tab-button-icon tab-battery" type="button" role="tab" aria-label="Battery" data-tooltip="Battery" title="Battery" aria-selected="false" aria-controls="tab-battery" data-tab="battery" hidden>
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="16" height="10" rx="2"></rect><path d="M21 10v4"></path><path d="M6 10h7"></path></svg>
           </button>
           <button class="tab-button tab-button-icon tab-device" type="button" role="tab" aria-label="Device" data-tooltip="Device" title="Device" aria-selected="false" aria-controls="tab-device" data-tab="device">
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2"></rect><path d="M10 6h4"></path><path d="M11 18h2"></path></svg>
           </button>
-          <button class="tab-button tab-button-icon tab-display" type="button" role="tab" aria-label="DISPLAY" data-tooltip="DISPLAY" title="DISPLAY" aria-selected="false" aria-controls="tab-oled" data-tab="oled">
+          <button class="tab-button tab-button-icon tab-display" type="button" role="tab" aria-label="DISPLAY" data-tooltip="DISPLAY" title="DISPLAY" aria-selected="false" aria-controls="tab-oled" data-tab="oled" hidden>
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2"></rect><path d="M9 20h6"></path><path d="M12 17v3"></path></svg>
           </button>
           <button class="tab-button tab-button-icon tab-hardware" type="button" role="tab" aria-label="Hardware Monitor" data-tooltip="Hardware Monitor" title="Hardware Monitor" aria-selected="false" aria-controls="tab-hardware" data-tab="hardware">
@@ -106,7 +121,7 @@
           <button class="tab-button tab-button-icon tab-storage-internal" type="button" role="tab" aria-label="Internal Storage" data-tooltip="Internal Storage" title="Internal Storage" aria-selected="false" aria-controls="tab-storage-internal" data-tab="storage-internal">
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14v10H5z"></path><path d="M8 10h8"></path><path d="M8 14h5"></path></svg>
           </button>
-          <button class="tab-button tab-button-icon tab-storage-external" type="button" role="tab" aria-label="External Storage" data-tooltip="External Storage" title="External Storage" aria-selected="false" aria-controls="tab-storage-external" data-tab="storage-external">
+          <button class="tab-button tab-button-icon tab-storage-external" type="button" role="tab" aria-label="External Storage" data-tooltip="External Storage" title="External Storage" aria-selected="false" aria-controls="tab-storage-external" data-tab="storage-external" hidden>
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h10l3 3v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"></path><path d="M9 13h6"></path><path d="M12 10v6"></path></svg>
           </button>
           <button class="tab-button tab-button-icon tab-firmware" type="button" role="tab" aria-label="Firmware" data-tooltip="Firmware" title="Firmware" aria-selected="false" aria-controls="tab-firmware" data-tab="firmware">
@@ -134,7 +149,7 @@
           <p class="note">Extras in this build: password reveal toggles, recent playback history, quick-copy current stream, and a firmware action dashboard.</p>
         </div>
 
-        <div id="tab-playback" class="tab-panel" role="tabpanel">
+        <div id="tab-playback" class="tab-panel" role="tabpanel" hidden>
           <h2>Audio</h2>
           <form id="playForm">
             <div class="radio-browser-card">
@@ -207,7 +222,7 @@
           <div class="firmware-list" id="recentPlaybackList"></div>
         </div>
 
-        <div id="tab-effects" class="tab-panel" role="tabpanel">
+        <div id="tab-effects" class="tab-panel" role="tabpanel" hidden>
           <div class="panel-head panel-head-inline">
             <h2>Audio Effects</h2>
             <button id="effectsReindexButton" type="button" class="secondary icon-only-button" aria-label="Reindex files" title="Reindex files">
@@ -382,7 +397,7 @@
           </form>
         </div>
 
-        <div id="tab-battery" class="tab-panel" role="tabpanel">
+        <div id="tab-battery" class="tab-panel" role="tabpanel" hidden>
           <h2>Battery</h2>
           <form>
             <div class="row">
@@ -459,6 +474,8 @@
             </div>
             <p class="note">On ESP32-S3 Super Mini / Zero style boards, the built-in WS2812 is typically on GPIO21. GPIO10 is the current external RGB default in this firmware.</p>
             <label class="check"><input id="lowBatterySleepToggle" form="settingsForm" name="device.lowBatterySleepEnabled" type="checkbox"> Deep sleep on low battery</label>
+            <label class="check"><input id="powerCycleFactoryResetToggle" form="settingsForm" name="device.powerCycleFactoryResetEnabled" type="checkbox"> Factory reset after 7 power cycles</label>
+            <label class="check"><input id="touchHoldFactoryResetToggle" form="settingsForm" name="device.touchHoldFactoryResetEnabled" type="checkbox"> Factory reset after 10-second touch hold</label>
             <label>Sleep Threshold <span id="lowBatterySleepThresholdValue">20%</span>
               <input id="lowBatterySleepThreshold" form="settingsForm" name="device.lowBatterySleepThresholdPercent" type="range" min="1" max="100" step="1">
             </label>
@@ -533,7 +550,7 @@
           <p class="note">Tell me what additional hardware details you want included here and I will wire them in.</p>
         </div>
 
-        <div id="tab-oled" class="tab-panel" role="tabpanel">
+        <div id="tab-oled" class="tab-panel" role="tabpanel" hidden>
           <h2>DISPLAY</h2>
           <form>
             <div class="row">
@@ -776,6 +793,12 @@
                 <div id="peripheralInputsList" class="peripheral-input-list" aria-label="Input peripheral profiles"></div>
               </div>
             </div>
+            <div class="gpio-controls-field gpio-controls-field-power">
+              <span class="gpio-controls-field-label">Power</span>
+              <div class="gpio-controls-field-main">
+                <div id="peripheralPowerList" class="peripheral-power-list" aria-label="Power peripheral profiles"></div>
+              </div>
+            </div>
             <div class="gpio-controls-field gpio-controls-field-controls">
               <span class="gpio-controls-field-label">Controls</span>
               <div class="gpio-controls-field-main">
@@ -869,12 +892,128 @@
           <p class="note">This layout follows the selected board profile and common breakout arrangement for that variant. Verify against your board silkscreen before wiring. These dropdowns now own the live firmware remap settings, and configurable functions are guarded so the same GPIO cannot be assigned twice.</p>
         </div>
 
+        <div id="tab-motor" class="tab-panel" role="tabpanel" hidden>
+          <h2>Motor</h2>
+          <p id="motorSummary" class="note">Select and wire a DRV8833 in Configuration to enable runtime motor controls.</p>
+          <div class="motor-grid">
+            <section class="motor-card" aria-labelledby="motorChannelATitle">
+              <div class="motor-card-header">
+                <h3 id="motorChannelATitle">Channel A</h3>
+              </div>
+              <div class="motor-action-list">
+                <div class="motor-action-row">
+                  <button id="motorChannelAForwardButton" type="button">Forward</button>
+                  <div class="motor-field-row">
+                    <label class="motor-field">
+                      <span>Run time ms</span>
+                      <input id="motorChannelAForwardDuration" type="number" min="100" step="100" value="5000">
+                    </label>
+                    <label class="motor-field">
+                      <span>Movement</span>
+                      <select id="motorChannelAForwardRole">
+                        <option value="none">None</option>
+                        <option value="opening">Opening</option>
+                        <option value="closing">Closing</option>
+                      </select>
+                    </label>
+                    <label class="motor-field">
+                      <span>Stop switch</span>
+                      <select id="motorChannelAForwardLimit">
+                        <option value="">No stop switch</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+                <div class="motor-action-row">
+                  <button id="motorChannelABackwardButton" type="button" class="secondary">Backward</button>
+                  <div class="motor-field-row">
+                    <label class="motor-field">
+                      <span>Run time ms</span>
+                      <input id="motorChannelABackwardDuration" type="number" min="100" step="100" value="5000">
+                    </label>
+                    <label class="motor-field">
+                      <span>Movement</span>
+                      <select id="motorChannelABackwardRole">
+                        <option value="none">None</option>
+                        <option value="opening">Opening</option>
+                        <option value="closing">Closing</option>
+                      </select>
+                    </label>
+                    <label class="motor-field">
+                      <span>Stop switch</span>
+                      <select id="motorChannelABackwardLimit">
+                        <option value="">No stop switch</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <p id="motorChannelAStatus" class="motor-status">IN1 and IN2 are not both assigned yet</p>
+            </section>
+            <section class="motor-card" aria-labelledby="motorChannelBTitle">
+              <div class="motor-card-header">
+                <h3 id="motorChannelBTitle">Channel B</h3>
+              </div>
+              <div class="motor-action-list">
+                <div class="motor-action-row">
+                  <button id="motorChannelBForwardButton" type="button">Forward</button>
+                  <div class="motor-field-row">
+                    <label class="motor-field">
+                      <span>Run time ms</span>
+                      <input id="motorChannelBForwardDuration" type="number" min="100" step="100" value="5000">
+                    </label>
+                    <label class="motor-field">
+                      <span>Movement</span>
+                      <select id="motorChannelBForwardRole">
+                        <option value="none">None</option>
+                        <option value="opening">Opening</option>
+                        <option value="closing">Closing</option>
+                      </select>
+                    </label>
+                    <label class="motor-field">
+                      <span>Stop switch</span>
+                      <select id="motorChannelBForwardLimit">
+                        <option value="">No stop switch</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+                <div class="motor-action-row">
+                  <button id="motorChannelBBackwardButton" type="button" class="secondary">Backward</button>
+                  <div class="motor-field-row">
+                    <label class="motor-field">
+                      <span>Run time ms</span>
+                      <input id="motorChannelBBackwardDuration" type="number" min="100" step="100" value="5000">
+                    </label>
+                    <label class="motor-field">
+                      <span>Movement</span>
+                      <select id="motorChannelBBackwardRole">
+                        <option value="none">None</option>
+                        <option value="opening">Opening</option>
+                        <option value="closing">Closing</option>
+                      </select>
+                    </label>
+                    <label class="motor-field">
+                      <span>Stop switch</span>
+                      <select id="motorChannelBBackwardLimit">
+                        <option value="">No stop switch</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <p id="motorChannelBStatus" class="motor-status">IN3 and IN4 are not both assigned yet</p>
+            </section>
+          </div>
+          <p class="note">Motor commands stop automatically when the configured duration expires or when the selected limit-switch input becomes active.</p>
+        </div>
+
         <div id="tab-storage-internal" class="tab-panel" role="tabpanel">
           <h2>Internal Storage</h2>
           <p class="note">Internal storage tab is ready. Tell me what you want included here and I will wire it in.</p>
         </div>
 
-        <div id="tab-storage-external" class="tab-panel" role="tabpanel">
+        <div id="tab-storage-external" class="tab-panel" role="tabpanel" hidden>
           <h2>External Storage</h2>
           <p class="note">Manage SD card melodies and folders here. The Hardware tab now reports storage status only.</p>
           <div class="storage-modal-shell storage-embedded-shell">

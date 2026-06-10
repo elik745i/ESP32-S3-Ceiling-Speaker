@@ -5,7 +5,7 @@ ESP32 Notifier v0.1.12
 - Kept UI-driven I2S remapping intact while enforcing safer OLED, battery, and audio pin conflict handling
 - Added Radio Browser station switching from the UI with smooth stream replacement using fade-out and fade-in on the existing audio path
 - Added top-card playback transport controls for previous station, play or stop, and next station
-- Kept OTA release discovery aligned with GitHub Releases asset naming for the `elik745i/ESP32-S3-Ceiling-Speaker` repository
+- Kept OTA release discovery aligned with GitHub Releases asset naming for the `elma-iot/ELMA-IoT` repository
 
 Release assets:
 

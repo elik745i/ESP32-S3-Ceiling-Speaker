@@ -20,8 +20,13 @@ void waitForSerialConsole(unsigned long timeoutMs = 1500) {
 #endif
 }
 
+void scheduleReboot(uint32_t delayMs);
+
 uint8_t activeStatusLedPin = DefaultConfig::STATUS_LED_PIN;
 bool statusLedInitialized = false;
+
+constexpr uint8_t kStatusLedBrightness = 24;
+constexpr unsigned long kApStatusLedBlinkIntervalMs = 1000UL;
 
 #if APP_STATUS_LED_IS_NEOPIXEL
 Adafruit_NeoPixel statusLedPixel(1, DefaultConfig::STATUS_LED_PIN, NEO_GRB + NEO_KHZ800);
@@ -34,12 +39,16 @@ void initializeStatusLed() {
     statusLedInitialized = true;
 }
 
-void writeStatusLed(bool on) {
+void writeStatusLedColor(uint8_t red, uint8_t green, uint8_t blue) {
     if (!statusLedInitialized) {
         return;
     }
-    statusLedPixel.setPixelColor(0, on ? statusLedPixel.Color(0, 24, 0) : 0);
+    statusLedPixel.setPixelColor(0, statusLedPixel.Color(red, green, blue));
     statusLedPixel.show();
+}
+
+void writeStatusLed(bool on) {
+    writeStatusLedColor(0, on ? kStatusLedBrightness : 0, 0);
 }
 
 #else
@@ -54,6 +63,10 @@ void writeStatusLed(bool on) {
         return;
     }
     digitalWrite(activeStatusLedPin, on ? HIGH : LOW);
+}
+
+void writeStatusLedColor(uint8_t red, uint8_t green, uint8_t blue) {
+    writeStatusLed(red != 0 || green != 0 || blue != 0);
 }
 
 #endif
@@ -71,6 +84,24 @@ void applyStatusLedPin(uint8_t pin) {
 #endif
     activeStatusLedPin = pin;
     initializeStatusLed();
+}
+
+bool apStatusLedBluePhase(unsigned long now) {
+    return ((now / kApStatusLedBlinkIntervalMs) % 2UL) != 0;
+}
+
+void updateStatusLedForNetwork(bool wifiConnected, bool apMode, unsigned long now = millis()) {
+    if (wifiConnected) {
+        writeStatusLedColor(0, 0, kStatusLedBrightness);
+        return;
+    }
+
+    if (apMode) {
+        writeStatusLedColor(0, 0, apStatusLedBluePhase(now) ? kStatusLedBrightness : 0);
+        return;
+    }
+
+    writeStatusLed(((now / 300UL) % 2) != 0);
 }
 
 }
@@ -143,6 +174,7 @@ void loop() {
 #include "battery_monitor.h"
 #include "display_manager.h"
 #include "mqtt_manager.h"
+#include "motor_control.h"
 #include "ota_manager.h"
 #include "playback_text.h"
 #include "psram_allocator.h"
@@ -286,11 +318,28 @@ struct RuntimeAudioAutomation {
 RuntimeAudioAutomation runtimeAudio;
 
 struct PhysicalButtonState {
+    int8_t configuredIndex = -1;
+    uint8_t controlSlot = 0;
     uint8_t pin = 0;
     const char* label = "";
+    String profileValue = "none";
+    bool limitSwitch = false;
+    bool normallyClosed = false;
+    bool limitSwitchUsesPullup = true;
+    bool limitSwitchActiveHigh = false;
+    bool nativeTouch = false;
+    bool touchSupported = false;
+    bool mainControlEnabled = false;
+    uint8_t sensitivityPercent = 55;
+    uint16_t touchRawValue = 0;
+    uint16_t touchBaselineValue = 0;
+    uint8_t touchPressCandidateCount = 0;
+    uint8_t touchReleaseCandidateCount = 0;
     bool lastSampledPressed = false;
     bool stablePressed = false;
+    bool holdResetTriggered = false;
     unsigned long lastTransitionAt = 0;
+    unsigned long pressedSinceAt = 0;
 };
 
 struct PlaybackHistoryEntry {
@@ -303,6 +352,8 @@ struct PlaybackHistoryEntry {
 bool rebootRequested = false;
 bool factoryResetRequested = false;
 unsigned long rebootAt = 0;
+unsigned long factoryResetLedBlinkUntil = 0;
+bool touchStatusLedOverrideActive = false;
 unsigned long lastHeapUpdateAt = 0;
 bool recoveryRebootScheduled = false;
 bool wokeFromDeepSleep = false;
@@ -327,15 +378,28 @@ bool transitionStateInitialized = false;
 bool otaPendingVerification = false;
 bool otaHealthConfirmed = false;
 unsigned long otaBootStartedAt = 0;
+bool powerCycleCounterClearArmed = false;
+unsigned long powerCycleCounterClearAt = 0;
+unsigned long lastInputPollAt = 0;
 String otaPendingVersion;
 String lastRolledBackVersion;
 String lastRollbackReason;
+uint32_t lastPublishedMotorStateVersion = 0;
 
 constexpr float kBatteryPercentEmptyVoltage = 3.2f;
 constexpr float kBatteryPercentFullVoltage = 4.2f;
+constexpr unsigned long kTouchFactoryResetHoldMs = 10000UL;
+constexpr unsigned long kFactoryResetLedBlinkIntervalMs = 500UL;
+constexpr unsigned long kFactoryResetLedSuccessWindowMs = 1500UL;
 constexpr unsigned long kLowBatteryWakeWindowMs = 30000UL;
 constexpr unsigned long kVolumePersistDelayMs = 750UL;
 constexpr unsigned long kButtonDebounceMs = 30UL;
+constexpr unsigned long kTouchDebounceMs = 20UL;
+constexpr unsigned long kInputPollIntervalMs = 4UL;
+constexpr uint8_t kDefaultTouchSensitivityPercent = 55;
+constexpr size_t kMaxPeripheralInputProfiles = 10;
+constexpr uint8_t kTouchPressCandidateSamples = 3;
+constexpr uint8_t kTouchReleaseCandidateSamples = 3;
 constexpr size_t kPlaybackHistoryLimit = 12;
 constexpr unsigned long kOtaHealthConfirmDelayMs = 8000UL;
 constexpr unsigned long kWapePulseDurationMs = 500UL;
@@ -345,12 +409,16 @@ constexpr uint8_t kStartupEffectMaxAttempts = 5;
 constexpr unsigned long kAmbientResumeDelayMs = 30000UL;
 constexpr unsigned long kRestartEffectForceDelayMs = 7000UL;
 constexpr unsigned long kEffectPreviewRetryDelayMs = 150UL;
+constexpr unsigned long kPowerCycleCounterClearDelayMs = 10000UL;
+constexpr uint8_t kPowerCycleFactoryResetThreshold = 7;
 
 constexpr char kOtaRollbackNamespace[] = "ota_state";
 constexpr char kOtaPendingVersionKey[] = "pend_ver";
 constexpr char kOtaPendingReasonKey[] = "pend_reason";
 constexpr char kOtaLastBadVersionKey[] = "bad_ver";
 constexpr char kOtaLastBadReasonKey[] = "bad_reason";
+constexpr char kPowerCycleNamespace[] = "boot_guard";
+constexpr char kPowerCycleCountKey[] = "pc_count";
 
 bool playRequest(const String& url, const String& label, const String& type, const String& source, String& error, bool addToHistory);
 void flushPendingSettingsNow();
@@ -536,11 +604,194 @@ bool parseStorageFileReference(const String& raw, StorageTarget& target, String&
     return true;
 }
 
-PhysicalButtonState button1 { DefaultConfig::BUTTON1_PIN, "Button 1" };
-PhysicalButtonState button2 { DefaultConfig::BUTTON2_PIN, "Button 2" };
+PhysicalButtonState button1 { -1, 0, DefaultConfig::BUTTON1_PIN, "Button 1" };
+PhysicalButtonState button2 { -1, 1, DefaultConfig::BUTTON2_PIN, "Button 2" };
+MotorController motorController;
 PlaybackHistoryEntry playbackHistory[kPlaybackHistoryLimit];
 size_t playbackHistoryCount = 0;
 int playbackHistoryIndex = -1;
+
+bool isNativeTouchProfileValue(const String& profileValue) {
+    String normalized = profileValue;
+    normalized.trim();
+    normalized.toLowerCase();
+    return normalized == "esp32-native-touch-pad";
+}
+
+bool isLimitSwitchProfileValue(const String& profileValue) {
+    String normalized = profileValue;
+    normalized.trim();
+    normalized.toLowerCase();
+    return normalized == "limit-switch";
+}
+
+bool isTouchCapablePin(uint8_t pin) {
+#if defined(CONFIG_IDF_TARGET_ESP32)
+    switch (pin) {
+        case 0:
+        case 2:
+        case 4:
+        case 12:
+        case 13:
+        case 14:
+        case 15:
+        case 27:
+        case 32:
+        case 33:
+            return true;
+        default:
+            return false;
+    }
+#elif defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+    return pin >= 1 && pin <= 14;
+#else
+    (void)pin;
+    return false;
+#endif
+}
+
+String peripheralInputProfileFromUi(size_t index) {
+    if (settings == nullptr) {
+        return String("none");
+    }
+
+    const String rawSelections = settings->ui.peripheralProfileSelections;
+    if (rawSelections.isEmpty()) {
+        return String("none");
+    }
+
+    JsonDocument document;
+    if (deserializeJson(document, rawSelections) != DeserializationError::Ok) {
+        return String("none");
+    }
+
+    JsonArrayConst inputs = document["inputs"].as<JsonArrayConst>();
+    if (inputs.isNull() || index >= inputs.size() || !inputs[index].is<const char*>()) {
+        return String("none");
+    }
+
+    String profile = inputs[index].as<const char*>();
+    profile.trim();
+    profile.toLowerCase();
+    return profile.isEmpty() ? String("none") : profile;
+}
+
+String peripheralInputHelperValue(size_t index, const char* key) {
+    if (settings == nullptr || key == nullptr || settings->ui.peripheralHelperBindings.isEmpty()) {
+        return "";
+    }
+
+    JsonDocument document;
+    if (deserializeJson(document, settings->ui.peripheralHelperBindings) != DeserializationError::Ok) {
+        return "";
+    }
+
+    const String slotKey = String("input:") + index;
+    JsonObjectConst slot = document[slotKey].as<JsonObjectConst>();
+    if (slot.isNull() || !slot[key].is<const char*>()) {
+        return "";
+    }
+
+    String value = slot[key].as<const char*>();
+    value.trim();
+    return value;
+}
+
+uint8_t configuredInputPin(size_t index, const String& profileValue, uint8_t fallbackPin) {
+    String rawValue;
+    if (isNativeTouchProfileValue(profileValue)) {
+        rawValue = peripheralInputHelperValue(index, "TOUCH");
+    } else if (isLimitSwitchProfileValue(profileValue)) {
+        rawValue = peripheralInputHelperValue(index, "COM");
+        if (rawValue.isEmpty()) {
+            rawValue = peripheralInputHelperValue(index, "SIG");
+        }
+    } else {
+        rawValue = peripheralInputHelperValue(index, "SIG");
+    }
+    const int numericPin = rawValue.isEmpty() ? -1 : rawValue.toInt();
+    if (numericPin < 0 || numericPin > 255) {
+        return fallbackPin;
+    }
+    return static_cast<uint8_t>(numericPin);
+}
+
+uint8_t configuredTouchSensitivity(size_t index) {
+    const String rawValue = peripheralInputHelperValue(index, "SENSITIVITY");
+    const int numericValue = rawValue.isEmpty() ? static_cast<int>(kDefaultTouchSensitivityPercent) : rawValue.toInt();
+    if (numericValue < 5) {
+        return 5;
+    }
+    if (numericValue > 100) {
+        return 100;
+    }
+    return static_cast<uint8_t>(numericValue);
+}
+
+bool configuredLimitSwitchNormallyClosed(size_t index) {
+    String contactValue = peripheralInputHelperValue(index, "CONTACT");
+    contactValue.trim();
+    contactValue.toUpperCase();
+    return contactValue == "NC";
+}
+
+bool configuredLimitSwitchSwitchedToVcc(size_t index) {
+    String sourceValue = peripheralInputHelperValue(index, "SOURCE");
+    sourceValue.trim();
+    sourceValue.toUpperCase();
+    return sourceValue == "VCC";
+}
+
+bool configuredTouchMainControlEnabled(size_t index) {
+    String flagValue = peripheralInputHelperValue(index, "MAIN_CONTROL");
+    flagValue.trim();
+    flagValue.toLowerCase();
+    return flagValue == "1" || flagValue == "true" || flagValue == "on" || flagValue == "yes";
+}
+
+void applyButtonProfileConfig(PhysicalButtonState& button, size_t index, uint8_t fallbackPin) {
+    button.configuredIndex = static_cast<int8_t>(index);
+    button.profileValue = peripheralInputProfileFromUi(index);
+    button.pin = configuredInputPin(index, button.profileValue, fallbackPin);
+    button.limitSwitch = isLimitSwitchProfileValue(button.profileValue);
+    button.normallyClosed = button.limitSwitch && configuredLimitSwitchNormallyClosed(index);
+    const bool switchedToVcc = button.limitSwitch && configuredLimitSwitchSwitchedToVcc(index);
+    button.limitSwitchUsesPullup = button.limitSwitch ? !switchedToVcc : true;
+    button.limitSwitchActiveHigh = button.limitSwitch ? (switchedToVcc != button.normallyClosed) : false;
+    button.nativeTouch = isNativeTouchProfileValue(button.profileValue);
+    button.touchSupported = button.nativeTouch && isTouchCapablePin(button.pin);
+    button.mainControlEnabled = button.nativeTouch && configuredTouchMainControlEnabled(index);
+    button.sensitivityPercent = configuredTouchSensitivity(index);
+    button.touchRawValue = 0;
+    button.touchBaselineValue = 0;
+    button.touchPressCandidateCount = 0;
+    button.touchReleaseCandidateCount = 0;
+    button.lastSampledPressed = false;
+    button.stablePressed = false;
+    button.holdResetTriggered = false;
+    button.pressedSinceAt = 0;
+}
+
+InputChannelSnapshot inputSnapshotFor(const PhysicalButtonState& button) {
+    InputChannelSnapshot snapshot;
+    snapshot.configuredIndex = button.configuredIndex;
+    snapshot.pin = button.pin;
+    snapshot.profile = button.profileValue;
+    snapshot.nativeTouch = button.nativeTouch;
+    snapshot.touchSupported = button.touchSupported;
+    snapshot.active = button.stablePressed;
+    snapshot.sensitivityPercent = button.sensitivityPercent;
+    snapshot.rawValue = button.touchRawValue;
+    snapshot.baselineValue = button.touchBaselineValue;
+    return snapshot;
+}
+
+void publishInputSnapshots() {
+    if (appState == nullptr) {
+        return;
+    }
+    appState->setInputs(inputSnapshotFor(button1), inputSnapshotFor(button2));
+}
 
 bool isBatterySamplingAllowed() {
     if (audioPlayer == nullptr) {
@@ -552,7 +803,82 @@ bool isBatterySamplingAllowed() {
 }
 
 bool isPhysicalButtonEnabled(const PhysicalButtonState& button) {
-    return !sdStorageUsesPin(button.pin);
+    return button.profileValue != "none" && !sdStorageUsesPin(button.pin);
+}
+
+void flashFactoryResetIndicator() {
+    writeStatusLedColor(kStatusLedBrightness, 0, 0);
+    delay(500);
+    writeStatusLed(false);
+}
+
+bool isAnyTouchInputPressed() {
+    return (button1.touchSupported && button1.stablePressed) || (button2.touchSupported && button2.stablePressed);
+}
+
+bool isFactoryResetLedBlinkActive(unsigned long now) {
+    return factoryResetLedBlinkUntil != 0 && static_cast<long>(now - factoryResetLedBlinkUntil) < 0;
+}
+
+void startFactoryResetLedBlink(unsigned long now, unsigned long durationMs = kFactoryResetLedSuccessWindowMs) {
+    factoryResetLedBlinkUntil = now + durationMs;
+}
+
+void serviceStatusLedOverrides(unsigned long now) {
+    if (isFactoryResetLedBlinkActive(now)) {
+        touchStatusLedOverrideActive = false;
+        const bool flashOn = ((now / kFactoryResetLedBlinkIntervalMs) % 2UL) == 0;
+        writeStatusLedColor(flashOn ? kStatusLedBrightness : 0, 0, 0);
+        return;
+    }
+    if (factoryResetLedBlinkUntil != 0) {
+        factoryResetLedBlinkUntil = 0;
+        touchStatusLedOverrideActive = false;
+        updateStatusLedForNetwork(wifiManager != nullptr && wifiManager->isConnected(), wifiManager != nullptr && wifiManager->isApMode(), now);
+        return;
+    }
+    if (isAnyTouchInputPressed()) {
+        touchStatusLedOverrideActive = true;
+        writeStatusLedColor(0, kStatusLedBrightness, 0);
+        return;
+    }
+    if (touchStatusLedOverrideActive) {
+        touchStatusLedOverrideActive = false;
+        updateStatusLedForNetwork(wifiManager != nullptr && wifiManager->isConnected(), wifiManager != nullptr && wifiManager->isApMode(), now);
+    }
+}
+
+void triggerTouchHoldFactoryReset(PhysicalButtonState& button) {
+    if (button.holdResetTriggered) {
+        return;
+    }
+
+    button.holdResetTriggered = true;
+    Serial.printf("[input] %s held on GPIO%u for %lu ms, triggering factory reset\n",
+                  button.label,
+                  static_cast<unsigned>(button.pin),
+                  static_cast<unsigned long>(kTouchFactoryResetHoldMs));
+    if (displayManager != nullptr) {
+        displayManager->showTemporaryCenterText("Factory Reset", 1500UL);
+    }
+    if (appState != nullptr) {
+        appState->setLastError("Touch hold reset: restoring default settings.");
+    }
+    factoryResetRequested = true;
+    scheduleReboot(kFactoryResetLedSuccessWindowMs + 250UL);
+}
+
+void serviceTouchHoldFactoryReset(PhysicalButtonState& button, unsigned long now) {
+    if (settings == nullptr || !settings->device.touchHoldFactoryResetEnabled ||
+        !button.mainControlEnabled ||
+        !button.nativeTouch || !button.touchSupported || !button.stablePressed || button.pressedSinceAt == 0 ||
+        rebootRequested || factoryResetRequested || button.holdResetTriggered) {
+        return;
+    }
+
+    if ((now - button.pressedSinceAt) >= kTouchFactoryResetHoldMs) {
+        triggerTouchHoldFactoryReset(button);
+    }
 }
 
 const char* resetReasonToString(esp_reset_reason_t reason) {
@@ -596,6 +922,54 @@ void removePreferenceIfPresent(Preferences& prefs, const char* key) {
     if (prefs.isKey(key)) {
         prefs.remove(key);
     }
+}
+
+bool isPowerCycleResetReason(esp_reset_reason_t reason) {
+    return reason == ESP_RST_POWERON || reason == ESP_RST_BROWNOUT;
+}
+
+void clearPowerCycleCounter() {
+    Preferences prefs;
+    if (!prefs.begin(kPowerCycleNamespace, false)) {
+        return;
+    }
+    removePreferenceIfPresent(prefs, kPowerCycleCountKey);
+    prefs.end();
+}
+
+uint8_t updatePowerCycleCounter(esp_reset_reason_t resetReason) {
+    Preferences prefs;
+    if (!prefs.begin(kPowerCycleNamespace, false)) {
+        return 0;
+    }
+
+    uint8_t count = 0;
+    if (isPowerCycleResetReason(resetReason)) {
+        count = prefs.getUChar(kPowerCycleCountKey, 0);
+        if (count < 255) {
+            count += 1;
+        }
+        prefs.putUChar(kPowerCycleCountKey, count);
+    } else {
+        removePreferenceIfPresent(prefs, kPowerCycleCountKey);
+    }
+
+    prefs.end();
+    return count;
+}
+
+void armPowerCycleCounterClear() {
+    powerCycleCounterClearArmed = true;
+    powerCycleCounterClearAt = millis() + kPowerCycleCounterClearDelayMs;
+}
+
+void maybeClearPowerCycleCounterAfterStableBoot() {
+    if (!powerCycleCounterClearArmed || static_cast<long>(millis() - powerCycleCounterClearAt) < 0) {
+        return;
+    }
+    clearPowerCycleCounter();
+    powerCycleCounterClearArmed = false;
+    Serial.println("[boot-guard] power-cycle counter cleared after stable uptime");
 }
 
 void storeRollbackPendingInfo(const String& version, const String& reason) {
@@ -1010,12 +1384,34 @@ String normalizedButtonAction(String action, const char* fallback) {
 
 String buttonActionFor(const PhysicalButtonState& button) {
     if (settings == nullptr) {
-        return button.pin == DefaultConfig::BUTTON1_PIN ? String(DefaultConfig::BUTTON1_DEFAULT_ACTION) : String(DefaultConfig::BUTTON2_DEFAULT_ACTION);
+        return button.controlSlot == 0 ? String(DefaultConfig::BUTTON1_DEFAULT_ACTION) : String(DefaultConfig::BUTTON2_DEFAULT_ACTION);
     }
 
-    return button.pin == DefaultConfig::BUTTON1_PIN
+    return button.controlSlot == 0
         ? normalizedButtonAction(settings->device.button1Action, DefaultConfig::BUTTON1_DEFAULT_ACTION)
         : normalizedButtonAction(settings->device.button2Action, DefaultConfig::BUTTON2_DEFAULT_ACTION);
+}
+
+int resolveMainControlInputIndex() {
+    for (size_t index = 0; index < kMaxPeripheralInputProfiles; ++index) {
+        const String profile = peripheralInputProfileFromUi(index);
+        if (isNativeTouchProfileValue(profile) && configuredTouchMainControlEnabled(index)) {
+            return static_cast<int>(index);
+        }
+    }
+    return -1;
+}
+
+int resolveSecondaryInputIndex(int excludedIndex, int fallbackIndex) {
+    for (size_t index = 0; index < kMaxPeripheralInputProfiles; ++index) {
+        if (static_cast<int>(index) == excludedIndex) {
+            continue;
+        }
+        if (peripheralInputProfileFromUi(index) != "none") {
+            return static_cast<int>(index);
+        }
+    }
+    return fallbackIndex;
 }
 
 String buttonActionDisplayLabel(const String& action) {
@@ -1075,25 +1471,58 @@ void showS3ButtonActionOnDisplay(const String& action) {
 
 void initializeButtons() {
     const unsigned long now = millis();
+    const uint8_t defaultButton1Pin = DefaultConfig::BUTTON1_PIN;
+    const uint8_t defaultButton2Pin = DefaultConfig::BUTTON2_PIN;
+    button1.controlSlot = 0;
+    button2.controlSlot = 1;
+    const int mainControlIndex = resolveMainControlInputIndex();
+    const int primaryIndex = mainControlIndex >= 0 ? mainControlIndex : 0;
+    const int secondaryIndex = resolveSecondaryInputIndex(primaryIndex, 1);
+    applyButtonProfileConfig(button1, static_cast<size_t>(primaryIndex), defaultButton1Pin);
+    applyButtonProfileConfig(button2, static_cast<size_t>(secondaryIndex), defaultButton2Pin);
+
     if (isPhysicalButtonEnabled(button1)) {
-        pinMode(button1.pin, INPUT_PULLDOWN);
-        button1.lastSampledPressed = digitalRead(button1.pin) == HIGH;
+        if (button1.touchSupported) {
+            button1.touchRawValue = touchRead(button1.pin);
+            button1.touchBaselineValue = button1.touchRawValue;
+            button1.lastSampledPressed = false;
+        } else if (button1.limitSwitch) {
+            pinMode(button1.pin, button1.limitSwitchUsesPullup ? INPUT_PULLUP : INPUT_PULLDOWN);
+            button1.lastSampledPressed = false;
+        } else {
+            pinMode(button1.pin, INPUT_PULLDOWN);
+            button1.lastSampledPressed = digitalRead(button1.pin) == HIGH;
+        }
     } else {
         pinMode(button1.pin, INPUT);
         button1.lastSampledPressed = false;
     }
     button1.stablePressed = button1.lastSampledPressed;
+    button1.holdResetTriggered = false;
+    button1.pressedSinceAt = button1.stablePressed ? now : 0;
     button1.lastTransitionAt = now;
 
     if (isPhysicalButtonEnabled(button2)) {
-        pinMode(button2.pin, INPUT_PULLDOWN);
-        button2.lastSampledPressed = digitalRead(button2.pin) == HIGH;
+        if (button2.touchSupported) {
+            button2.touchRawValue = touchRead(button2.pin);
+            button2.touchBaselineValue = button2.touchRawValue;
+            button2.lastSampledPressed = false;
+        } else if (button2.limitSwitch) {
+            pinMode(button2.pin, button2.limitSwitchUsesPullup ? INPUT_PULLUP : INPUT_PULLDOWN);
+            button2.lastSampledPressed = false;
+        } else {
+            pinMode(button2.pin, INPUT_PULLDOWN);
+            button2.lastSampledPressed = digitalRead(button2.pin) == HIGH;
+        }
     } else {
         pinMode(button2.pin, INPUT);
         button2.lastSampledPressed = false;
     }
     button2.stablePressed = button2.lastSampledPressed;
+    button2.holdResetTriggered = false;
+    button2.pressedSinceAt = button2.stablePressed ? now : 0;
     button2.lastTransitionAt = now;
+    publishInputSnapshots();
 }
 
 void rememberPlaybackSelection(const String& url, const String& label, const String& type, const String& source) {
@@ -1330,14 +1759,72 @@ bool executeButtonAction(const PhysicalButtonState& button, const String& action
     return false;
 }
 
+bool sampleButtonPressed(PhysicalButtonState& button) {
+    if (!button.touchSupported) {
+        button.touchRawValue = 0;
+        button.touchBaselineValue = 0;
+        button.touchPressCandidateCount = 0;
+        button.touchReleaseCandidateCount = 0;
+        const bool pinHigh = digitalRead(button.pin) == HIGH;
+        if (!button.limitSwitch) {
+            return pinHigh;
+        }
+        return pinHigh == button.limitSwitchActiveHigh;
+    }
+
+    const uint16_t rawValue = touchRead(button.pin);
+    button.touchRawValue = rawValue;
+    if (button.touchBaselineValue == 0 && rawValue > 0) {
+        button.touchBaselineValue = rawValue;
+    }
+
+    const uint16_t baseline = button.touchBaselineValue;
+    const uint16_t requiredDeltaBasisPoints = static_cast<uint16_t>(200U - ((static_cast<uint32_t>(button.sensitivityPercent) * 150U) / 100U));
+    const uint16_t requiredDelta = max<uint16_t>(32U, static_cast<uint16_t>((static_cast<uint32_t>(baseline) * requiredDeltaBasisPoints) / 10000U));
+    const uint16_t absoluteDelta = rawValue > baseline ? static_cast<uint16_t>(rawValue - baseline) : static_cast<uint16_t>(baseline - rawValue);
+    const bool candidatePressed = baseline > 0 && rawValue > 0 && absoluteDelta >= requiredDelta;
+
+    if (!button.stablePressed && rawValue > 0) {
+        const uint16_t settlingDelta = max<uint16_t>(6U, static_cast<uint16_t>(requiredDelta / 4U));
+        if (button.touchBaselineValue == 0) {
+            button.touchBaselineValue = rawValue;
+        } else if (!candidatePressed && absoluteDelta <= settlingDelta) {
+            button.touchBaselineValue = static_cast<uint16_t>((static_cast<uint32_t>(button.touchBaselineValue) * 31UL + rawValue + 16UL) / 32UL);
+        }
+    }
+
+    if (candidatePressed) {
+        if (button.touchPressCandidateCount < 255) {
+            button.touchPressCandidateCount += 1;
+        }
+        button.touchReleaseCandidateCount = 0;
+    } else {
+        button.touchPressCandidateCount = 0;
+        if (button.touchReleaseCandidateCount < 255) {
+            button.touchReleaseCandidateCount += 1;
+        }
+    }
+
+    if (button.stablePressed) {
+        return button.touchReleaseCandidateCount < kTouchReleaseCandidateSamples;
+    }
+    return button.touchPressCandidateCount >= kTouchPressCandidateSamples;
+}
+
 void pollPhysicalButton(PhysicalButtonState& button) {
     if (!isPhysicalButtonEnabled(button)) {
+        button.touchRawValue = 0;
+        button.touchBaselineValue = 0;
+        button.touchPressCandidateCount = 0;
+        button.touchReleaseCandidateCount = 0;
         button.lastSampledPressed = false;
         button.stablePressed = false;
+        button.holdResetTriggered = false;
+        button.pressedSinceAt = 0;
         return;
     }
 
-    const bool pressed = digitalRead(button.pin) == HIGH;
+    const bool pressed = sampleButtonPressed(button);
     const unsigned long now = millis();
 
     if (pressed != button.lastSampledPressed) {
@@ -1345,23 +1832,31 @@ void pollPhysicalButton(PhysicalButtonState& button) {
         button.lastTransitionAt = now;
     }
 
-    if ((now - button.lastTransitionAt) < kButtonDebounceMs || pressed == button.stablePressed) {
+    const unsigned long debounceMs = button.touchSupported ? kTouchDebounceMs : kButtonDebounceMs;
+    if ((now - button.lastTransitionAt) < debounceMs || pressed == button.stablePressed) {
+        serviceTouchHoldFactoryReset(button, now);
         return;
     }
 
     button.stablePressed = pressed;
     if (!button.stablePressed) {
+        button.pressedSinceAt = 0;
+        button.holdResetTriggered = false;
         return;
     }
+
+    button.pressedSinceAt = now;
+    button.holdResetTriggered = false;
 
     const String action = buttonActionFor(button);
     const bool handled = executeButtonAction(button, action);
     if (handled || action == "none") {
         showS3ButtonActionOnDisplay(action);
     }
-    Serial.printf("[input] %s on GPIO%u action=%s handled=%s\n",
+    Serial.printf("[input] %s on GPIO%u mode=%s action=%s handled=%s\n",
                   button.label,
                   static_cast<unsigned>(button.pin),
+                  button.touchSupported ? "touch" : (button.limitSwitch ? (button.normallyClosed ? "limit-nc" : "limit-no") : "gpio"),
                   action.c_str(),
                   handled ? "yes" : "no");
 }
@@ -1369,6 +1864,7 @@ void pollPhysicalButton(PhysicalButtonState& button) {
 void pollPhysicalButtons() {
     pollPhysicalButton(button1);
     pollPhysicalButton(button2);
+    publishInputSnapshots();
 }
 
 void enterLowBatteryDeepSleep(uint8_t batteryPercent, float voltage, const char* reason) {
@@ -1514,6 +2010,7 @@ bool initializeRuntimeObjects() {
 void applyRuntimeSettings() {
     applyStorageSettings(*settings);
     initializeButtons();
+    motorController.applySettings(*settings);
     appState->setDevice(settings->device.deviceName, settings->device.friendlyName, settings->usingSavedSettings);
     applyStatusLedPin(settings->device.statusLedPin);
     applyWapeTriggerPin(settings->oled.displayType == "wape" ? settings->oled.wapeTriggerPin : 0);
@@ -1561,7 +2058,7 @@ void applyRuntimeSettings() {
 
     // Repaint the current status immediately on the newly selected LED pin so
     // the pin change is visible right after Save Device Settings.
-    writeStatusLed((wifiManager->isConnected() && mqttManager->isConnected()) ? true : ((millis() / 300UL) % 2) != 0);
+    updateStatusLedForNetwork(wifiManager->isConnected(), wifiManager->isApMode());
 }
 
 bool saveSettingsFromJson(JsonVariantConst root, String& error) {
@@ -1675,6 +2172,54 @@ bool payloadEnablesSwitch(const String& value, bool& enabled) {
     }
 
     return false;
+}
+
+uint32_t clampPersistedMotorDuration(uint32_t durationMs) {
+    if (durationMs < 100U) {
+        return 5000U;
+    }
+    return durationMs > 600000U ? 600000U : durationMs;
+}
+
+bool updateMotorRuntimeDurationSetting(int8_t channelIndex, bool forward, uint32_t durationMs, String& error) {
+    if (settings == nullptr || settingsManager == nullptr || mqttManager == nullptr) {
+        error = "Motor settings are unavailable.";
+        return false;
+    }
+    if (channelIndex < 0 || channelIndex > 1) {
+        error = "Unknown motor channel.";
+        return false;
+    }
+
+    JsonDocument document;
+    deserializeJson(document, settings->ui.motorRuntimeConfig.isEmpty() ? String("{}") : settings->ui.motorRuntimeConfig);
+    const char* channelKey = channelIndex == 0 ? "a" : "b";
+    const char* directionKey = forward ? "forward" : "backward";
+    JsonObject channel = document[channelKey].to<JsonObject>();
+    JsonObject direction = channel[directionKey].to<JsonObject>();
+    direction["durationMs"] = clampPersistedMotorDuration(durationMs);
+
+    String serialized;
+    serializeJson(document.as<JsonObjectConst>(), serialized);
+    settings->ui.motorRuntimeConfig = serialized;
+    settingsManager->save(*settings);
+    mqttManager->applySettings(*settings);
+    error = "";
+    return true;
+}
+
+void publishMotorStateIfNeeded() {
+    if (mqttManager == nullptr || !mqttManager->isConnected()) {
+        return;
+    }
+
+    const uint32_t currentVersion = motorController.stateVersion();
+    if (currentVersion == lastPublishedMotorStateVersion) {
+        return;
+    }
+
+    lastPublishedMotorStateVersion = currentVersion;
+    mqttManager->publishState();
 }
 
 void handleMqttCommand(const PlaybackCommand& command) {
@@ -1814,6 +2359,23 @@ void executePlaybackCommand(const PlaybackCommand& command) {
         mqttManager->publishState();
     } else if (command.action == "display_trigger") {
         triggerWapeDisplay();
+    } else if (command.action == "motor_run") {
+        String error;
+        if (motorController.runChannel(static_cast<uint8_t>(command.motorChannelIndex), command.motorForward, command.motorDurationMs, command.motorLimitInputIndex, error)) {
+            appState->setLastError("");
+        } else {
+            appState->setLastError(error.isEmpty() ? String("Motor command failed.") : error);
+        }
+        mqttManager->publishState();
+        lastPublishedMotorStateVersion = motorController.stateVersion();
+    } else if (command.action == "motor_set_duration") {
+        String error;
+        if (updateMotorRuntimeDurationSetting(command.motorChannelIndex, command.motorForward, command.motorDurationMs, error)) {
+            appState->setLastError("");
+        } else {
+            appState->setLastError(error.isEmpty() ? String("Motor duration update failed.") : error);
+        }
+        mqttManager->publishState();
     } else if (command.action == "volume") {
         settings->device.savedVolumePercent = command.volumePercent;
         audioPlayer->setVolumePercent(command.volumePercent);
@@ -2009,6 +2571,28 @@ void setup() {
 
     settingsManager->begin();
     *settings = settingsManager->load();
+    if (settings->device.powerCycleFactoryResetEnabled) {
+        const uint8_t powerCycleCount = updatePowerCycleCounter(resetReason);
+        if (powerCycleCount > 0) {
+            Serial.printf("[boot-guard] power-cycle count=%u/%u\n",
+                          static_cast<unsigned>(powerCycleCount),
+                          static_cast<unsigned>(kPowerCycleFactoryResetThreshold));
+        }
+        if (powerCycleCount >= kPowerCycleFactoryResetThreshold) {
+            Serial.println("[boot-guard] factory reset triggered by repeated power cycles");
+            flashFactoryResetIndicator();
+            settingsManager->reset();
+            clearPowerCycleCounter();
+            Serial.flush();
+            delay(200);
+            ESP.restart();
+        }
+        if (powerCycleCount > 0) {
+            armPowerCycleCounterClear();
+        }
+    } else {
+        clearPowerCycleCounter();
+    }
     beginStorageBackends(*settings);
     activeStatusLedPin = settings->device.statusLedPin;
     activeWapeTriggerPin = settings->oled.displayType == "wape" ? settings->oled.wapeTriggerPin : 0;
@@ -2051,7 +2635,22 @@ void setup() {
     refreshRollbackStateInOtaManager();
     otaManager->setProgressCallback(pumpOtaDisplayProgress);
 
-    mqttManager->begin(*settings, *appState, *wifiManager, *otaManager, handleMqttCommand);
+    mqttManager->begin(*settings, *appState, *wifiManager, *otaManager, handleMqttCommand, [](JsonObject root) {
+        if (motorController.available()) {
+            motorController.appendStatus(root);
+        } else {
+            root["available"] = false;
+        }
+    });
+    motorController.begin([](int8_t limitInputIndex) {
+        if (button1.configuredIndex == limitInputIndex) {
+            return button1.stablePressed;
+        }
+        if (button2.configuredIndex == limitInputIndex) {
+            return button2.stablePressed;
+        }
+        return false;
+    });
 
     webServer->begin(
         *appState,
@@ -2101,6 +2700,18 @@ void setup() {
             deferredActions->mqttConnectionChangePending = true;
             error = "";
             return true;
+        },
+        [](uint8_t channelIndex, bool forward, uint32_t durationMs, int8_t limitInputIndex, String& error) {
+            if (!motorController.available()) {
+                error = "DRV8833 control is not configured.";
+                return false;
+            }
+            return motorController.runChannel(channelIndex, forward, durationMs, limitInputIndex, error);
+        },
+        [](JsonObject root) {
+            if (motorController.available()) {
+                motorController.appendStatus(root);
+            }
         },
         []() { triggerWapeDisplay(); },
         []() {
@@ -2438,9 +3049,15 @@ void loop() {
         return;
     }
 
+    const unsigned long now = millis();
     processDeferredActions();
     serviceWapeTriggerPulse();
-    pollPhysicalButtons();
+    if (now - lastInputPollAt >= kInputPollIntervalMs) {
+        lastInputPollAt = now;
+        pollPhysicalButtons();
+    }
+    motorController.loop();
+    publishMotorStateIfNeeded();
     wifiManager->loop();
     serviceAudioDiagnosticTest();
     audioPlayer->loop();
@@ -2457,12 +3074,13 @@ void loop() {
     confirmOtaHealthIfReady();
 
     publishOtaStateIfNeeded(snapshot);
+    maybeClearPowerCycleCounterAfterStableBoot();
 
     if (millis() - lastHeapUpdateAt > 2000UL) {
         lastHeapUpdateAt = millis();
         sampleSystemMetrics();
         appState->setFreeHeap(getSystemMetricsSnapshot().freeHeapBytes);
-        writeStatusLed((wifiManager->isConnected() && mqttManager->isConnected()) ? true : ((millis() / 300UL) % 2) != 0);
+        updateStatusLedForNetwork(wifiManager->isConnected(), wifiManager->isApMode());
     }
 
     if (batteryUpdated) {
@@ -2473,8 +3091,16 @@ void loop() {
 
     if (factoryResetRequested) {
         settingsManager->reset();
+        startFactoryResetLedBlink(millis());
+        const unsigned long minimumRebootAt = millis() + kFactoryResetLedSuccessWindowMs;
+        if (!rebootRequested || static_cast<long>(rebootAt - minimumRebootAt) < 0) {
+            rebootRequested = true;
+            rebootAt = minimumRebootAt;
+        }
         factoryResetRequested = false;
     }
+
+    serviceStatusLedOverrides(millis());
 
     if (!recoveryRebootScheduled && wifiManager->shouldRebootForRecovery()) {
         recoveryRebootScheduled = true;
@@ -2495,6 +3121,8 @@ void loop() {
     if (rebootRequested && static_cast<long>(millis() - rebootAt) >= 0) {
         ESP.restart();
     }
+
+    delay(1);
 }
 
 #endif

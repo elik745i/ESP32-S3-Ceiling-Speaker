@@ -51,6 +51,23 @@ struct SettingsSnapshot {
     bool usingSaved = false;
 };
 
+struct InputChannelSnapshot {
+    int8_t configuredIndex = -1;
+    uint8_t pin = 0;
+    String profile = "none";
+    bool nativeTouch = false;
+    bool touchSupported = false;
+    bool active = false;
+    uint8_t sensitivityPercent = 55;
+    uint16_t rawValue = 0;
+    uint16_t baselineValue = 0;
+};
+
+struct InputSnapshot {
+    InputChannelSnapshot button1;
+    InputChannelSnapshot button2;
+};
+
 struct SystemSnapshot {
     uint32_t freeHeap = 0;
     String lastError;
@@ -63,6 +80,7 @@ struct AppStateSnapshot {
     OtaSnapshot ota;
     DeviceSnapshot device;
     SettingsSnapshot settings;
+    InputSnapshot input;
     SystemSnapshot system;
 };
 
@@ -79,6 +97,7 @@ class AppState {
     void setBattery(float voltage, float rawAdcVoltage, uint16_t rawAdc, bool charging);
     void setOta(bool busy, bool updateAvailable, const String& latestVersion, const String& lastResult, const String& lastError,
                 const String& phase = "", uint8_t progressPercent = 0);
+    void setInputs(const InputChannelSnapshot& button1, const InputChannelSnapshot& button2);
     void setLastError(const String& lastError);
     void setFreeHeap(uint32_t freeHeap);
     AppStateSnapshot snapshot() const;

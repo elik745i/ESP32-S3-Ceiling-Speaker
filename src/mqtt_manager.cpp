@@ -34,6 +34,178 @@ const char* mqttBinaryPayload(bool enabled) {
     return enabled ? "ON" : "OFF";
 }
 
+constexpr uint32_t kDefaultMotorDurationMs = 5000;
+constexpr uint32_t kMinimumMotorDurationMs = 100;
+constexpr uint32_t kMaximumMotorDurationMs = 600000;
+
+uint32_t clampMotorDurationMs(uint32_t durationMs) {
+    if (durationMs < kMinimumMotorDurationMs) {
+        return kDefaultMotorDurationMs;
+    }
+    return durationMs > kMaximumMotorDurationMs ? kMaximumMotorDurationMs : durationMs;
+}
+
+const char* motorChannelSuffix(uint8_t channelIndex) {
+    return channelIndex == 0 ? "channel_a" : "channel_b";
+}
+
+const char* motorChannelLabel(uint8_t channelIndex) {
+    return channelIndex == 0 ? "Channel A" : "Channel B";
+}
+
+struct MotorDirectionConfig {
+    uint32_t durationMs = kDefaultMotorDurationMs;
+    int8_t limitInputIndex = -1;
+};
+
+struct MotorChannelConfig {
+    MotorDirectionConfig open;
+    MotorDirectionConfig close;
+};
+
+struct MqttFeatureFlags {
+    bool audio = false;
+    bool battery = false;
+    bool display = false;
+    bool storage = false;
+    bool motor = false;
+    bool motorChannels[2] = {false, false};
+};
+
+String normalizedProfileName(String value) {
+    value.trim();
+    value.toLowerCase();
+    return value.isEmpty() ? String("none") : value;
+}
+
+bool hasConfiguredProfile(JsonVariantConst variant) {
+    if (variant.isNull()) {
+        return false;
+    }
+    if (variant.is<JsonArrayConst>()) {
+        for (JsonVariantConst entry : variant.as<JsonArrayConst>()) {
+            if (hasConfiguredProfile(entry)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    return normalizedProfileName(String(static_cast<const char*>(variant | "none"))) != "none";
+}
+
+bool hasBatterySensorProfile(JsonVariantConst variant) {
+    if (!variant.is<JsonArrayConst>()) {
+        return false;
+    }
+    for (JsonVariantConst entry : variant.as<JsonArrayConst>()) {
+        if (normalizedProfileName(String(static_cast<const char*>(entry | "none"))) == "battery-voltage-divider-220k") {
+            return true;
+        }
+    }
+    return false;
+}
+
+MqttFeatureFlags configuredMqttFeatures(const SettingsBundle& settings, const MqttManager::MotorStatusAppender& motorStatusAppender) {
+    MqttFeatureFlags flags;
+
+    JsonDocument profilesDoc;
+    deserializeJson(profilesDoc, settings.ui.peripheralProfileSelections.isEmpty() ? String("{}") : settings.ui.peripheralProfileSelections);
+    JsonObjectConst profiles = profilesDoc.as<JsonObjectConst>();
+
+    flags.audio = settings.audio.enabled && (hasConfiguredProfile(profiles["audioProfiles"]) || hasConfiguredProfile(profiles["audioProfile"]));
+    flags.display = hasConfiguredProfile(profiles["displayProfiles"]) || hasConfiguredProfile(profiles["displayProfile"]);
+    flags.storage = settings.sd.enabled && hasConfiguredProfile(profiles["storage"]);
+    flags.battery = settings.battery.adcPin > 0 && hasBatterySensorProfile(profiles["sensors"]);
+
+    if (motorStatusAppender != nullptr) {
+        JsonDocument motorDoc;
+        motorStatusAppender(motorDoc.to<JsonObject>());
+        if (motorDoc["available"].isNull() || (motorDoc["available"] | false)) {
+            JsonArrayConst channels = motorDoc["channels"].as<JsonArrayConst>();
+            for (uint8_t channelIndex = 0; channelIndex < 2 && channelIndex < channels.size(); ++channelIndex) {
+                JsonObjectConst channel = channels[channelIndex].as<JsonObjectConst>();
+                flags.motorChannels[channelIndex] = !channel.isNull() && (channel["configured"] | false);
+                flags.motor = flags.motor || flags.motorChannels[channelIndex];
+            }
+        }
+    }
+
+    return flags;
+}
+
+String mqttFeatureLayoutSignature(const SettingsBundle& settings) {
+    String signature = settings.ui.peripheralProfileSelections;
+    signature += "|";
+    signature += settings.ui.peripheralHelperBindings;
+    signature += "|";
+    signature += settings.audio.enabled ? "1" : "0";
+    signature += "|";
+    signature += String(settings.battery.adcPin);
+    signature += "|";
+    signature += settings.sd.enabled ? "1" : "0";
+    return signature;
+}
+
+MotorChannelConfig readMotorChannelConfig(const SettingsBundle& settings, const char* channelKey) {
+    MotorChannelConfig config;
+    JsonDocument document;
+    if (deserializeJson(document, settings.ui.motorRuntimeConfig.isEmpty() ? String("{}") : settings.ui.motorRuntimeConfig) != DeserializationError::Ok) {
+        return config;
+    }
+
+    JsonObjectConst channel = document[channelKey].as<JsonObjectConst>();
+    if (channel.isNull()) {
+        return config;
+    }
+
+    auto readDirection = [](JsonObjectConst channelObject, const char* directionKey, MotorDirectionConfig& directionConfig) {
+        JsonObjectConst direction = channelObject[directionKey].as<JsonObjectConst>();
+        if (direction.isNull()) {
+            return;
+        }
+        directionConfig.durationMs = clampMotorDurationMs(direction["durationMs"] | directionConfig.durationMs);
+        if (!direction["limitInputIndex"].isNull()) {
+            directionConfig.limitInputIndex = static_cast<int8_t>(direction["limitInputIndex"].as<int>());
+        }
+    };
+
+    readDirection(channel, "forward", config.open);
+    readDirection(channel, "backward", config.close);
+    return config;
+}
+
+uint32_t parseMotorDurationPayload(const String& payloadValue) {
+    if (payloadValue.startsWith("{")) {
+        JsonDocument doc;
+        if (deserializeJson(doc, payloadValue) == DeserializationError::Ok) {
+            return clampMotorDurationMs(doc["durationMs"] | doc["duration"] | doc["value"] | kDefaultMotorDurationMs);
+        }
+    }
+    return clampMotorDurationMs(static_cast<uint32_t>(payloadValue.toInt()));
+}
+
+void appendMotorConfig(JsonObject root, const SettingsBundle& settings) {
+    JsonArray channels = root["channels"].as<JsonArray>();
+    if (channels.isNull()) {
+        return;
+    }
+
+    const MotorChannelConfig configs[] = {
+        readMotorChannelConfig(settings, "a"),
+        readMotorChannelConfig(settings, "b"),
+    };
+    for (uint8_t channelIndex = 0; channelIndex < 2 && channelIndex < channels.size(); ++channelIndex) {
+        JsonObject channel = channels[channelIndex].as<JsonObject>();
+        if (channel.isNull()) {
+            continue;
+        }
+        channel["openDurationMs"] = configs[channelIndex].open.durationMs;
+        channel["closeDurationMs"] = configs[channelIndex].close.durationMs;
+        channel["openLimitInputIndex"] = configs[channelIndex].open.limitInputIndex;
+        channel["closeLimitInputIndex"] = configs[channelIndex].close.limitInputIndex;
+    }
+}
+
 String normalizeMediaType(const String& value, bool announce) {
     String mediaType = value;
     mediaType.trim();
@@ -103,11 +275,12 @@ String hacsVolumePayload(uint8_t volumePercent) {
 #endif
 }  // namespace
 
-void MqttManager::begin(const SettingsBundle& settings, AppState& appState, WiFiManager& wifiManager, OtaManager& otaManager, CommandHandler commandHandler) {
+void MqttManager::begin(const SettingsBundle& settings, AppState& appState, WiFiManager& wifiManager, OtaManager& otaManager, CommandHandler commandHandler, MotorStatusAppender motorStatusAppender) {
     appState_ = &appState;
     wifiManager_ = &wifiManager;
     otaManager_ = &otaManager;
     commandHandler_ = commandHandler;
+    motorStatusAppender_ = motorStatusAppender;
     wifiWasConnected_ = wifiManager.isConnected();
 
     client_.onConnect([this](bool sessionPresent) { handleConnected(sessionPresent); });
@@ -124,7 +297,8 @@ void MqttManager::applySettings(const SettingsBundle& settings) {
     const bool discoverySettingsChanged = !configured_ ||
         settings_.mqtt.discoveryEnabled != settings.mqtt.discoveryEnabled ||
         settings_.device.friendlyName != settings.device.friendlyName ||
-        settings_.mqtt.baseTopic != settings.mqtt.baseTopic;
+        settings_.mqtt.baseTopic != settings.mqtt.baseTopic ||
+        mqttFeatureLayoutSignature(settings_) != mqttFeatureLayoutSignature(settings);
     const bool needsReconfigure = !configured_ || mqttReconnectRequired(settings_, settings) || !client_.connected();
     settings_ = settings;
     if (settings_.mqtt.host.isEmpty()) {
@@ -141,7 +315,7 @@ void MqttManager::applySettings(const SettingsBundle& settings) {
     }
 
     if (client_.connected()) {
-        if (settings_.mqtt.discoveryEnabled && !discoveryPublishedForSession_) {
+        if (settings_.mqtt.discoveryEnabled && (discoverySettingsChanged || !discoveryPublishedForSession_)) {
             discoveryPublishPending_ = true;
         }
         statePublishPending_ = true;
@@ -257,31 +431,52 @@ void MqttManager::handleConnected(bool sessionPresent) {
     if (appState_ != nullptr) {
         appState_->setMqttConnected(true);
     }
+    const MqttFeatureFlags featureFlags = configuredMqttFeatures(settings_, motorStatusAppender_);
     client_.publish(HaBridge::availabilityTopic(settings_).c_str(), 1, true, "online");
-    client_.subscribe(HaBridge::commandTopic(settings_, "play").c_str(), 1);
-    client_.subscribe(HaBridge::commandTopic(settings_, "tts").c_str(), 1);
-    client_.subscribe(HaBridge::commandTopic(settings_, "stop").c_str(), 1);
-    client_.subscribe(HaBridge::commandTopic(settings_, "volume").c_str(), 1);
-    client_.subscribe(HaBridge::commandTopic(settings_, "display_trigger").c_str(), 1);
-    client_.subscribe(HaBridge::commandTopic(settings_, "alarm").c_str(), 1);
-    client_.subscribe(HaBridge::commandTopic(settings_, "notify").c_str(), 1);
+    if (featureFlags.audio) {
+        client_.subscribe(HaBridge::commandTopic(settings_, "play").c_str(), 1);
+        client_.subscribe(HaBridge::commandTopic(settings_, "tts").c_str(), 1);
+        client_.subscribe(HaBridge::commandTopic(settings_, "stop").c_str(), 1);
+        client_.subscribe(HaBridge::commandTopic(settings_, "volume").c_str(), 1);
+        client_.subscribe(HaBridge::commandTopic(settings_, "alarm").c_str(), 1);
+        client_.subscribe(HaBridge::commandTopic(settings_, "notify").c_str(), 1);
+    }
+    if (featureFlags.display) {
+        client_.subscribe(HaBridge::commandTopic(settings_, "display_trigger").c_str(), 1);
+    }
     client_.subscribe(HaBridge::commandTopic(settings_, "web_ui").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "reboot").c_str(), 1);
-    client_.subscribe(HaBridge::commandTopic(settings_, "storage/sd_remount").c_str(), 1);
+    if (featureFlags.storage) {
+        client_.subscribe(HaBridge::commandTopic(settings_, "storage/sd_remount").c_str(), 1);
+    }
     client_.subscribe(HaBridge::commandTopic(settings_, "ota/check").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "ota/auto_update").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "ota/install").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "ota/select_version").c_str(), 1);
     client_.subscribe(HaBridge::commandTopic(settings_, "ota/install_version").c_str(), 1);
+    if (featureFlags.motorChannels[0]) {
+        client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_a/open").c_str(), 1);
+        client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_a/close").c_str(), 1);
+        client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_a/open/duration").c_str(), 1);
+        client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_a/close/duration").c_str(), 1);
+    }
+    if (featureFlags.motorChannels[1]) {
+        client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_b/open").c_str(), 1);
+        client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_b/close").c_str(), 1);
+        client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_b/open/duration").c_str(), 1);
+        client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_b/close/duration").c_str(), 1);
+    }
 #ifdef APP_ENABLE_HACS_MQTT
-    client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "play").c_str(), 1);
-    client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "pause").c_str(), 1);
-    client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "playpause").c_str(), 1);
-    client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "next").c_str(), 1);
-    client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "previous").c_str(), 1);
-    client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "stop").c_str(), 1);
-    client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "volume").c_str(), 1);
-    client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "playmedia").c_str(), 1);
+    if (featureFlags.audio) {
+        client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "play").c_str(), 1);
+        client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "pause").c_str(), 1);
+        client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "playpause").c_str(), 1);
+        client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "next").c_str(), 1);
+        client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "previous").c_str(), 1);
+        client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "stop").c_str(), 1);
+        client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "volume").c_str(), 1);
+        client_.subscribe(HaBridge::hacsMediaPlayerCommandTopic(settings_, "playmedia").c_str(), 1);
+    }
 #endif
     if (settings_.mqtt.discoveryEnabled && !discoveryPublishedForSession_) {
         discoveryPublishPending_ = true;
@@ -310,8 +505,12 @@ void MqttManager::handleMessage(char* topic, char* payload, AsyncMqttClientMessa
 
     const String topicValue = topic;
     const String payloadValue = payloadToString(payload, len);
+    const MqttFeatureFlags featureFlags = configuredMqttFeatures(settings_, motorStatusAppender_);
     PlaybackCommand command;
 #ifdef APP_ENABLE_HACS_MQTT
+    if (!featureFlags.audio && topicValue.startsWith(settings_.mqtt.baseTopic + "/hacs/cmd/")) {
+        return;
+    }
     if (topicValue == HaBridge::hacsMediaPlayerCommandTopic(settings_, "stop")) {
         command.action = "stop";
         commandHandler_(command);
@@ -348,12 +547,18 @@ void MqttManager::handleMessage(char* topic, char* payload, AsyncMqttClientMessa
 #endif
 
     if (topicValue == HaBridge::commandTopic(settings_, "stop")) {
+        if (!featureFlags.audio) {
+            return;
+        }
         command.action = "stop";
         commandHandler_(command);
         return;
     }
 
     if (topicValue == HaBridge::commandTopic(settings_, "volume")) {
+        if (!featureFlags.audio) {
+            return;
+        }
         command.action = "volume";
         if (payloadValue.startsWith("{")) {
             JsonDocument doc;
@@ -374,6 +579,9 @@ void MqttManager::handleMessage(char* topic, char* payload, AsyncMqttClientMessa
     }
 
     if (topicValue == HaBridge::commandTopic(settings_, "display_trigger")) {
+        if (!featureFlags.display) {
+            return;
+        }
         command.action = "display_trigger";
         command.payload = payloadValue;
         commandHandler_(command);
@@ -381,6 +589,9 @@ void MqttManager::handleMessage(char* topic, char* payload, AsyncMqttClientMessa
     }
 
     if (topicValue == HaBridge::commandTopic(settings_, "alarm")) {
+        if (!featureFlags.audio) {
+            return;
+        }
         String action = payloadValue;
         action.trim();
         action.toLowerCase();
@@ -390,6 +601,9 @@ void MqttManager::handleMessage(char* topic, char* payload, AsyncMqttClientMessa
     }
 
     if (topicValue == HaBridge::commandTopic(settings_, "notify")) {
+        if (!featureFlags.audio) {
+            return;
+        }
         command.action = "notify";
         command.payload = payloadValue;
         commandHandler_(command);
@@ -418,6 +632,9 @@ void MqttManager::handleMessage(char* topic, char* payload, AsyncMqttClientMessa
     }
 
     if (topicValue == HaBridge::commandTopic(settings_, "storage/sd_remount")) {
+        if (!featureFlags.storage) {
+            return;
+        }
         command.action = "sd_remount";
         command.payload = payloadValue;
         commandHandler_(command);
@@ -486,7 +703,42 @@ void MqttManager::handleMessage(char* topic, char* payload, AsyncMqttClientMessa
         return;
     }
 
+    for (uint8_t channelIndex = 0; channelIndex < 2; ++channelIndex) {
+        if (!featureFlags.motorChannels[channelIndex]) {
+            continue;
+        }
+        const String channelSuffix = motorChannelSuffix(channelIndex);
+        const MotorChannelConfig channelConfig = readMotorChannelConfig(settings_, channelIndex == 0 ? "a" : "b");
+        const String openTopic = HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/open").c_str());
+        const String closeTopic = HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/close").c_str());
+        const String openDurationTopic = HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/open/duration").c_str());
+        const String closeDurationTopic = HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/close/duration").c_str());
+
+        if (topicValue == openTopic || topicValue == closeTopic) {
+            command.action = "motor_run";
+            command.motorChannelIndex = static_cast<int8_t>(channelIndex);
+            command.motorForward = topicValue == openTopic;
+            const MotorDirectionConfig& directionConfig = command.motorForward ? channelConfig.open : channelConfig.close;
+            command.motorDurationMs = directionConfig.durationMs;
+            command.motorLimitInputIndex = directionConfig.limitInputIndex;
+            commandHandler_(command);
+            return;
+        }
+
+        if (topicValue == openDurationTopic || topicValue == closeDurationTopic) {
+            command.action = "motor_set_duration";
+            command.motorChannelIndex = static_cast<int8_t>(channelIndex);
+            command.motorForward = topicValue == openDurationTopic;
+            command.motorDurationMs = parseMotorDurationPayload(payloadValue);
+            commandHandler_(command);
+            return;
+        }
+    }
+
     if (command.action.isEmpty()) {
+        if (!featureFlags.audio) {
+            return;
+        }
         command.action = topicValue.endsWith("/tts") ? "tts" : "play";
     }
     if (payloadValue.startsWith("{")) {
@@ -552,15 +804,31 @@ void MqttManager::publishState() {
     }
     lastStatePublishAt_ = millis();
     const AppStateSnapshot snapshot = appState_->snapshot();
+    const MqttFeatureFlags featureFlags = configuredMqttFeatures(settings_, motorStatusAppender_);
 
-    JsonDocument playback;
-    playback["state"] = snapshot.playback.state;
-    playback["type"] = snapshot.playback.type;
-    playback["title"] = snapshot.playback.title;
-    playback["url"] = snapshot.playback.url;
-    playback["source"] = snapshot.playback.source;
-    playback["volumePercent"] = snapshot.playback.volumePercent;
-    publishJson(HaBridge::playbackStateTopic(settings_), playback, true);
+    auto clearRetainedTopic = [this](const String& topic) {
+        client_.publish(topic.c_str(), 1, true, "");
+    };
+
+    if (featureFlags.audio) {
+        JsonDocument playback;
+        playback["state"] = snapshot.playback.state;
+        playback["type"] = snapshot.playback.type;
+        playback["title"] = snapshot.playback.title;
+        playback["url"] = snapshot.playback.url;
+        playback["source"] = snapshot.playback.source;
+        playback["volumePercent"] = snapshot.playback.volumePercent;
+        publishJson(HaBridge::playbackStateTopic(settings_), playback, true);
+    } else {
+        clearRetainedTopic(HaBridge::playbackStateTopic(settings_));
+        clearRetainedTopic(settings_.mqtt.baseTopic + "/state/volume");
+#ifdef APP_ENABLE_HACS_MQTT
+        clearRetainedTopic(HaBridge::hacsMediaPlayerStateTopic(settings_, "state"));
+        clearRetainedTopic(HaBridge::hacsMediaPlayerStateTopic(settings_, "title"));
+        clearRetainedTopic(HaBridge::hacsMediaPlayerStateTopic(settings_, "mediatype"));
+        clearRetainedTopic(HaBridge::hacsMediaPlayerStateTopic(settings_, "volume"));
+#endif
+    }
 
     JsonDocument network;
     network["wifiConnected"] = snapshot.network.wifiConnected;
@@ -571,13 +839,20 @@ void MqttManager::publishState() {
     network["mqttConnected"] = snapshot.network.mqttConnected;
     publishJson(HaBridge::networkStateTopic(settings_), network, true);
 
-    JsonDocument battery;
-    battery["voltage"] = snapshot.battery.voltage;
-    battery["percent"] = batteryPercentFromVoltage(snapshot.battery.voltage);
-    battery["rawAdcVoltage"] = snapshot.battery.rawAdcVoltage;
-    battery["rawAdc"] = snapshot.battery.rawAdc;
-    battery["charging"] = snapshot.battery.charging;
-    publishJson(HaBridge::batteryStateTopic(settings_), battery, true);
+    if (featureFlags.battery) {
+        JsonDocument battery;
+        battery["voltage"] = snapshot.battery.voltage;
+        battery["percent"] = batteryPercentFromVoltage(snapshot.battery.voltage);
+        battery["rawAdcVoltage"] = snapshot.battery.rawAdcVoltage;
+        battery["rawAdc"] = snapshot.battery.rawAdc;
+        battery["charging"] = snapshot.battery.charging;
+        publishJson(HaBridge::batteryStateTopic(settings_), battery, true);
+    } else {
+        clearRetainedTopic(HaBridge::batteryStateTopic(settings_));
+        clearRetainedTopic(settings_.mqtt.baseTopic + "/state/battery_voltage");
+        clearRetainedTopic(settings_.mqtt.baseTopic + "/state/battery_percent");
+        clearRetainedTopic(settings_.mqtt.baseTopic + "/state/battery_charging");
+    }
 
     JsonDocument ota;
     if (otaManager_ != nullptr) {
@@ -613,24 +888,49 @@ void MqttManager::publishState() {
     }
     publishJson(HaBridge::otaStateTopic(settings_), ota, true);
 
+    if (featureFlags.motor && motorStatusAppender_ != nullptr) {
+        JsonDocument motor;
+        motorStatusAppender_(motor.to<JsonObject>());
+        if (!motor.isNull()) {
+            appendMotorConfig(motor.as<JsonObject>(), settings_);
+            publishJson(HaBridge::motorStateTopic(settings_), motor, true);
+        }
+    } else {
+        clearRetainedTopic(HaBridge::motorStateTopic(settings_));
+    }
+
     if (settings_.mqtt.discoveryEnabled && discoveryPublishedForSession_ && otaDiscoverySignature != lastOtaDiscoverySignature_) {
         publishDiscovery();
     }
 
-    client_.publish((settings_.mqtt.baseTopic + "/state/volume").c_str(), 1, true, String(snapshot.playback.volumePercent).c_str());
-    client_.publish((settings_.mqtt.baseTopic + "/state/battery_voltage").c_str(), 1, true, String(snapshot.battery.voltage, 3).c_str());
-    client_.publish((settings_.mqtt.baseTopic + "/state/battery_percent").c_str(), 1, true, String(batteryPercentFromVoltage(snapshot.battery.voltage)).c_str());
-    client_.publish((settings_.mqtt.baseTopic + "/state/battery_charging").c_str(), 1, true, mqttBinaryPayload(snapshot.battery.charging));
+    if (featureFlags.audio) {
+        client_.publish((settings_.mqtt.baseTopic + "/state/volume").c_str(), 1, true, String(snapshot.playback.volumePercent).c_str());
+    }
+    if (featureFlags.battery) {
+        client_.publish((settings_.mqtt.baseTopic + "/state/battery_voltage").c_str(), 1, true, String(snapshot.battery.voltage, 3).c_str());
+        client_.publish((settings_.mqtt.baseTopic + "/state/battery_percent").c_str(), 1, true, String(batteryPercentFromVoltage(snapshot.battery.voltage)).c_str());
+        client_.publish((settings_.mqtt.baseTopic + "/state/battery_charging").c_str(), 1, true, mqttBinaryPayload(snapshot.battery.charging));
+    }
 #ifdef APP_ENABLE_HACS_MQTT
-    client_.publish(HaBridge::hacsMediaPlayerStateTopic(settings_, "state").c_str(), 1, true, normalizedHacsPlaybackState(snapshot.playback.state).c_str());
-    client_.publish(HaBridge::hacsMediaPlayerStateTopic(settings_, "title").c_str(), 1, true, snapshot.playback.title.c_str());
-    client_.publish(HaBridge::hacsMediaPlayerStateTopic(settings_, "mediatype").c_str(), 1, true, normalizedHacsMediaType(snapshot.playback.type).c_str());
-    client_.publish(HaBridge::hacsMediaPlayerStateTopic(settings_, "volume").c_str(), 1, true, hacsVolumePayload(snapshot.playback.volumePercent).c_str());
+    if (featureFlags.audio) {
+        client_.publish(HaBridge::hacsMediaPlayerStateTopic(settings_, "state").c_str(), 1, true, normalizedHacsPlaybackState(snapshot.playback.state).c_str());
+        client_.publish(HaBridge::hacsMediaPlayerStateTopic(settings_, "title").c_str(), 1, true, snapshot.playback.title.c_str());
+        client_.publish(HaBridge::hacsMediaPlayerStateTopic(settings_, "mediatype").c_str(), 1, true, normalizedHacsMediaType(snapshot.playback.type).c_str());
+        client_.publish(HaBridge::hacsMediaPlayerStateTopic(settings_, "volume").c_str(), 1, true, hacsVolumePayload(snapshot.playback.volumePercent).c_str());
+    }
 #endif
 }
 
 void MqttManager::publishBattery(float voltage, float rawAdcVoltage, uint16_t rawAdc, bool charging) {
     if (!client_.connected()) {
+        return;
+    }
+    if (!configuredMqttFeatures(settings_, motorStatusAppender_).battery) {
+        client_.publish(HaBridge::batteryStateTopic(settings_).c_str(), 1, true, "");
+        client_.publish((settings_.mqtt.baseTopic + "/state/battery_voltage").c_str(), 1, true, "");
+        client_.publish((settings_.mqtt.baseTopic + "/state/battery_percent").c_str(), 1, true, "");
+        client_.publish((settings_.mqtt.baseTopic + "/state/battery_charging").c_str(), 1, true, "");
+        noteBrokerActivity();
         return;
     }
     JsonDocument battery;
@@ -651,8 +951,12 @@ void MqttManager::publishDiscovery() {
         return;
     }
     const String configurationUrl = currentConfigUrl();
+    const MqttFeatureFlags featureFlags = configuredMqttFeatures(settings_, motorStatusAppender_);
     std::vector<String> firmwareOptions;
     String otaDiscoverySignature = configurationUrl;
+    auto clearDiscoveryTopic = [this](const char* component, const char* objectId) {
+        client_.publish(HaBridge::discoveryTopic(settings_, component, objectId).c_str(), 1, true, "");
+    };
     if (otaManager_ != nullptr) {
         JsonDocument otaInfo;
         String ignoredError;
@@ -674,24 +978,34 @@ void MqttManager::publishDiscovery() {
             }
         }
     }
-    client_.publish(
-        HaBridge::discoveryTopic(settings_, "sensor", "battery_voltage").c_str(), 1, true,
-        HaBridge::discoveryPayloadSensor(settings_, "battery_voltage", "Battery Voltage", HaBridge::batteryStateTopic(settings_).c_str(), "{{ value_json.voltage | float(0) | round(2) }}", "V", "voltage", "measurement", "mdi:battery", 2, configurationUrl).c_str());
-    client_.publish(
-        HaBridge::discoveryTopic(settings_, "sensor", "battery_percent").c_str(), 1, true,
-        HaBridge::discoveryPayloadSensor(settings_, "battery_percent", "Battery", HaBridge::batteryStateTopic(settings_).c_str(), "{{ value_json.percent | int(0) }}", "%", "battery", "measurement", "mdi:battery-medium", 0, configurationUrl).c_str());
-    client_.publish(
-        HaBridge::discoveryTopic(settings_, "binary_sensor", "battery_charging").c_str(), 1, true,
-        HaBridge::discoveryPayloadBinarySensor(settings_, "battery_charging", "Battery Charging", HaBridge::batteryStateTopic(settings_).c_str(), "{{ 'ON' if value_json.charging else 'OFF' }}", "battery_charging", "ON", "OFF", "mdi:battery-charging", configurationUrl).c_str());
+    if (featureFlags.battery) {
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "sensor", "battery_voltage").c_str(), 1, true,
+            HaBridge::discoveryPayloadSensor(settings_, "battery_voltage", "Battery Voltage", HaBridge::batteryStateTopic(settings_).c_str(), "{{ value_json.voltage | float(0) | round(2) }}", "V", "voltage", "measurement", "mdi:battery", 2, configurationUrl).c_str());
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "sensor", "battery_percent").c_str(), 1, true,
+            HaBridge::discoveryPayloadSensor(settings_, "battery_percent", "Battery", HaBridge::batteryStateTopic(settings_).c_str(), "{{ value_json.percent | int(0) }}", "%", "battery", "measurement", "mdi:battery-medium", 0, configurationUrl).c_str());
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "binary_sensor", "battery_charging").c_str(), 1, true,
+            HaBridge::discoveryPayloadBinarySensor(settings_, "battery_charging", "Battery Charging", HaBridge::batteryStateTopic(settings_).c_str(), "{{ 'ON' if value_json.charging else 'OFF' }}", "battery_charging", "ON", "OFF", "mdi:battery-charging", configurationUrl).c_str());
+    } else {
+        clearDiscoveryTopic("sensor", "battery_voltage");
+        clearDiscoveryTopic("sensor", "battery_percent");
+        clearDiscoveryTopic("binary_sensor", "battery_charging");
+    }
     client_.publish(
         HaBridge::discoveryTopic(settings_, "sensor", "wifi_rssi").c_str(), 1, true,
         HaBridge::discoveryPayloadSensor(settings_, "wifi_rssi", "Wi-Fi RSSI", HaBridge::networkStateTopic(settings_).c_str(), "{{ value_json.wifiRssi }}", "dBm", "signal_strength", "measurement", "mdi:wifi", -1, configurationUrl).c_str());
     client_.publish(
         HaBridge::discoveryTopic(settings_, "sensor", "connected_ip").c_str(), 1, true,
         HaBridge::discoveryPayloadSensor(settings_, "connected_ip", "Connected IP", HaBridge::networkStateTopic(settings_).c_str(), "{{ value_json.ip if value_json.wifiConnected and value_json.ip else 'offline' }}", nullptr, nullptr, nullptr, "mdi:ip-network-outline", -1, configurationUrl).c_str());
-    client_.publish(
-        HaBridge::discoveryTopic(settings_, "sensor", "playback_state").c_str(), 1, true,
-        HaBridge::discoveryPayloadSensor(settings_, "playback_state", "Playback State", HaBridge::playbackStateTopic(settings_).c_str(), "{{ value_json.state }}", nullptr, nullptr, nullptr, "mdi:speaker-wireless", -1, configurationUrl).c_str());
+    if (featureFlags.audio) {
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "sensor", "playback_state").c_str(), 1, true,
+            HaBridge::discoveryPayloadSensor(settings_, "playback_state", "Playback State", HaBridge::playbackStateTopic(settings_).c_str(), "{{ value_json.state }}", nullptr, nullptr, nullptr, "mdi:speaker-wireless", -1, configurationUrl).c_str());
+    } else {
+        clearDiscoveryTopic("sensor", "playback_state");
+    }
     client_.publish(
         HaBridge::discoveryTopic(settings_, "sensor", "firmware_ota_status").c_str(), 1, true,
         HaBridge::discoveryPayloadSensor(settings_, "firmware_ota_status", "Firmware OTA Status", HaBridge::otaStateTopic(settings_).c_str(), "{{ value_json.updateStatus if value_json.busy and value_json.updateStatus else (value_json.phase if value_json.busy else (value_json.lastError if value_json.lastError else (value_json.lastResult if value_json.lastResult else value_json.updateStatus))) }}", nullptr, nullptr, nullptr, "mdi:update", -1, configurationUrl).c_str());
@@ -713,27 +1027,42 @@ void MqttManager::publishDiscovery() {
     client_.publish(
         HaBridge::discoveryTopic(settings_, "sensor", "firmware_last_rollback_reason").c_str(), 1, true,
         HaBridge::discoveryPayloadSensor(settings_, "firmware_last_rollback_reason", "Last Rollback Reason", HaBridge::otaStateTopic(settings_).c_str(), "{{ value_json.rollbackReason if value_json.rollbackReason else '' }}", nullptr, nullptr, nullptr, "mdi:alert-circle-outline", -1, configurationUrl).c_str());
-    client_.publish(
-        HaBridge::discoveryTopic(settings_, "number", "volume").c_str(), 1, true,
-        HaBridge::discoveryPayloadNumber(settings_, "volume", "Notifier Volume", (settings_.mqtt.baseTopic + "/state/volume").c_str(), HaBridge::commandTopic(settings_, "volume").c_str(), 0, 100, 1, "%", "mdi:volume-high", configurationUrl).c_str());
-    client_.publish(
-        HaBridge::discoveryTopic(settings_, "button", "display_trigger").c_str(), 1, true,
-        HaBridge::discoveryPayloadButton(settings_, "display_trigger", "Display Trigger", HaBridge::commandTopic(settings_, "display_trigger").c_str(), "trigger", "mdi:gesture-tap-button", configurationUrl).c_str());
-    client_.publish(
-        HaBridge::discoveryTopic(settings_, "button", "alarm_trigger").c_str(), 1, true,
-        HaBridge::discoveryPayloadButton(settings_, "alarm_trigger", "Alarm Trigger", HaBridge::commandTopic(settings_, "alarm").c_str(), "trigger", "mdi:alarm-bell", configurationUrl).c_str());
-    client_.publish(
-        HaBridge::discoveryTopic(settings_, "button", "alarm_stop").c_str(), 1, true,
-        HaBridge::discoveryPayloadButton(settings_, "alarm_stop", "Alarm Stop", HaBridge::commandTopic(settings_, "alarm").c_str(), "stop", "mdi:alarm-off", configurationUrl).c_str());
-    client_.publish(
-        HaBridge::discoveryTopic(settings_, "button", "notify").c_str(), 1, true,
-        HaBridge::discoveryPayloadButton(settings_, "notify", "Play Notification Cue", HaBridge::commandTopic(settings_, "notify").c_str(), "notify", "mdi:message-badge", configurationUrl).c_str());
+    if (featureFlags.audio) {
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "number", "volume").c_str(), 1, true,
+            HaBridge::discoveryPayloadNumber(settings_, "volume", "Notifier Volume", (settings_.mqtt.baseTopic + "/state/volume").c_str(), HaBridge::commandTopic(settings_, "volume").c_str(), 0, 100, 1, "%", "mdi:volume-high", configurationUrl).c_str());
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "button", "alarm_trigger").c_str(), 1, true,
+            HaBridge::discoveryPayloadButton(settings_, "alarm_trigger", "Alarm Trigger", HaBridge::commandTopic(settings_, "alarm").c_str(), "trigger", "mdi:alarm-bell", configurationUrl).c_str());
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "button", "alarm_stop").c_str(), 1, true,
+            HaBridge::discoveryPayloadButton(settings_, "alarm_stop", "Alarm Stop", HaBridge::commandTopic(settings_, "alarm").c_str(), "stop", "mdi:alarm-off", configurationUrl).c_str());
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "button", "notify").c_str(), 1, true,
+            HaBridge::discoveryPayloadButton(settings_, "notify", "Play Notification Cue", HaBridge::commandTopic(settings_, "notify").c_str(), "notify", "mdi:message-badge", configurationUrl).c_str());
+    } else {
+        clearDiscoveryTopic("number", "volume");
+        clearDiscoveryTopic("button", "alarm_trigger");
+        clearDiscoveryTopic("button", "alarm_stop");
+        clearDiscoveryTopic("button", "notify");
+    }
+    if (featureFlags.display) {
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "button", "display_trigger").c_str(), 1, true,
+            HaBridge::discoveryPayloadButton(settings_, "display_trigger", "Display Trigger", HaBridge::commandTopic(settings_, "display_trigger").c_str(), "trigger", "mdi:gesture-tap-button", configurationUrl).c_str());
+    } else {
+        clearDiscoveryTopic("button", "display_trigger");
+    }
     client_.publish(
         HaBridge::discoveryTopic(settings_, "button", "reboot").c_str(), 1, true,
         HaBridge::discoveryPayloadButton(settings_, "reboot", "Reboot Device", HaBridge::commandTopic(settings_, "reboot").c_str(), "reboot", "mdi:restart", configurationUrl).c_str());
-    client_.publish(
-        HaBridge::discoveryTopic(settings_, "button", "storage_sd_remount").c_str(), 1, true,
-        HaBridge::discoveryPayloadButton(settings_, "storage_sd_remount", "Remount SD Card", HaBridge::commandTopic(settings_, "storage/sd_remount").c_str(), "remount", "mdi:sd", configurationUrl).c_str());
+    if (featureFlags.storage) {
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "button", "storage_sd_remount").c_str(), 1, true,
+            HaBridge::discoveryPayloadButton(settings_, "storage_sd_remount", "Remount SD Card", HaBridge::commandTopic(settings_, "storage/sd_remount").c_str(), "remount", "mdi:sd", configurationUrl).c_str());
+    } else {
+        clearDiscoveryTopic("button", "storage_sd_remount");
+    }
     client_.publish(
         HaBridge::discoveryTopic(settings_, "button", "web_ui_lock").c_str(), 1, true,
         HaBridge::discoveryPayloadButton(settings_, "web_ui_lock", "Lock Web UI", HaBridge::commandTopic(settings_, "web_ui").c_str(), "lock", "mdi:web-off", configurationUrl).c_str());
@@ -743,9 +1072,13 @@ void MqttManager::publishDiscovery() {
     client_.publish(
         HaBridge::discoveryTopic(settings_, "select", "firmware_version_select").c_str(), 1, true,
         HaBridge::discoveryPayloadSelect(settings_, "firmware_version_select", "Firmware Version", HaBridge::otaStateTopic(settings_).c_str(), HaBridge::commandTopic(settings_, "ota/select_version").c_str(), firmwareOptions, "mdi:format-list-bulleted-square", "{{ value_json.selectedOption if value_json.selectedOption else '' }}", configurationUrl).c_str());
-    client_.publish(
-        HaBridge::discoveryTopic(settings_, "button", "stop").c_str(), 1, true,
-        HaBridge::discoveryPayloadButton(settings_, "stop", "Stop Playback", HaBridge::commandTopic(settings_, "stop").c_str(), "stop", "mdi:stop", configurationUrl).c_str());
+    if (featureFlags.audio) {
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "button", "stop").c_str(), 1, true,
+            HaBridge::discoveryPayloadButton(settings_, "stop", "Stop Playback", HaBridge::commandTopic(settings_, "stop").c_str(), "stop", "mdi:stop", configurationUrl).c_str());
+    } else {
+        clearDiscoveryTopic("button", "stop");
+    }
     client_.publish(
         HaBridge::discoveryTopic(settings_, "button", "firmware_check").c_str(), 1, true,
         HaBridge::discoveryPayloadButton(settings_, "firmware_check", "Check Firmware Releases", HaBridge::commandTopic(settings_, "ota/check").c_str(), "check", "mdi:update", configurationUrl).c_str());
@@ -755,9 +1088,69 @@ void MqttManager::publishDiscovery() {
     client_.publish(
         HaBridge::discoveryTopic(settings_, "button", "firmware_install").c_str(), 1, true,
         HaBridge::discoveryPayloadButton(settings_, "firmware_install", "Install Firmware", HaBridge::commandTopic(settings_, "ota/install").c_str(), "install", "mdi:package-up", configurationUrl).c_str());
-    client_.publish(
-        HaBridge::discoveryTopic(settings_, "text", "play_url").c_str(), 1, true,
-        HaBridge::discoveryPayloadText(settings_, "play_url", "Play URL", HaBridge::commandTopic(settings_, "play").c_str(), "mdi:link", HaBridge::playbackStateTopic(settings_).c_str(), "{{ value_json.url if value_json.url else '' }}", configurationUrl).c_str());
+    if (featureFlags.audio) {
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "text", "play_url").c_str(), 1, true,
+            HaBridge::discoveryPayloadText(settings_, "play_url", "Play URL", HaBridge::commandTopic(settings_, "play").c_str(), "mdi:link", HaBridge::playbackStateTopic(settings_).c_str(), "{{ value_json.url if value_json.url else '' }}", configurationUrl).c_str());
+    } else {
+        clearDiscoveryTopic("text", "play_url");
+    }
+    if (motorStatusAppender_ != nullptr) {
+        JsonDocument motor;
+        motorStatusAppender_(motor.to<JsonObject>());
+        if (!motor.isNull()) {
+            appendMotorConfig(motor.as<JsonObject>(), settings_);
+            JsonArrayConst channels = motor["channels"].as<JsonArrayConst>();
+            for (uint8_t channelIndex = 0; channelIndex < 2; ++channelIndex) {
+                if (channelIndex >= channels.size()) {
+                    break;
+                }
+                JsonObjectConst channel = channels[channelIndex].as<JsonObjectConst>();
+                if (channel.isNull() || !featureFlags.motorChannels[channelIndex] || !(channel["configured"] | false)) {
+                    continue;
+                }
+
+                const String channelSuffix = motorChannelSuffix(channelIndex);
+                const String channelName = motorChannelLabel(channelIndex);
+                const char* channelStatusTemplate = channelIndex == 0
+                    ? "{{ value_json.channels[0].statusText if value_json.channels and value_json.channels|count > 0 else 'idle' }}"
+                    : "{{ value_json.channels[1].statusText if value_json.channels and value_json.channels|count > 1 else 'idle' }}";
+                const char* openDurationTemplate = channelIndex == 0
+                    ? "{{ value_json.channels[0].openDurationMs | int(5000) if value_json.channels and value_json.channels|count > 0 else 5000 }}"
+                    : "{{ value_json.channels[1].openDurationMs | int(5000) if value_json.channels and value_json.channels|count > 1 else 5000 }}";
+                const char* closeDurationTemplate = channelIndex == 0
+                    ? "{{ value_json.channels[0].closeDurationMs | int(5000) if value_json.channels and value_json.channels|count > 0 else 5000 }}"
+                    : "{{ value_json.channels[1].closeDurationMs | int(5000) if value_json.channels and value_json.channels|count > 1 else 5000 }}";
+
+                client_.publish(
+                    HaBridge::discoveryTopic(settings_, "sensor", (channelSuffix + String("_status")).c_str()).c_str(), 1, true,
+                    HaBridge::discoveryPayloadSensor(settings_, (channelSuffix + String("_status")).c_str(), (channelName + " Status").c_str(), HaBridge::motorStateTopic(settings_).c_str(), channelStatusTemplate, nullptr, nullptr, nullptr, "mdi:garage-variant", -1, configurationUrl).c_str());
+                client_.publish(
+                    HaBridge::discoveryTopic(settings_, "button", (channelSuffix + String("_open")).c_str()).c_str(), 1, true,
+                    HaBridge::discoveryPayloadButton(settings_, (channelSuffix + String("_open")).c_str(), (channelName + " Open").c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/open").c_str()).c_str(), "OPEN", "mdi:arrow-expand-horizontal", configurationUrl).c_str());
+                client_.publish(
+                    HaBridge::discoveryTopic(settings_, "button", (channelSuffix + String("_close")).c_str()).c_str(), 1, true,
+                    HaBridge::discoveryPayloadButton(settings_, (channelSuffix + String("_close")).c_str(), (channelName + " Close").c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/close").c_str()).c_str(), "CLOSE", "mdi:arrow-collapse-horizontal", configurationUrl).c_str());
+                client_.publish(
+                    HaBridge::discoveryTopic(settings_, "number", (channelSuffix + String("_open_duration")).c_str()).c_str(), 1, true,
+                    HaBridge::discoveryPayloadNumber(settings_, (channelSuffix + String("_open_duration")).c_str(), (channelName + " Open Duration").c_str(), HaBridge::motorStateTopic(settings_).c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/open/duration").c_str()).c_str(), 100, 600000, 100, "ms", "mdi:timer-play-outline", configurationUrl, openDurationTemplate).c_str());
+                client_.publish(
+                    HaBridge::discoveryTopic(settings_, "number", (channelSuffix + String("_close_duration")).c_str()).c_str(), 1, true,
+                    HaBridge::discoveryPayloadNumber(settings_, (channelSuffix + String("_close_duration")).c_str(), (channelName + " Close Duration").c_str(), HaBridge::motorStateTopic(settings_).c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/close/duration").c_str()).c_str(), 100, 600000, 100, "ms", "mdi:timer-stop-outline", configurationUrl, closeDurationTemplate).c_str());
+            }
+        }
+    }
+    for (uint8_t channelIndex = 0; channelIndex < 2; ++channelIndex) {
+        if (featureFlags.motorChannels[channelIndex]) {
+            continue;
+        }
+        const String channelSuffix = motorChannelSuffix(channelIndex);
+        clearDiscoveryTopic("sensor", (channelSuffix + String("_status")).c_str());
+        clearDiscoveryTopic("button", (channelSuffix + String("_open")).c_str());
+        clearDiscoveryTopic("button", (channelSuffix + String("_close")).c_str());
+        clearDiscoveryTopic("number", (channelSuffix + String("_open_duration")).c_str());
+        clearDiscoveryTopic("number", (channelSuffix + String("_close_duration")).c_str());
+    }
     client_.publish(
         HaBridge::discoveryTopic(settings_, "button", "firmware_install_latest").c_str(), 1, true,
         "");
@@ -765,9 +1158,13 @@ void MqttManager::publishDiscovery() {
         HaBridge::discoveryTopic(settings_, "text", "firmware_install_version").c_str(), 1, true,
         "");
 #ifdef APP_ENABLE_HACS_MQTT
-    client_.publish(
-        HaBridge::hacsMediaPlayerDiscoveryTopic(settings_).c_str(), 1, true,
-        HaBridge::discoveryPayloadHacsMediaPlayer(settings_).c_str());
+    if (featureFlags.audio) {
+        client_.publish(
+            HaBridge::hacsMediaPlayerDiscoveryTopic(settings_).c_str(), 1, true,
+            HaBridge::discoveryPayloadHacsMediaPlayer(settings_).c_str());
+    } else {
+        client_.publish(HaBridge::hacsMediaPlayerDiscoveryTopic(settings_).c_str(), 1, true, "");
+    }
     client_.publish(
         HaBridge::discoveryTopic(settings_, "media_player", "hacs_player").c_str(), 1, true,
         "");

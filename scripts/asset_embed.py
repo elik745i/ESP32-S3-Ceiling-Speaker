@@ -15,6 +15,11 @@ HEADER = ROOT / "include" / "generated_web_assets.h"
 SOURCE = ROOT / "src" / "generated_web_assets.cpp"
 SKIPPED_WEB_ASSETS = {
     "favicon.ico",
+    # Unreferenced UI assets still cost flash when embedded.
+    "esp32-38pinwide-breadboard.svg",
+    "esp32-s3-devkit-c1-n8r8-v1-schematic.svg",
+    "microsd-spi-breadboard.svg",
+    "ttp223-touch-icon.svg",
 }
 
 

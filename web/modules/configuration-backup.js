@@ -15,6 +15,7 @@ export function createConfigurationBackupModule({
   normalizedPeripheralExpansionProfiles,
   normalizedPeripheralStorageProfiles,
   normalizedPeripheralCommunicationProfiles,
+  normalizedPeripheralPowerProfiles,
   maxPeripheralAudioOutputs,
   maxPeripheralAudioInputs,
   maxPeripheralDisplays,
@@ -24,6 +25,7 @@ export function createConfigurationBackupModule({
   maxPeripheralExpansions,
   maxPeripheralStorages,
   maxPeripheralCommunications,
+  maxPeripheralPowers,
   savePeripheralHelperBindings,
   renderPeripheralAudioOutputControls,
   renderPeripheralAudioInControls,
@@ -34,6 +36,7 @@ export function createConfigurationBackupModule({
   renderPeripheralExpansionControls,
   renderPeripheralStorageControls,
   renderPeripheralCommunicationControls,
+  renderPeripheralPowerControls,
   syncPeripheralBindingGroups,
   renderPeripheralDiagram,
   queueSettingsSave,
@@ -67,6 +70,7 @@ export function createConfigurationBackupModule({
         expansions: [...normalizedPeripheralExpansionProfiles()],
         storage: [...normalizedPeripheralStorageProfiles()],
         communication: [...normalizedPeripheralCommunicationProfiles()],
+        power: [...normalizedPeripheralPowerProfiles()],
         helperBindings: cloneSettingsObject(state.peripheralHelperBindings || {}) || {},
       },
     };
@@ -160,7 +164,10 @@ export function createConfigurationBackupModule({
       elements.gpioBoardSelector.value = normalized.gpioBoardSelection;
     }
     if (state.settings) {
-      state.settings.ui = normalized;
+      state.settings.ui = normalizeUiSettings(mergeSettingsObjects(
+        cloneSettingsObject(state.settings.ui || {}) || {},
+        normalized,
+      ));
     }
     updateGpioBoardSelectorMode(state.status, { force: true });
     updateGpioBoardImage();
@@ -200,6 +207,7 @@ export function createConfigurationBackupModule({
       state.peripheralExpansionProfiles = sanitizeStoredPeripheralProfiles(uiState.peripherals.expansions, maxPeripheralExpansions, ["none"]);
       state.peripheralStorageProfiles = sanitizeStoredPeripheralProfiles(uiState.peripherals.storage, maxPeripheralStorages, ["none"]);
       state.peripheralCommunicationProfiles = sanitizeStoredPeripheralProfiles(uiState.peripherals.communication, maxPeripheralCommunications, ["none"]);
+      state.peripheralPowerProfiles = sanitizeStoredPeripheralProfiles(uiState.peripherals.power, maxPeripheralPowers, ["none"]);
       state.peripheralHelperBindings = isPlainObject(uiState.peripherals.helperBindings)
         ? (cloneSettingsObject(uiState.peripherals.helperBindings) || {})
         : {};
@@ -213,6 +221,7 @@ export function createConfigurationBackupModule({
       renderPeripheralExpansionControls();
       renderPeripheralStorageControls();
       renderPeripheralCommunicationControls();
+      renderPeripheralPowerControls();
       syncPeripheralBindingGroups();
     }
     renderPeripheralDiagram();

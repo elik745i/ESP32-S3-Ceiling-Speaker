@@ -144,6 +144,8 @@ struct DeviceSettings {
     String button1Action = "previous";
     String button2Action = "next";
     bool lowBatterySleepEnabled = false;
+    bool powerCycleFactoryResetEnabled = true;
+    bool touchHoldFactoryResetEnabled = true;
     uint8_t lowBatterySleepThresholdPercent = 20;
     uint16_t lowBatteryWakeIntervalMinutes = 15;
 };
@@ -154,6 +156,7 @@ struct UiSettings {
     String peripheralDiagramLayout = "{}";
     String peripheralHelperBindings = "{}";
     String peripheralProfileSelections = "{}";
+    String motorRuntimeConfig = "{}";
 };
 
 struct SettingsBundle {

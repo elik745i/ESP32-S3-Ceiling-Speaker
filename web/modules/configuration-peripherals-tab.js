@@ -8,6 +8,7 @@ export function createConfigurationPeripheralsTab({
   maxPeripheralSensors,
   maxPeripheralInputs,
   maxPeripheralStorages,
+  maxPeripheralPowers,
   maxPeripheralControls,
   maxPeripheralExpansions,
   maxPeripheralCommunications,
@@ -19,6 +20,7 @@ export function createConfigurationPeripheralsTab({
   peripheralControlProfileOptions,
   peripheralExpansionProfileOptions,
   peripheralCommunicationProfileOptions,
+  peripheralPowerProfileOptions,
   normalizedPeripheralAudioProfiles,
   normalizedPeripheralAudioInProfiles,
   normalizedPeripheralSensorProfiles,
@@ -27,6 +29,7 @@ export function createConfigurationPeripheralsTab({
   normalizedPeripheralControlProfiles,
   normalizedPeripheralExpansionProfiles,
   normalizedPeripheralCommunicationProfiles,
+  normalizedPeripheralPowerProfiles,
   sanitizeStoredPeripheralProfiles,
   updatePrimaryPeripheralIndexLabel,
   appendPeripheralOptions,
@@ -38,6 +41,7 @@ export function createConfigurationPeripheralsTab({
   syncGpioMappingControls,
   savePeripheralProfileSelections,
   queueSettingsSave,
+  onPeripheralConfigurationChange,
   gpioConfigRoleState,
   setPeripheralHelperBindingValue,
   removePeripheralHelperBindingsForIndex,
@@ -223,6 +227,42 @@ export function createConfigurationPeripheralsTab({
         singularLabel: "storage option",
       }));
       elements.peripheralStorageList.appendChild(row);
+    });
+    syncPeripheralBindingGroups();
+    renderPeripheralDiagram();
+  }
+
+  function renderPeripheralPowerControls() {
+    if (!elements.peripheralPowerList) {
+      return;
+    }
+
+    state.peripheralPowerProfiles = sanitizeStoredPeripheralProfiles(
+      state.peripheralPowerProfiles,
+      maxPeripheralPowers,
+      normalizedPeripheralPowerProfiles(),
+    );
+    const total = state.peripheralPowerProfiles.length;
+    elements.peripheralPowerList.innerHTML = "";
+
+    state.peripheralPowerProfiles.forEach((selectedValue, index) => {
+      const row = document.createElement("div");
+      row.className = "peripheral-profile-row";
+
+      const select = document.createElement("select");
+      select.dataset.peripheralPowerIndex = String(index);
+      select.setAttribute("aria-label", `Power ${index + 1} peripheral profile`);
+      appendPeripheralOptions(select, peripheralPowerProfileOptions, selectedValue);
+      row.appendChild(buildPeripheralProfileComposite("power", selectedValue, index, select, peripheralProfileInstanceLabel("Power", index, total)));
+      row.appendChild(buildPeripheralActionButton({
+        addDatasetKey: "peripheralPowerAdd",
+        removeDatasetKey: "peripheralPowerRemove",
+        index,
+        total,
+        maxCount: maxPeripheralPowers,
+        singularLabel: "power converter",
+      }));
+      elements.peripheralPowerList.appendChild(row);
     });
     syncPeripheralBindingGroups();
     renderPeripheralDiagram();
@@ -583,6 +623,16 @@ export function createConfigurationPeripheralsTab({
         return;
       }
       if (target.matches("[data-peripheral-helper-signal]")) {
+        setPeripheralHelperBindingValue(
+          String(target.dataset.peripheralHelperGroup || "input"),
+          Number(target.dataset.peripheralHelperIndex || 0),
+          String(target.dataset.peripheralHelperSignal || "SIG"),
+          String(target.value || ""),
+        );
+        syncGpioMappingControls();
+        renderPeripheralDiagram();
+        queueSettingsSave(0);
+        onPeripheralConfigurationChange?.();
         return;
       }
       const inputIndex = Number(target.dataset.peripheralInputIndex);
@@ -591,7 +641,11 @@ export function createConfigurationPeripheralsTab({
       }
       state.peripheralInputProfiles[inputIndex] = String(target.value || "none");
       renderPeripheralInputControls();
+      syncGpioMappingControls();
+      renderPeripheralDiagram();
       savePeripheralProfileSelections();
+      queueSettingsSave(150);
+      onPeripheralConfigurationChange?.();
     });
 
     elements.peripheralInputsList?.addEventListener("click", (event) => {
@@ -607,7 +661,9 @@ export function createConfigurationPeripheralsTab({
         }
         state.peripheralInputProfiles.push("none");
         renderPeripheralInputControls();
+        syncGpioMappingControls();
         savePeripheralProfileSelections();
+        onPeripheralConfigurationChange?.();
         elements.peripheralInputsList?.querySelector(`select[data-peripheral-input-index="${state.peripheralInputProfiles.length - 1}"]`)?.focus();
         return;
       }
@@ -619,7 +675,10 @@ export function createConfigurationPeripheralsTab({
       state.peripheralInputProfiles.splice(removeIndex, 1);
       removePeripheralHelperBindingsForIndex("input", removeIndex);
       renderPeripheralInputControls();
+      syncGpioMappingControls();
       savePeripheralProfileSelections();
+      queueSettingsSave(150);
+      onPeripheralConfigurationChange?.();
     });
 
     elements.peripheralControlsList?.addEventListener("change", (event) => {
@@ -628,6 +687,16 @@ export function createConfigurationPeripheralsTab({
         return;
       }
       if (target.matches("[data-peripheral-helper-signal]")) {
+        setPeripheralHelperBindingValue(
+          String(target.dataset.peripheralHelperGroup || "control"),
+          Number(target.dataset.peripheralHelperIndex || 0),
+          String(target.dataset.peripheralHelperSignal || "IN1"),
+          String(target.value || ""),
+        );
+        syncGpioMappingControls();
+        renderPeripheralDiagram();
+        queueSettingsSave(0);
+        onPeripheralConfigurationChange?.();
         return;
       }
       const controlIndex = Number(target.dataset.peripheralControlIndex);
@@ -636,7 +705,10 @@ export function createConfigurationPeripheralsTab({
       }
       state.peripheralControlProfiles[controlIndex] = String(target.value || "none");
       renderPeripheralControlControls();
+      syncGpioMappingControls();
+      renderPeripheralDiagram();
       savePeripheralProfileSelections();
+      onPeripheralConfigurationChange?.();
     });
 
     elements.peripheralControlsList?.addEventListener("click", (event) => {
@@ -652,7 +724,9 @@ export function createConfigurationPeripheralsTab({
         }
         state.peripheralControlProfiles.push("none");
         renderPeripheralControlControls();
+        syncGpioMappingControls();
         savePeripheralProfileSelections();
+        onPeripheralConfigurationChange?.();
         elements.peripheralControlsList?.querySelector(`select[data-peripheral-control-index="${state.peripheralControlProfiles.length - 1}"]`)?.focus();
         return;
       }
@@ -664,7 +738,9 @@ export function createConfigurationPeripheralsTab({
       state.peripheralControlProfiles.splice(removeIndex, 1);
       removePeripheralHelperBindingsForIndex("control", removeIndex);
       renderPeripheralControlControls();
+      syncGpioMappingControls();
       savePeripheralProfileSelections();
+      onPeripheralConfigurationChange?.();
     });
 
     elements.peripheralExpansionsList?.addEventListener("change", (event) => {
@@ -817,6 +893,66 @@ export function createConfigurationPeripheralsTab({
       savePeripheralProfileSelections();
     });
 
+    elements.peripheralPowerList?.addEventListener("change", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLSelectElement)) {
+        return;
+      }
+      if (target.matches("[data-peripheral-helper-signal]")) {
+        setPeripheralHelperBindingValue(
+          String(target.dataset.peripheralHelperGroup || "power"),
+          Number(target.dataset.peripheralHelperIndex || 0),
+          String(target.dataset.peripheralHelperSignal || "INPUT_VOLTAGE"),
+          String(target.value || ""),
+        );
+        renderPeripheralPowerControls();
+        syncGpioMappingControls();
+        queueSettingsSave(0);
+        return;
+      }
+      const powerIndex = Number(target.dataset.peripheralPowerIndex);
+      if (!Number.isInteger(powerIndex) || powerIndex < 0 || powerIndex >= state.peripheralPowerProfiles.length) {
+        return;
+      }
+      state.peripheralPowerProfiles[powerIndex] = String(target.value || "none");
+      setPeripheralHelperBindingValue("power", powerIndex, "INPUT_VOLTAGE", "");
+      setPeripheralHelperBindingValue("power", powerIndex, "OUTPUT_VOLTAGE", "");
+      renderPeripheralPowerControls();
+      syncGpioMappingControls();
+      savePeripheralProfileSelections();
+      queueSettingsSave(0);
+    });
+
+    elements.peripheralPowerList?.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLButtonElement)) {
+        return;
+      }
+
+      if (target.dataset.peripheralPowerAdd === "true") {
+        state.peripheralPowerProfiles = normalizedPeripheralPowerProfiles();
+        if (state.peripheralPowerProfiles.length >= maxPeripheralPowers) {
+          return;
+        }
+        state.peripheralPowerProfiles.push("none");
+        renderPeripheralPowerControls();
+        savePeripheralProfileSelections();
+        elements.peripheralPowerList?.querySelector(`select[data-peripheral-power-index="${state.peripheralPowerProfiles.length - 1}"]`)?.focus();
+        return;
+      }
+
+      const removeIndex = Number(target.dataset.peripheralPowerRemove);
+      if (!Number.isInteger(removeIndex) || removeIndex <= 0 || removeIndex >= state.peripheralPowerProfiles.length) {
+        return;
+      }
+      state.peripheralPowerProfiles.splice(removeIndex, 1);
+      removePeripheralHelperBindingsForIndex("power", removeIndex);
+      renderPeripheralPowerControls();
+      syncGpioMappingControls();
+      savePeripheralProfileSelections();
+      queueSettingsSave(0);
+    });
+
     for (const bindingContainer of [elements.peripheralAudioPins, elements.peripheralDisplayPins]) {
       bindingContainer?.addEventListener("change", (event) => {
         const target = event.target;
@@ -844,6 +980,7 @@ export function createConfigurationPeripheralsTab({
       elements.peripheralDisplayPins,
       elements.peripheralSensorsList,
       elements.peripheralInputsList,
+      elements.peripheralPowerList,
       elements.peripheralStorageList,
       elements.peripheralCommunicationList,
       elements.peripheralControlsList,
@@ -886,6 +1023,7 @@ export function createConfigurationPeripheralsTab({
     renderPeripheralSensorControls,
     renderPeripheralInputControls,
     renderPeripheralStorageControls,
+    renderPeripheralPowerControls,
     applyPeripheralStorageProfileSelection,
     renderPeripheralControlControls,
     renderPeripheralExpansionControls,

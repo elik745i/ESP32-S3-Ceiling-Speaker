@@ -1,6 +1,8 @@
-# ESP32-S3 Ceiling Speaker
+# ELMA IoT
 
-Custom PlatformIO firmware for ESP32 and ESP32-S3 Wi-Fi speaker/notifier hardware with a MAX98357A I2S amplifier path, browser-based configuration UI, MQTT and Home Assistant integration, local storage management, GitHub-release-based update discovery, and configurable pin mapping for audio, OLED, battery, SD, and status hardware.
+![ELMA IoT logo](Docs/elma_iot_logo.svg)
+
+ELMA IoT stands for Elnur Mehdiyev Automation and Internet of Things. This project is a custom PlatformIO firmware base for ESP32 and ESP32-S3 home automation devices with a browser-based configuration UI, MQTT and Home Assistant integration, local storage management, GitHub-release-based update discovery, and configurable pin mapping for audio, OLED, battery, SD, and status hardware.
 
 Project story and current device write-up:
 
@@ -10,8 +12,8 @@ Project story and current device write-up:
 ## Current Release
 
 - Firmware version: `v0.1.21`
-- Primary release repository: `elik745i/ESP32-S3-Ceiling-Speaker`
-- GitHub Releases feed: `https://api.github.com/repos/elik745i/ESP32-S3-Ceiling-Speaker/releases`
+- Primary release repository: `elma-iot/ELMA-IoT`
+- GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
 - Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.21.bin`
 
 This version is intended to be published as a standard GitHub release using the normal OTA asset names without a prerelease suffix.
@@ -397,20 +399,20 @@ On startup the firmware:
 
 Fallback AP defaults:
 
-- SSID prefix: `ESP32-Notifier-XXXXXX`
+- SSID prefix: `ELMA-IoT-XXXXXX`
 - Password: `12345678`
 - Config page: `http://192.168.4.1`
 
 Default generated device identity:
 
-- ESP32 builds: `esp32-notifier-xxxxxx`
-- ESP32-S3 builds: `ceiling-speaker-xxxxxx`
+- ESP32 builds: `elma-iot-xxxxxx`
+- ESP32-S3 builds: `elma-iot-xxxxxx`
 
 ## MQTT And Home Assistant
 
 Default base topic:
 
-- `esp32_notifier`
+- `elma_iot`
 
 Typical command topics:
 
