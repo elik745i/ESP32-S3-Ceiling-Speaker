@@ -61,7 +61,7 @@ def minify_svg(text: str) -> str:
 def has_svgo() -> bool:
     try:
         completed = subprocess.run(
-            ["cmd", "/c", "npx", "--no-install", "svgo", "--version"],
+            ["npx", "--no-install", "svgo", "--version"],
             cwd=ROOT,
             check=False,
             capture_output=True,
@@ -84,8 +84,6 @@ def optimize_svg(path: Path) -> bytes:
     input_path.write_text(optimized, encoding="utf-8")
 
     svgo_cmd = [
-        "cmd",
-        "/c",
         "npx",
         "--no-install",
         "svgo",
@@ -119,8 +117,6 @@ def build_web_assets() -> None:
     BUILD_WEB_DIR.mkdir(parents=True, exist_ok=True)
 
     esbuild_cmd = [
-        "cmd",
-        "/c",
         "npx",
         "--no-install",
         "esbuild",
