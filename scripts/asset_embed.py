@@ -132,7 +132,7 @@ def build_web_assets() -> None:
         raise SystemExit("Node.js and npm are required to build the bundled web UI.") from exc
     except subprocess.CalledProcessError as exc:
         raise SystemExit(
-            "Bundling web assets failed. Run `cmd /c npm install` in the project root to install frontend build dependencies."
+            "Bundling web assets failed. Run `npm install` in the project root to install frontend build dependencies."
         ) from exc
 
     for path in sorted(WEB_DIR.rglob("*")):
