@@ -23,6 +23,8 @@ jobs:
           python-version: '3.x'
       - name: Install PlatformIO
         run: pip install platformio
+      - name: Install frontend dependencies
+        run: npm ci
       - name: Build default environment
         run: pio run
 
@@ -52,6 +54,8 @@ jobs:
           python-version: '3.x'
       - name: Install PlatformIO
         run: pip install platformio
+      - name: Install frontend dependencies
+        run: npm ci
       - name: Build release firmware
         run: pio run -e ${{ matrix.env }}
       - name: Stage OTA asset
