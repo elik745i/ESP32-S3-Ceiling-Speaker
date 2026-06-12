@@ -83,6 +83,7 @@ class OtaManager {
     size_t progressBytes_ = 0;
     size_t progressTotalBytes_ = 0;
     uint8_t progressPercent_ = 0;
+    bool recoveryRebootRequested_ = false;
     bool localUploadStarted_ = false;
     bool localUploadHadData_ = false;
     bool localUploadOk_ = false;

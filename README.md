@@ -11,19 +11,18 @@ Project story and current device write-up:
 
 ## Current Release
 
-- Firmware version: `v0.1.22`
+- Firmware version: `v0.1.23`
 - Primary release repository: `elma-iot/ELMA-IoT`
 - GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.22.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.23.bin`
 
 This version is intended to be published as a standard GitHub release using the normal OTA asset names without a prerelease suffix.
 
 Latest release highlights:
 
-- Motor runtime configuration now persists learned open or closed state, movement-role mapping, and touch-triggered motor actions across reboots.
-- Home Assistant motor control now publishes a more stable optimistic valve switch and immediately reflects web-triggered movement state over MQTT.
-- MQTT discovery now exposes CPU temperature as a dedicated Home Assistant temperature sensor.
-- The web UI now includes a dedicated motor runtime configuration flow, richer learned-state motor status, and a rediscovery shortcut in the MQTT tab.
+- OTA installs now detect stalled downloads, retry from the last written offset when the server supports HTTP range requests, and reboot the device after repeated failures instead of leaving it hung mid-update.
+- OTA recovery now surfaces retry and restart phases explicitly so the device comes back operational after broken firmware downloads.
+- Web asset bundling now uses a cross-platform `npx` launcher so GitHub Actions release verification works on Linux runners as well as Windows development machines.
 
 ## What This Firmware Does
 
@@ -485,20 +484,22 @@ Current MQTT behavior:
 Current OTA and rollback behavior:
 
 - OTA rollback bookkeeping now suppresses harmless `Preferences` `NOT_FOUND` log spam on normal boots when no pending or bad-version keys exist in NVS.
+- OTA release downloads now treat a no-progress socket as a stalled transfer after 15 seconds, retry up to three resumed HTTP range requests, and force a recovery reboot if the download still cannot progress.
+- If the firmware host does not support OTA resume after a stall, the device aborts the update and reboots back into the current firmware instead of staying stuck in a busy flashing state.
 
 ## Firmware And Releases
 
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.22`:
+Release asset names for `v0.1.23`:
 
-- `esp32-notifier-v0.1.22.bin`
-- `esp32-notifier-hacs-v0.1.22.bin`
-- `esp32-notifier-hacs-slim-v0.1.22.bin`
-- `esp32s3-notifier-v0.1.22.bin`
-- `esp32s3-notifier-hacs-v0.1.22.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.22.bin`
+- `esp32-notifier-v0.1.23.bin`
+- `esp32-notifier-hacs-v0.1.23.bin`
+- `esp32-notifier-hacs-slim-v0.1.23.bin`
+- `esp32s3-notifier-v0.1.23.bin`
+- `esp32s3-notifier-hacs-v0.1.23.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.23.bin`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard release variants and upload the matching OTA assets back to that release.
 
@@ -579,4 +580,4 @@ Key files and directories:
 
 Current release notes live here:
 
-- [release-assets/v0.1.22/release-notes.md](release-assets/v0.1.22/release-notes.md)
+- [release-assets/v0.1.23/release-notes.md](release-assets/v0.1.23/release-notes.md)

@@ -13,6 +13,8 @@ namespace {
 constexpr unsigned long RELEASE_CACHE_TTL_MS = 5UL * 60UL * 1000UL;
 constexpr uint8_t RELEASE_REFRESH_MAX_ATTEMPTS = 4;
 constexpr unsigned long RELEASE_REFRESH_RETRY_DELAY_MS = 1500UL;
+constexpr unsigned long OTA_DOWNLOAD_STALL_TIMEOUT_MS = 15000UL;
+constexpr uint8_t OTA_DOWNLOAD_MAX_RESUME_ATTEMPTS = 3;
 
 String githubApiLatestUrl(const SettingsBundle& settings) {
     return String("https://api.github.com/repos/") + settings.ota.owner + "/" + settings.ota.repository + "/releases/latest";
@@ -916,11 +918,18 @@ void OtaManager::runTask(bool applyAfterCheck) {
         return;
     }
 
+    recoveryRebootRequested_ = false;
     String installMessage;
     if (!installNow(result, installMessage)) {
         lastMessage_ = installMessage;
         syncAppState("error", installMessage);
         busy_ = false;
+        if (recoveryRebootRequested_) {
+            updatePhase_ = "Restarting";
+            lastMessage_ = installMessage + " Restarting...";
+            syncAppState("error", installMessage);
+            scheduleReboot(1500);
+        }
         return;
     }
 
@@ -961,11 +970,18 @@ void OtaManager::runVersionTask(const String& version, const String& assetName, 
     latestVersion_ = releaseCache_.empty() ? version : latestVersion_;
     updateAvailable_ = compareVersions(normalizeVersion(APP_VERSION), version) < 0;
 
+    recoveryRebootRequested_ = false;
     String installMessage;
     if (!installNow(result, installMessage)) {
         lastMessage_ = installMessage;
         syncAppState("error", installMessage);
         busy_ = false;
+        if (recoveryRebootRequested_) {
+            updatePhase_ = "Restarting";
+            lastMessage_ = installMessage + " Restarting...";
+            syncAppState("error", installMessage);
+            scheduleReboot(1500);
+        }
         return;
     }
 
@@ -1328,23 +1344,39 @@ bool OtaManager::installNow(const CheckResult& result, String& message) {
     const String firmwareUrl = (!result.latestVersion.isEmpty() && !result.assetName.isEmpty())
         ? githubReleaseAssetUrl(settings_, result.latestVersion, result.assetName)
         : result.assetUrl;
-    Serial.printf("[ota] opening firmware url: %s\n", firmwareUrl.c_str());
-    const int code = beginAndGet(
-        http,
-        client,
-        firmwareUrl,
-        settings_.ota.allowInsecureTls,
-        15000,
-        [](HTTPClient&) {});
-    if (code == HTTPC_ERROR_CONNECTION_REFUSED) {
-        Serial.printf("[ota] failed to open firmware url: %s\n", firmwareUrl.c_str());
-        message = "Failed to open firmware URL";
-        return false;
-    }
-    if (code != HTTP_CODE_OK) {
-        Serial.printf("[ota] firmware request failed code=%d url=%s\n", code, firmwareUrl.c_str());
-        message = httpErrorWithDetail(http, "Firmware HTTP ", code);
-        http.end();
+    auto openFirmwareRequest = [&](size_t startOffset, String& error) {
+        Serial.printf("[ota] opening firmware url: %s (offset=%u)\n", firmwareUrl.c_str(), static_cast<unsigned>(startOffset));
+        const int requestCode = beginAndGet(
+            http,
+            client,
+            firmwareUrl,
+            settings_.ota.allowInsecureTls,
+            15000,
+            [&](HTTPClient& request) {
+                if (startOffset > 0) {
+                    request.addHeader("Range", String("bytes=") + startOffset + "-");
+                }
+            });
+        if (requestCode == HTTPC_ERROR_CONNECTION_REFUSED) {
+            Serial.printf("[ota] failed to open firmware url: %s\n", firmwareUrl.c_str());
+            error = startOffset > 0 ? "Failed to reopen firmware URL" : "Failed to open firmware URL";
+            return false;
+        }
+
+        const int expectedCode = startOffset > 0 ? HTTP_CODE_PARTIAL_CONTENT : HTTP_CODE_OK;
+        if (requestCode != expectedCode) {
+            Serial.printf("[ota] firmware request failed code=%d url=%s offset=%u\n", requestCode, firmwareUrl.c_str(), static_cast<unsigned>(startOffset));
+            if (startOffset > 0 && requestCode == HTTP_CODE_OK) {
+                error = "Firmware server does not support OTA resume";
+            } else {
+                error = httpErrorWithDetail(http, "Firmware HTTP ", requestCode);
+            }
+            http.end();
+            return false;
+        }
+        return true;
+    };
+    if (!openFirmwareRequest(0, message)) {
         return false;
     }
     updatePhase_ = "Downloading";
@@ -1385,18 +1417,74 @@ bool OtaManager::installNow(const CheckResult& result, String& message) {
     uint8_t imageHeader[sizeof(esp_image_header_t)] = {0};
     size_t imageHeaderBytes = 0;
     bool imageHeaderValidated = false;
-    int written = 0;
-    while (http.connected() && written < contentLength) {
+    size_t written = 0;
+    unsigned long lastProgressAt = millis();
+    uint8_t resumeAttempts = 0;
+    auto resumeDownload = [&](const char* reason) {
+        if (resumeAttempts >= OTA_DOWNLOAD_MAX_RESUME_ATTEMPTS) {
+            message = String(reason) + ". Rebooting device to recover from stalled OTA.";
+            recoveryRebootRequested_ = true;
+            Update.abort();
+            http.end();
+            mbedtls_sha256_free(&sha);
+            return false;
+        }
+
+        ++resumeAttempts;
+        updatePhase_ = "Retrying";
+        lastMessage_ = String("Retrying firmware download ") + resumeAttempts + "/" + OTA_DOWNLOAD_MAX_RESUME_ATTEMPTS + " at " + progressPercent_ + "%";
+        syncAppState("updating");
+        pumpProgressCallback();
+        http.end();
+        client.stop();
+
+        String resumeError;
+        if (!openFirmwareRequest(written, resumeError)) {
+            message = resumeError + ". Rebooting device to recover from stalled OTA.";
+            recoveryRebootRequested_ = true;
+            Update.abort();
+            mbedtls_sha256_free(&sha);
+            return false;
+        }
+
+        stream = http.getStreamPtr();
+        lastProgressAt = millis();
+        updatePhase_ = "Flashing";
+        lastMessage_ = String("Resuming firmware download at ") + progressPercent_ + "%";
+        syncAppState("updating");
+        pumpProgressCallback();
+        return true;
+    };
+    while (written < static_cast<size_t>(contentLength)) {
+        if (!http.connected()) {
+            if (!resumeDownload("OTA connection dropped")) {
+                return false;
+            }
+            continue;
+        }
         const size_t available = stream->available();
         if (available == 0) {
+            if (static_cast<unsigned long>(millis() - lastProgressAt) >= OTA_DOWNLOAD_STALL_TIMEOUT_MS) {
+                if (!resumeDownload("OTA download stalled")) {
+                    return false;
+                }
+                continue;
+            }
             pumpProgressCallback();
             delay(1);
             continue;
         }
         const int read = stream->readBytes(buffer, min(sizeof(buffer), available));
         if (read <= 0) {
+            if (static_cast<unsigned long>(millis() - lastProgressAt) >= OTA_DOWNLOAD_STALL_TIMEOUT_MS) {
+                if (!resumeDownload("OTA read stalled")) {
+                    return false;
+                }
+            }
             continue;
         }
+        lastProgressAt = millis();
+        resumeAttempts = 0;
         mbedtls_sha256_update_ret(&sha, buffer, read);
 
         size_t offset = 0;
@@ -1436,9 +1524,9 @@ bool OtaManager::installNow(const CheckResult& result, String& message) {
                 return false;
             }
         }
-        written += read;
-        progressBytes_ = static_cast<size_t>(written);
-        progressPercent_ = static_cast<uint8_t>(min(100, (written * 100) / contentLength));
+        written += static_cast<size_t>(read);
+        progressBytes_ = written;
+        progressPercent_ = static_cast<uint8_t>(min(100U, static_cast<unsigned>((written * 100U) / static_cast<size_t>(contentLength))));
         lastMessage_ = String("Flashing firmware... ") + progressPercent_ + "%";
         syncAppState("updating");
         pumpProgressCallback();
