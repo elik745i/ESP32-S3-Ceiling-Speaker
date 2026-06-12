@@ -60,6 +60,7 @@ const char* motorChannelLabel(uint8_t channelIndex) {
 }
 
 struct MotorDirectionConfig {
+    bool forward = true;
     uint32_t durationMs = kDefaultMotorDurationMs;
     int8_t limitInputIndex = -1;
     String movementRole = "none";
@@ -217,11 +218,12 @@ MotorChannelConfig readMotorChannelConfig(const SettingsBundle& settings, const 
         return config;
     }
 
-    auto readDirection = [](JsonObjectConst channelObject, const char* directionKey, MotorDirectionConfig& directionConfig) {
+    auto readDirection = [](JsonObjectConst channelObject, const char* directionKey, bool forwardDirection, MotorDirectionConfig& directionConfig) {
         JsonObjectConst direction = channelObject[directionKey].as<JsonObjectConst>();
         if (direction.isNull()) {
             return;
         }
+        directionConfig.forward = forwardDirection;
         directionConfig.durationMs = clampMotorDurationMs(direction["durationMs"] | directionConfig.durationMs);
         if (!direction["limitInputIndex"].isNull()) {
             directionConfig.limitInputIndex = static_cast<int8_t>(direction["limitInputIndex"].as<int>());
@@ -231,8 +233,8 @@ MotorChannelConfig readMotorChannelConfig(const SettingsBundle& settings, const 
 
     MotorDirectionConfig forwardConfig;
     MotorDirectionConfig backwardConfig;
-    readDirection(channel, "forward", forwardConfig);
-    readDirection(channel, "backward", backwardConfig);
+    readDirection(channel, "forward", true, forwardConfig);
+    readDirection(channel, "backward", false, backwardConfig);
 
     const auto pickDirection = [&](const String& targetRole, bool fallbackForward) {
         if (forwardConfig.movementRole == targetRole && backwardConfig.movementRole != targetRole) {
@@ -795,8 +797,8 @@ void MqttManager::handleMessage(char* topic, char* payload, AsyncMqttClientMessa
         if (topicValue == openTopic || topicValue == closeTopic) {
             command.action = "motor_run";
             command.motorChannelIndex = static_cast<int8_t>(channelIndex);
-            command.motorForward = topicValue == openTopic;
-            const MotorDirectionConfig& directionConfig = command.motorForward ? channelConfig.open : channelConfig.close;
+            const MotorDirectionConfig& directionConfig = topicValue == openTopic ? channelConfig.open : channelConfig.close;
+            command.motorForward = directionConfig.forward;
             command.motorDurationMs = directionConfig.durationMs;
             command.motorLimitInputIndex = directionConfig.limitInputIndex;
             commandHandler_(command);
@@ -810,14 +812,14 @@ void MqttManager::handleMessage(char* topic, char* payload, AsyncMqttClientMessa
             if (normalizedPayload == "ON" || normalizedPayload == "OPEN") {
                 command.action = "motor_run";
                 command.motorChannelIndex = static_cast<int8_t>(channelIndex);
-                command.motorForward = true;
+                command.motorForward = channelConfig.open.forward;
                 command.motorDurationMs = channelConfig.open.durationMs;
                 command.motorLimitInputIndex = channelConfig.open.limitInputIndex;
                 commandHandler_(command);
             } else if (normalizedPayload == "OFF" || normalizedPayload == "CLOSE") {
                 command.action = "motor_run";
                 command.motorChannelIndex = static_cast<int8_t>(channelIndex);
-                command.motorForward = false;
+                command.motorForward = channelConfig.close.forward;
                 command.motorDurationMs = channelConfig.close.durationMs;
                 command.motorLimitInputIndex = channelConfig.close.limitInputIndex;
                 commandHandler_(command);
