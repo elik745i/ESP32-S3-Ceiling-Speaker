@@ -9,12 +9,40 @@ export function createMqttTab({
   setMessage,
   handleError,
 }) {
+  const rediscoveryDefaultLabel = "Republish Discovery";
+  const rediscoveryRunningLabel = "Republishing Discovery...";
+  const rediscoveryCompletedLabel = "Republishing Completed!";
+  let rediscoveryFeedbackTimer = 0;
+  let rediscoveryFeedbackLabel = "";
+
   function setMqttConnectStatus(message, isError = false) {
     if (!elements.mqttConnectStatus) {
       return;
     }
     elements.mqttConnectStatus.textContent = message;
     elements.mqttConnectStatus.style.color = isError ? "#b42318" : "";
+  }
+
+  function clearRediscoveryFeedbackTimer() {
+    if (rediscoveryFeedbackTimer) {
+      window.clearTimeout(rediscoveryFeedbackTimer);
+      rediscoveryFeedbackTimer = 0;
+    }
+  }
+
+  function setRediscoveryButtonLabel(label, { resetAfterMs = 0 } = {}) {
+    rediscoveryFeedbackLabel = label || "";
+    if (elements.mqttRediscoveryButton) {
+      elements.mqttRediscoveryButton.textContent = rediscoveryFeedbackLabel || rediscoveryDefaultLabel;
+    }
+    clearRediscoveryFeedbackTimer();
+    if (resetAfterMs > 0) {
+      rediscoveryFeedbackTimer = window.setTimeout(() => {
+        rediscoveryFeedbackLabel = "";
+        rediscoveryFeedbackTimer = 0;
+        updateMqttActionButton();
+      }, resetAfterMs);
+    }
   }
 
   function updateMqttActionButton() {
@@ -29,6 +57,9 @@ export function createMqttTab({
 
     if (elements.mqttRediscoveryButton) {
       elements.mqttRediscoveryButton.disabled = !mqttConnected || !discoveryEnabled || state.mqttConnectInProgress;
+      elements.mqttRediscoveryButton.textContent = state.mqttRediscoveryInProgress
+        ? rediscoveryRunningLabel
+        : (rediscoveryFeedbackLabel || rediscoveryDefaultLabel);
       elements.mqttRediscoveryButton.title = !discoveryEnabled
         ? "Enable Home Assistant discovery first"
         : (!mqttConnected ? "Connect MQTT first" : "Republish Home Assistant discovery topics");
@@ -140,16 +171,17 @@ export function createMqttTab({
     if (elements.mqttRediscoveryButton) {
       elements.mqttRediscoveryButton.disabled = true;
     }
-    setMqttConnectStatus("Republishing Home Assistant discovery...");
+    setRediscoveryButtonLabel(rediscoveryRunningLabel);
+
+    let completionMessage = "";
 
     try {
       const response = await request("/api/mqtt", {
         method: "POST",
         body: JSON.stringify({ action: "rediscover" }),
       });
-      setMqttConnectStatus(response?.message || "MQTT discovery republished.");
+      completionMessage = response?.message || "MQTT discovery republished.";
       setMessage("MQTT discovery republished");
-      await loadStatus();
     } finally {
       state.mqttConnectInProgress = false;
       state.mqttRediscoveryInProgress = false;
@@ -158,6 +190,12 @@ export function createMqttTab({
         elements.mqttConnectButton.disabled = false;
       }
       updateMqttActionButton();
+    }
+
+    if (completionMessage) {
+      await loadStatus();
+      setRediscoveryButtonLabel(rediscoveryCompletedLabel, { resetAfterMs: 2000 });
+      setMqttConnectStatus("");
     }
   }
 

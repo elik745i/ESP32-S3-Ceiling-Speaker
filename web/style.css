@@ -2495,10 +2495,40 @@ body {
     font-size: 0.9rem;
   }
 
+  .motor-touch-list {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .motor-touch-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(200px, 320px);
+    gap: 0.75rem;
+    align-items: end;
+  }
+
+  .motor-touch-meta {
+    display: grid;
+    gap: 0.2rem;
+  }
+
+  .motor-touch-title {
+    font-weight: 700;
+  }
+
+  .motor-touch-detail {
+    font-size: 0.86rem;
+    color: var(--text-soft);
+  }
+
   @media (max-width: 720px) {
     .motor-action-row {
       grid-template-columns: 1fr;
       align-items: stretch;
+    }
+
+    .motor-touch-row {
+      grid-template-columns: 1fr;
     }
   }
 

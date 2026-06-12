@@ -11,12 +11,19 @@ Project story and current device write-up:
 
 ## Current Release
 
-- Firmware version: `v0.1.21`
+- Firmware version: `v0.1.22`
 - Primary release repository: `elma-iot/ELMA-IoT`
 - GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.21.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.22.bin`
 
 This version is intended to be published as a standard GitHub release using the normal OTA asset names without a prerelease suffix.
+
+Latest release highlights:
+
+- Motor runtime configuration now persists learned open or closed state, movement-role mapping, and touch-triggered motor actions across reboots.
+- Home Assistant motor control now publishes a more stable optimistic valve switch and immediately reflects web-triggered movement state over MQTT.
+- MQTT discovery now exposes CPU temperature as a dedicated Home Assistant temperature sensor.
+- The web UI now includes a dedicated motor runtime configuration flow, richer learned-state motor status, and a rediscovery shortcut in the MQTT tab.
 
 ## What This Firmware Does
 
@@ -127,6 +134,7 @@ Current UI highlights:
 - Centered reboot countdown overlay that waits for reconnect before forcing a refresh.
 - Live Wi-Fi, MQTT, playback, battery, heap, and firmware status.
 - Hardware Monitor cards for CPU load, SRAM, PSRAM, flash FS, SD, and board metadata.
+- MQTT discovery now also exposes chip CPU temperature to Home Assistant as a retained temperature sensor.
 - Radio Browser country and station selection with recent playback history.
 - Direct URL playback and TTS playback entry.
 - Previous, play or stop, and next station transport controls from the top playback card.
@@ -138,6 +146,7 @@ Current UI highlights:
 - OLED pin remapping plus display-mode selection between OLED and Wape trigger mode.
 - Battery configuration, charging-sense pin selection, calibration helpers, and low-battery sleep controls.
 - MQTT tab connect or disconnect control plus a dedicated Republish Discovery button for Home Assistant rediscovery.
+- Motor tab runtime config now stores learned open or closed position, movement roles, and touch-button motor actions on the device instead of relying on browser state.
 - GPIO Info tab with board selector, dedicated SVG board art, side-by-side pin guidance, and board suitability recommendations.
 - Internal flash and SD storage tabs with file browsing, folder creation, upload support, selection tools, and SD pin configuration.
 - SD storage playback now starts immediately from the preview modal and toolbar play action without blocking on artwork scans.
@@ -469,6 +478,9 @@ Current MQTT behavior:
 - Generic broker reachability failures now keep retrying instead of forcing a device recovery reboot.
 - Credential or client-ID rejections still surface as an explicit frontend error.
 - Automatic broker reconnect now uses the same configure-and-connect path as the manual Connect button.
+- Motor valve discovery now uses an optimistic switch entity so Home Assistant does not bounce the control back before state catches up.
+- Motor state publishes now fire immediately for both MQTT-triggered and web-triggered valve movement.
+- CPU temperature is published as a dedicated retained MQTT state topic and discovered in Home Assistant as a standard temperature sensor.
 
 Current OTA and rollback behavior:
 
@@ -479,14 +491,14 @@ Current OTA and rollback behavior:
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.21`:
+Release asset names for `v0.1.22`:
 
-- `esp32-notifier-v0.1.21.bin`
-- `esp32-notifier-hacs-v0.1.21.bin`
-- `esp32-notifier-hacs-slim-v0.1.21.bin`
-- `esp32s3-notifier-v0.1.21.bin`
-- `esp32s3-notifier-hacs-v0.1.21.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.21.bin`
+- `esp32-notifier-v0.1.22.bin`
+- `esp32-notifier-hacs-v0.1.22.bin`
+- `esp32-notifier-hacs-slim-v0.1.22.bin`
+- `esp32s3-notifier-v0.1.22.bin`
+- `esp32s3-notifier-hacs-v0.1.22.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.22.bin`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard release variants and upload the matching OTA assets back to that release.
 
@@ -567,4 +579,4 @@ Key files and directories:
 
 Current release notes live here:
 
-- [release-assets/v0.1.21/release-notes.md](release-assets/v0.1.21/release-notes.md)
+- [release-assets/v0.1.22/release-notes.md](release-assets/v0.1.22/release-notes.md)

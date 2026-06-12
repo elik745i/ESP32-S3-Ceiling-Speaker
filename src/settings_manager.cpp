@@ -4,6 +4,7 @@
 #include <math.h>
 
 #include "default_config.h"
+#include "motor_runtime_config.h"
 
 namespace {
 constexpr char PREF_NAMESPACE[] = "notifier";
@@ -457,22 +458,6 @@ String normalizePeripheralProfileSelections(String value) {
     return normalized;
 }
 
-String normalizeMotorRuntimeConfig(String value) {
-    value.trim();
-    if (value.isEmpty()) {
-        return "{}";
-    }
-
-    JsonDocument document;
-    DeserializationError error = deserializeJson(document, value);
-    if (error || !document.is<JsonObject>()) {
-        return "{}";
-    }
-
-    String normalized;
-    serializeJson(document.as<JsonObjectConst>(), normalized);
-    return normalized;
-}
 }  // namespace
 
 bool SettingsManager::begin() {
@@ -746,7 +731,10 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     settings.ui.peripheralDiagramLayout = normalizePeripheralDiagramLayout(settings.ui.peripheralDiagramLayout);
     settings.ui.peripheralHelperBindings = normalizePeripheralHelperBindings(settings.ui.peripheralHelperBindings);
     settings.ui.peripheralProfileSelections = normalizePeripheralProfileSelections(settings.ui.peripheralProfileSelections);
-    settings.ui.motorRuntimeConfig = normalizeMotorRuntimeConfig(settings.ui.motorRuntimeConfig);
+    settings.ui.motorRuntimeConfig.trim();
+    if (settings.ui.motorRuntimeConfig.isEmpty()) {
+        settings.ui.motorRuntimeConfig = defaultMotorRuntimeConfig();
+    }
     settings.usingSavedSettings = input.usingSavedSettings;
     return settings;
 }
@@ -758,6 +746,8 @@ SettingsBundle SettingsManager::load() {
         settings.mqtt.clientId = settings.device.deviceName;
         return sanitize(settings);
     }
+
+    const String storedMotorRuntimeConfig = readString("ui_motor", settings.ui.motorRuntimeConfig);
 
     settings.wifi.ssid = readString("wifi_ssid", settings.wifi.ssid);
     settings.wifi.password = readString("wifi_pass", settings.wifi.password);
@@ -864,9 +854,10 @@ SettingsBundle SettingsManager::load() {
     settings.ui.peripheralDiagramLayout = readString("ui_diag", settings.ui.peripheralDiagramLayout);
     settings.ui.peripheralHelperBindings = readString("ui_helpers", settings.ui.peripheralHelperBindings);
     settings.ui.peripheralProfileSelections = readString("ui_profiles", settings.ui.peripheralProfileSelections);
-    settings.ui.motorRuntimeConfig = readString("ui_motor", settings.ui.motorRuntimeConfig);
+    settings.ui.motorRuntimeConfig = storedMotorRuntimeConfig.isEmpty() ? defaultMotorRuntimeConfig() : storedMotorRuntimeConfig;
 
     settings = sanitize(settings);
+    settings.ui.motorRuntimeConfig = storedMotorRuntimeConfig.isEmpty() ? defaultMotorRuntimeConfig() : storedMotorRuntimeConfig;
     settings.mqtt.clientId = fallbackIfEmpty(settings.mqtt.clientId, settings.device.deviceName);
     settings.usingSavedSettings = true;
     return settings;
@@ -874,6 +865,9 @@ SettingsBundle SettingsManager::load() {
 
 bool SettingsManager::save(const SettingsBundle& settings) {
     const SettingsBundle sanitized = sanitize(settings);
+    const String rawMotorRuntimeConfig = settings.ui.motorRuntimeConfig.isEmpty()
+        ? defaultMotorRuntimeConfig()
+        : settings.ui.motorRuntimeConfig;
     bool changed = false;
     changed |= writeStringIfChanged("wifi_ssid", sanitized.wifi.ssid);
     changed |= writeStringIfChanged("wifi_pass", sanitized.wifi.password);
@@ -953,7 +947,6 @@ bool SettingsManager::save(const SettingsBundle& settings) {
     changed |= writeUIntIfChanged("oled_sda", sanitized.oled.sdaPin);
     changed |= writeUIntIfChanged("oled_scl", sanitized.oled.sclPin);
     changed |= writeIntIfChanged("oled_rst", sanitized.oled.resetPin);
-    changed |= writeUIntIfChanged("oled_dim", sanitized.oled.dimTimeoutSeconds);
     changed |= writeUIntIfChanged("oled_wape_pin", sanitized.oled.wapeTriggerPin);
     changed |= writeStringIfChanged("oled_wape_evt", sanitized.oled.wapeTriggerEvent);
 
@@ -980,7 +973,7 @@ bool SettingsManager::save(const SettingsBundle& settings) {
     changed |= writeStringIfChanged("ui_diag", sanitized.ui.peripheralDiagramLayout);
     changed |= writeStringIfChanged("ui_helpers", sanitized.ui.peripheralHelperBindings);
     changed |= writeStringIfChanged("ui_profiles", sanitized.ui.peripheralProfileSelections);
-    changed |= writeStringIfChanged("ui_motor", sanitized.ui.motorRuntimeConfig);
+    changed |= writeStringIfChanged("ui_motor", rawMotorRuntimeConfig);
     changed |= writeBoolIfChanged(PREF_MARKER, true);
     return changed;
 }
@@ -1126,6 +1119,46 @@ bool SettingsManager::updateFromJson(SettingsBundle& settings, JsonVariantConst 
             target = section[key].as<const char*>();
         }
     };
+    auto copyJsonStringOrObject = [](JsonObjectConst section, const char* key, String& target) {
+        JsonVariantConst value = section[key];
+        if (value.isNull()) {
+            return;
+        }
+
+        if (value.is<JsonObjectConst>() || value.is<JsonArrayConst>()) {
+            String serialized;
+            serializeJson(value, serialized);
+            target = serialized;
+            return;
+        }
+
+        const char* rawValue = value.as<const char*>();
+        if (rawValue != nullptr) {
+            target = rawValue;
+            return;
+        }
+
+        String serialized;
+        serializeJson(value, serialized);
+        if (serialized.length() >= 2 && serialized.charAt(0) == '"' && serialized.charAt(serialized.length() - 1) == '"') {
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+            DynamicJsonDocument decodedValue(serialized.length() * 2U + 64U);
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+            if (!deserializeJson(decodedValue, serialized) && decodedValue.is<const char*>()) {
+                target = decodedValue.as<const char*>();
+                return;
+            }
+        }
+
+        if (!serialized.isEmpty()) {
+            target = serialized;
+        }
+    };
 
     JsonObjectConst wifi = object["wifi"];
     if (!wifi.isNull()) {
@@ -1266,34 +1299,15 @@ bool SettingsManager::updateFromJson(SettingsBundle& settings, JsonVariantConst 
     if (!ui.isNull()) {
         if (ui["gpioBoardAutodetect"].is<bool>()) settings.ui.gpioBoardAutodetect = ui["gpioBoardAutodetect"].as<bool>();
         copyString(ui, "gpioBoardSelection", settings.ui.gpioBoardSelection);
-        if (ui["peripheralDiagramLayout"].is<const char*>()) {
-            settings.ui.peripheralDiagramLayout = ui["peripheralDiagramLayout"].as<const char*>();
-        } else if (ui["peripheralDiagramPositions"].is<JsonObjectConst>()) {
+        copyJsonStringOrObject(ui, "peripheralDiagramLayout", settings.ui.peripheralDiagramLayout);
+        if (ui["peripheralDiagramLayout"].isNull() && ui["peripheralDiagramPositions"].is<JsonObjectConst>()) {
             String serializedLayout;
             serializeJson(ui["peripheralDiagramPositions"], serializedLayout);
             settings.ui.peripheralDiagramLayout = serializedLayout;
         }
-        if (ui["peripheralHelperBindings"].is<const char*>()) {
-            settings.ui.peripheralHelperBindings = ui["peripheralHelperBindings"].as<const char*>();
-        } else if (ui["peripheralHelperBindings"].is<JsonObjectConst>()) {
-            String serializedBindings;
-            serializeJson(ui["peripheralHelperBindings"], serializedBindings);
-            settings.ui.peripheralHelperBindings = serializedBindings;
-        }
-        if (ui["peripheralProfiles"].is<const char*>()) {
-            settings.ui.peripheralProfileSelections = ui["peripheralProfiles"].as<const char*>();
-        } else if (ui["peripheralProfiles"].is<JsonObjectConst>()) {
-            String serializedProfiles;
-            serializeJson(ui["peripheralProfiles"], serializedProfiles);
-            settings.ui.peripheralProfileSelections = serializedProfiles;
-        }
-        if (ui["motorRuntimeConfig"].is<const char*>()) {
-            settings.ui.motorRuntimeConfig = ui["motorRuntimeConfig"].as<const char*>();
-        } else if (ui["motorRuntimeConfig"].is<JsonObjectConst>()) {
-            String serializedMotorRuntimeConfig;
-            serializeJson(ui["motorRuntimeConfig"], serializedMotorRuntimeConfig);
-            settings.ui.motorRuntimeConfig = serializedMotorRuntimeConfig;
-        }
+        copyJsonStringOrObject(ui, "peripheralHelperBindings", settings.ui.peripheralHelperBindings);
+        copyJsonStringOrObject(ui, "peripheralProfiles", settings.ui.peripheralProfileSelections);
+        copyJsonStringOrObject(ui, "motorRuntimeConfig", settings.ui.motorRuntimeConfig);
     }
 
     settings = sanitize(settings);

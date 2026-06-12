@@ -26,6 +26,7 @@ class WebServerManager {
     using OtaHandler = std::function<bool(bool)>;
     using MqttHandler = std::function<bool(const String&, String&)>;
     using MotorRunHandler = std::function<bool(uint8_t, bool, uint32_t, int8_t, String&)>;
+    using MotorConfigSaver = std::function<bool(JsonVariantConst, String&)>;
     using StatusAppender = std::function<void(JsonObject)>;
 
     WebServerManager();
@@ -42,6 +43,7 @@ class WebServerManager {
         OtaHandler otaHandler,
         MqttHandler mqttHandler,
         MotorRunHandler motorRunHandler,
+        MotorConfigSaver motorConfigSaver,
         StatusAppender motorStatusAppender,
         SimpleHandler displayTriggerHandler,
         SimpleHandler serverShutdownHandler,
@@ -65,6 +67,7 @@ class WebServerManager {
     OtaHandler otaHandler_;
     MqttHandler mqttHandler_;
     MotorRunHandler motorRunHandler_;
+    MotorConfigSaver motorConfigSaver_;
     StatusAppender motorStatusAppender_;
     SimpleHandler displayTriggerHandler_;
     SimpleHandler serverShutdownHandler_;

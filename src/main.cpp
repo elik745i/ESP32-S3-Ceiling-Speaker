@@ -6,6 +6,7 @@
 #include <esp_system.h>
 
 #include "default_config.h"
+#include "motor_runtime_config.h"
 #include "storage_backend.h"
 
 namespace {
@@ -384,6 +385,7 @@ unsigned long lastInputPollAt = 0;
 String otaPendingVersion;
 String lastRolledBackVersion;
 String lastRollbackReason;
+uint32_t lastProcessedMotorStateVersion = 0;
 uint32_t lastPublishedMotorStateVersion = 0;
 
 constexpr float kBatteryPercentEmptyVoltage = 3.2f;
@@ -625,6 +627,13 @@ bool isLimitSwitchProfileValue(const String& profileValue) {
     return normalized == "limit-switch";
 }
 
+bool isTouchButtonProfileValue(const String& profileValue) {
+    String normalized = profileValue;
+    normalized.trim();
+    normalized.toLowerCase();
+    return normalized == "esp32-native-touch-pad" || normalized == "ttp223-touch-button";
+}
+
 bool isTouchCapablePin(uint8_t pin) {
 #if defined(CONFIG_IDF_TARGET_ESP32)
     switch (pin) {
@@ -716,6 +725,23 @@ uint8_t configuredInputPin(size_t index, const String& profileValue, uint8_t fal
     return static_cast<uint8_t>(numericPin);
 }
 
+int configuredAssignedInputPin(size_t index, const String& profileValue) {
+    String rawValue;
+    if (isNativeTouchProfileValue(profileValue)) {
+        rawValue = peripheralInputHelperValue(index, "TOUCH");
+    } else if (isLimitSwitchProfileValue(profileValue)) {
+        rawValue = peripheralInputHelperValue(index, "COM");
+        if (rawValue.isEmpty()) {
+            rawValue = peripheralInputHelperValue(index, "SIG");
+        }
+    } else {
+        rawValue = peripheralInputHelperValue(index, "SIG");
+    }
+
+    const int numericPin = rawValue.isEmpty() ? -1 : rawValue.toInt();
+    return (numericPin < 0 || numericPin > 255) ? -1 : numericPin;
+}
+
 uint8_t configuredTouchSensitivity(size_t index) {
     const String rawValue = peripheralInputHelperValue(index, "SENSITIVITY");
     const int numericValue = rawValue.isEmpty() ? static_cast<int>(kDefaultTouchSensitivityPercent) : rawValue.toInt();
@@ -742,11 +768,186 @@ bool configuredLimitSwitchSwitchedToVcc(size_t index) {
     return sourceValue == "VCC";
 }
 
+void configureLimitSwitchInputPin(size_t index) {
+    const String profileValue = peripheralInputProfileFromUi(index);
+    if (!isLimitSwitchProfileValue(profileValue)) {
+        return;
+    }
+
+    const int pin = configuredAssignedInputPin(index, profileValue);
+    if (pin < 0) {
+        return;
+    }
+
+    const bool switchedToVcc = configuredLimitSwitchSwitchedToVcc(index);
+    pinMode(static_cast<uint8_t>(pin), switchedToVcc ? INPUT_PULLDOWN : INPUT_PULLUP);
+}
+
+bool readConfiguredLimitSwitchPressed(size_t index) {
+    const String profileValue = peripheralInputProfileFromUi(index);
+    if (!isLimitSwitchProfileValue(profileValue)) {
+        return false;
+    }
+
+    const int pin = configuredAssignedInputPin(index, profileValue);
+    if (pin < 0 || sdStorageUsesPin(static_cast<uint8_t>(pin))) {
+        return false;
+    }
+
+    const bool normallyClosed = configuredLimitSwitchNormallyClosed(index);
+    const bool switchedToVcc = configuredLimitSwitchSwitchedToVcc(index);
+    const bool activeHigh = switchedToVcc != normallyClosed;
+    configureLimitSwitchInputPin(index);
+    return (digitalRead(static_cast<uint8_t>(pin)) == HIGH) == activeHigh;
+}
+
 bool configuredTouchMainControlEnabled(size_t index) {
     String flagValue = peripheralInputHelperValue(index, "MAIN_CONTROL");
     flagValue.trim();
     flagValue.toLowerCase();
     return flagValue == "1" || flagValue == "true" || flagValue == "on" || flagValue == "yes";
+}
+
+const char* motorRuntimeChannelKey(uint8_t channelIndex) {
+    return MotorRuntimeConfig::channelKey(channelIndex);
+}
+
+const char* motorRuntimeDirectionKey(bool forward) {
+    return MotorRuntimeConfig::directionKey(forward);
+}
+
+String normalizeMotorLearnedState(String value) {
+    return MotorRuntimeConfig::normalizeLearnedState(value);
+}
+
+String normalizeTouchMotorAction(String value) {
+    return MotorRuntimeConfig::normalizeTouchAction(value);
+}
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+size_t motorRuntimeConfigJsonCapacity(const String& rawConfig);
+bool deserializeMotorRuntimeConfigDocument(const String& rawConfig, DynamicJsonDocument& document);
+
+String configuredTouchMotorAction(uint8_t controlSlot) {
+    if (settings == nullptr) {
+        return "none";
+    }
+
+    DynamicJsonDocument document(motorRuntimeConfigJsonCapacity(settings->ui.motorRuntimeConfig));
+    if (!deserializeMotorRuntimeConfigDocument(settings->ui.motorRuntimeConfig, document)) {
+        return "none";
+    }
+    JsonObjectConst touchButtons = document["touchButtons"].as<JsonObjectConst>();
+    if (touchButtons.isNull()) {
+        return "none";
+    }
+
+    const char* buttonKey = controlSlot == 0 ? "button1" : "button2";
+    JsonObjectConst buttonConfig = touchButtons[buttonKey].as<JsonObjectConst>();
+    return normalizeTouchMotorAction(String(static_cast<const char*>(buttonConfig["action"] | "none")));
+}
+
+String movementRoleFromRuntimeConfig(JsonObjectConst channelConfig, bool forward) {
+    return MotorRuntimeConfig::movementRole(channelConfig, forward);
+}
+
+String learnedStateForMovementRole(const String& role) {
+    if (role == "opening") {
+        return "open";
+    }
+    if (role == "closing") {
+        return "closed";
+    }
+    return "unknown";
+}
+
+String inferredMotorLearnedState(JsonObjectConst channelStatus, JsonObjectConst channelConfig) {
+    if (channelStatus.isNull() || (channelStatus["active"] | false)) {
+        return "unknown";
+    }
+
+    String stopReason = String(static_cast<const char*>(channelStatus["stopReason"] | ""));
+    stopReason.trim();
+    stopReason.toLowerCase();
+    if (stopReason != "time_limit_reached" && stopReason != "end_switch_activated") {
+        return "unknown";
+    }
+
+    String lastDirection = String(static_cast<const char*>(channelStatus["lastDirection"] | "forward"));
+    lastDirection.trim();
+    lastDirection.toLowerCase();
+    const bool forward = lastDirection != "backward";
+    return learnedStateForMovementRole(movementRoleFromRuntimeConfig(channelConfig, forward));
+}
+
+String motorPositionState(JsonObjectConst channelStatus, JsonObjectConst channelConfig, const String& learnedState) {
+    if (channelStatus.isNull()) {
+        return "idle";
+    }
+
+    if (channelStatus["active"] | false) {
+        String direction = String(static_cast<const char*>(channelStatus["direction"] | "forward"));
+        direction.trim();
+        direction.toLowerCase();
+        const bool forward = direction != "backward";
+        const String role = movementRoleFromRuntimeConfig(channelConfig, forward);
+        if (role == "opening" || role == "closing") {
+            return role;
+        }
+        return forward ? String("forward") : String("backward");
+    }
+
+    return learnedState == "open" || learnedState == "closed" ? learnedState : String("idle");
+}
+
+void appendAugmentedMotorStatus(JsonObject root) {
+    if (!motorController.available()) {
+        root["available"] = false;
+        return;
+    }
+
+    motorController.appendStatus(root);
+    if (settings == nullptr) {
+        return;
+    }
+
+    DynamicJsonDocument runtimeConfigDoc(motorRuntimeConfigJsonCapacity(settings->ui.motorRuntimeConfig));
+    if (!deserializeMotorRuntimeConfigDocument(settings->ui.motorRuntimeConfig, runtimeConfigDoc)) {
+        return;
+    }
+    JsonArray channels = root["channels"].as<JsonArray>();
+    for (uint8_t channelIndex = 0; channelIndex < 2 && channelIndex < channels.size(); ++channelIndex) {
+        JsonObject channel = channels[channelIndex].as<JsonObject>();
+        if (channel.isNull()) {
+            continue;
+        }
+
+        JsonObjectConst channelConfig = runtimeConfigDoc[motorRuntimeChannelKey(channelIndex)].as<JsonObjectConst>();
+        const String persistedLearnedState = normalizeMotorLearnedState(String(static_cast<const char*>(channelConfig["learnedState"] | "unknown")));
+        const String inferredLearnedState = inferredMotorLearnedState(channel, channelConfig);
+        String learnedState = inferredLearnedState != "unknown" ? inferredLearnedState : persistedLearnedState;
+
+        const String positionState = motorPositionState(channel, channelConfig, learnedState);
+        channel["learnedState"] = learnedState;
+        channel["positionState"] = positionState;
+
+        if (!(channel["active"] | false) && learnedState != "unknown") {
+            String stopReason = String(static_cast<const char*>(channel["stopReason"] | ""));
+            stopReason.trim();
+            stopReason.toLowerCase();
+            const String label = learnedState == "open" ? String("open") : String("closed");
+            if (stopReason == "time_limit_reached") {
+                channel["statusText"] = label + ", time limit reached";
+            } else if (stopReason == "end_switch_activated") {
+                channel["statusText"] = label + ", end switch activated";
+            } else {
+                channel["statusText"] = label;
+            }
+        }
+    }
 }
 
 void applyButtonProfileConfig(PhysicalButtonState& button, size_t index, uint8_t fallbackPin) {
@@ -760,7 +961,7 @@ void applyButtonProfileConfig(PhysicalButtonState& button, size_t index, uint8_t
     button.limitSwitchActiveHigh = button.limitSwitch ? (switchedToVcc != button.normallyClosed) : false;
     button.nativeTouch = isNativeTouchProfileValue(button.profileValue);
     button.touchSupported = button.nativeTouch && isTouchCapablePin(button.pin);
-    button.mainControlEnabled = button.nativeTouch && configuredTouchMainControlEnabled(index);
+    button.mainControlEnabled = isTouchButtonProfileValue(button.profileValue) && configuredTouchMainControlEnabled(index);
     button.sensitivityPercent = configuredTouchSensitivity(index);
     button.touchRawValue = 0;
     button.touchBaselineValue = 0;
@@ -813,7 +1014,8 @@ void flashFactoryResetIndicator() {
 }
 
 bool isAnyTouchInputPressed() {
-    return (button1.touchSupported && button1.stablePressed) || (button2.touchSupported && button2.stablePressed);
+    return (isTouchButtonProfileValue(button1.profileValue) && button1.stablePressed) ||
+        (isTouchButtonProfileValue(button2.profileValue) && button2.stablePressed);
 }
 
 bool isFactoryResetLedBlinkActive(unsigned long now) {
@@ -871,7 +1073,7 @@ void triggerTouchHoldFactoryReset(PhysicalButtonState& button) {
 void serviceTouchHoldFactoryReset(PhysicalButtonState& button, unsigned long now) {
     if (settings == nullptr || !settings->device.touchHoldFactoryResetEnabled ||
         !button.mainControlEnabled ||
-        !button.nativeTouch || !button.touchSupported || !button.stablePressed || button.pressedSinceAt == 0 ||
+        !isTouchButtonProfileValue(button.profileValue) || !button.stablePressed || button.pressedSinceAt == 0 ||
         rebootRequested || factoryResetRequested || button.holdResetTriggered) {
         return;
     }
@@ -1375,7 +1577,7 @@ String normalizedButtonAction(String action, const char* fallback) {
 
     if (action == "none" || action == "previous" || action == "next" || action == "play_pause" ||
         action == "replay_current" || action == "stop" || action == "volume_up" || action == "volume_down" ||
-        action == "ha_previous" || action == "ha_next") {
+        action == "ha_previous" || action == "ha_next" || action == "toggle_open" || action == "toggle_close" || action == "toggle_open_close") {
         return action;
     }
 
@@ -1383,6 +1585,13 @@ String normalizedButtonAction(String action, const char* fallback) {
 }
 
 String buttonActionFor(const PhysicalButtonState& button) {
+    if (isTouchButtonProfileValue(button.profileValue)) {
+        const String touchMotorAction = configuredTouchMotorAction(button.controlSlot);
+        if (touchMotorAction != "none") {
+            return touchMotorAction;
+        }
+    }
+
     if (settings == nullptr) {
         return button.controlSlot == 0 ? String(DefaultConfig::BUTTON1_DEFAULT_ACTION) : String(DefaultConfig::BUTTON2_DEFAULT_ACTION);
     }
@@ -1395,7 +1604,7 @@ String buttonActionFor(const PhysicalButtonState& button) {
 int resolveMainControlInputIndex() {
     for (size_t index = 0; index < kMaxPeripheralInputProfiles; ++index) {
         const String profile = peripheralInputProfileFromUi(index);
-        if (isNativeTouchProfileValue(profile) && configuredTouchMainControlEnabled(index)) {
+        if (isTouchButtonProfileValue(profile) && configuredTouchMainControlEnabled(index)) {
             return static_cast<int>(index);
         }
     }
@@ -1445,7 +1654,124 @@ String buttonActionDisplayLabel(const String& action) {
     if (action == "ha_next") {
         return "HA Next";
     }
+    if (action == "toggle_open") {
+        return "Open";
+    }
+    if (action == "toggle_close") {
+        return "Close";
+    }
+    if (action == "toggle_open_close") {
+        return "Open/Close";
+    }
     return action;
+}
+
+bool motorChannelConfigured(uint8_t channelIndex) {
+    JsonDocument motorDoc;
+    appendAugmentedMotorStatus(motorDoc.to<JsonObject>());
+    JsonArrayConst channels = motorDoc["channels"].as<JsonArrayConst>();
+    return channelIndex < channels.size() && !channels[channelIndex].isNull() && (channels[channelIndex]["configured"] | false);
+}
+
+int8_t resolveTouchMotorChannelIndex(const PhysicalButtonState& button) {
+    if (button.controlSlot < 2 && motorChannelConfigured(button.controlSlot)) {
+        return static_cast<int8_t>(button.controlSlot);
+    }
+    for (uint8_t channelIndex = 0; channelIndex < 2; ++channelIndex) {
+        if (motorChannelConfigured(channelIndex)) {
+            return static_cast<int8_t>(channelIndex);
+        }
+    }
+    return -1;
+}
+
+struct TouchMotorRunConfig {
+    bool forward = true;
+    uint32_t durationMs = 5000;
+    int8_t limitInputIndex = -1;
+};
+
+uint32_t clampPersistedMotorDuration(uint32_t durationMs);
+
+TouchMotorRunConfig touchMotorRunConfigForDirection(uint8_t channelIndex, bool openDirection) {
+    TouchMotorRunConfig config;
+    if (settings == nullptr) {
+        config.forward = openDirection;
+        return config;
+    }
+
+    JsonDocument document;
+    const String runtimeConfigJson = settings->ui.motorRuntimeConfig.isEmpty() ? String("{}") : settings->ui.motorRuntimeConfig;
+    deserializeJson(document, runtimeConfigJson);
+    JsonObjectConst channel = document[motorRuntimeChannelKey(channelIndex)].as<JsonObjectConst>();
+
+    const auto applyDirectionConfig = [&](const char* directionKey, bool forwardDirection) {
+        JsonObjectConst direction = channel[directionKey].as<JsonObjectConst>();
+        config.forward = forwardDirection;
+        config.durationMs = clampPersistedMotorDuration(direction["durationMs"] | config.durationMs);
+        config.limitInputIndex = direction["limitInputIndex"].isNull()
+            ? static_cast<int8_t>(-1)
+            : static_cast<int8_t>(direction["limitInputIndex"].as<int>());
+    };
+
+    const String targetRole = openDirection ? String("opening") : String("closing");
+    const String forwardRole = movementRoleFromRuntimeConfig(channel, true);
+    const String backwardRole = movementRoleFromRuntimeConfig(channel, false);
+    if (forwardRole == targetRole && backwardRole != targetRole) {
+        applyDirectionConfig("forward", true);
+    } else if (backwardRole == targetRole && forwardRole != targetRole) {
+        applyDirectionConfig("backward", false);
+    } else {
+        applyDirectionConfig(openDirection ? "forward" : "backward", openDirection);
+    }
+
+    return config;
+}
+
+String learnedMotorStateForChannel(uint8_t channelIndex) {
+    if (settings == nullptr) {
+        return "unknown";
+    }
+
+    JsonDocument document;
+    const String runtimeConfigJson = settings->ui.motorRuntimeConfig.isEmpty() ? String("{}") : settings->ui.motorRuntimeConfig;
+    deserializeJson(document, runtimeConfigJson);
+    JsonObjectConst channel = document[motorRuntimeChannelKey(channelIndex)].as<JsonObjectConst>();
+    return normalizeMotorLearnedState(String(static_cast<const char*>(channel["learnedState"] | "unknown")));
+}
+
+bool runTouchMotorAction(const PhysicalButtonState& button, const String& action) {
+    const int8_t channelIndex = resolveTouchMotorChannelIndex(button);
+    if (channelIndex < 0) {
+        if (appState != nullptr) {
+            appState->setLastError("No configured motor channel is available for touch control.");
+        }
+        return false;
+    }
+
+    bool openDirection = true;
+    if (action == "toggle_close") {
+        openDirection = false;
+    } else if (action == "toggle_open_close") {
+        openDirection = learnedMotorStateForChannel(static_cast<uint8_t>(channelIndex)) != "open";
+    }
+
+    const TouchMotorRunConfig config = touchMotorRunConfigForDirection(static_cast<uint8_t>(channelIndex), openDirection);
+    String error;
+    if (!motorController.runChannel(static_cast<uint8_t>(channelIndex), config.forward, config.durationMs, config.limitInputIndex, error)) {
+        if (appState != nullptr) {
+            appState->setLastError(error.isEmpty() ? String("Motor command failed.") : error);
+        }
+        return false;
+    }
+
+    if (appState != nullptr) {
+        appState->setLastError("");
+    }
+    if (mqttManager != nullptr) {
+        mqttManager->publishState();
+    }
+    return true;
 }
 
 String buttonOverlayText(const String& action) {
@@ -1522,6 +1848,11 @@ void initializeButtons() {
     button2.holdResetTriggered = false;
     button2.pressedSinceAt = button2.stablePressed ? now : 0;
     button2.lastTransitionAt = now;
+
+    for (size_t index = 0; index < kMaxPeripheralInputProfiles; ++index) {
+        configureLimitSwitchInputPin(index);
+    }
+
     publishInputSnapshots();
 }
 
@@ -1754,6 +2085,10 @@ bool executeButtonAction(const PhysicalButtonState& button, const String& action
             return false;
         }
         return mqttManager->publishButtonActionEvent(button.label, button.pin, action == "ha_previous" ? "previous" : "next");
+    }
+
+    if (action == "toggle_open" || action == "toggle_close" || action == "toggle_open_close") {
+        return runTouchMotorAction(button, action);
     }
 
     return false;
@@ -2061,16 +2396,185 @@ void applyRuntimeSettings() {
     updateStatusLedForNetwork(wifiManager->isConnected(), wifiManager->isApMode());
 }
 
+void preserveLearnedMotorStates(SettingsBundle& target, const SettingsBundle& source) {
+    DynamicJsonDocument sourceDoc(motorRuntimeConfigJsonCapacity(source.ui.motorRuntimeConfig));
+    if (!deserializeMotorRuntimeConfigDocument(source.ui.motorRuntimeConfig, sourceDoc)) {
+        return;
+    }
+
+    DynamicJsonDocument targetDoc(motorRuntimeConfigJsonCapacity(target.ui.motorRuntimeConfig));
+    if (!deserializeMotorRuntimeConfigDocument(target.ui.motorRuntimeConfig, targetDoc)) {
+        return;
+    }
+
+    bool changed = false;
+    for (uint8_t channelIndex = 0; channelIndex < 2; ++channelIndex) {
+        const char* channelKey = motorRuntimeChannelKey(channelIndex);
+        JsonObjectConst sourceChannel = sourceDoc[channelKey].as<JsonObjectConst>();
+        JsonObject targetChannel = targetDoc[channelKey].as<JsonObject>();
+        if (targetChannel.isNull()) {
+            targetChannel = targetDoc[channelKey].to<JsonObject>();
+        }
+
+        for (const char* directionKey : {"forward", "backward"}) {
+            JsonObjectConst sourceDirection = sourceChannel[directionKey].as<JsonObjectConst>();
+            JsonObjectConst targetDirection = targetChannel[directionKey].as<JsonObjectConst>();
+            if (!sourceDirection.isNull() && targetDirection.isNull()) {
+                targetChannel[directionKey].set(sourceDirection);
+                changed = true;
+            }
+        }
+
+        const String sourceState = normalizeMotorLearnedState(String(static_cast<const char*>(sourceChannel["learnedState"] | "unknown")));
+        if (sourceState == "unknown") {
+            continue;
+        }
+
+        const String targetState = normalizeMotorLearnedState(String(static_cast<const char*>(targetChannel["learnedState"] | "unknown")));
+        if (targetState != "unknown") {
+            continue;
+        }
+
+        if (targetChannel["forward"].isNull() && targetChannel["backward"].isNull()) {
+            continue;
+        }
+
+        targetChannel["learnedState"] = sourceState;
+        changed = true;
+    }
+
+    JsonObjectConst sourceTouchButtons = sourceDoc["touchButtons"].as<JsonObjectConst>();
+    JsonObjectConst targetTouchButtons = targetDoc["touchButtons"].as<JsonObjectConst>();
+    if (!sourceTouchButtons.isNull() && targetTouchButtons.isNull()) {
+        targetDoc["touchButtons"].set(sourceTouchButtons);
+        changed = true;
+    }
+
+    if (!changed) {
+        return;
+    }
+
+    String serialized;
+    serializeJson(targetDoc.as<JsonObjectConst>(), serialized);
+    target.ui.motorRuntimeConfig = serialized;
+}
+
+bool extractMotorRuntimeConfigFromJson(JsonVariantConst root, String& rawConfig) {
+    if (!root.is<JsonObjectConst>()) {
+        return false;
+    }
+
+    JsonObjectConst ui = root["ui"].as<JsonObjectConst>();
+    if (ui.isNull()) {
+        return false;
+    }
+
+    JsonVariantConst value = ui["motorRuntimeConfig"];
+    if (value.isNull()) {
+        return false;
+    }
+
+    rawConfig = "";
+    if (value.is<JsonObjectConst>() || value.is<JsonArrayConst>()) {
+        serializeJson(value, rawConfig);
+    } else {
+        const char* rawValue = value.as<const char*>();
+        if (rawValue != nullptr) {
+            rawConfig = rawValue;
+        } else {
+            String serializedValue;
+            serializeJson(value, serializedValue);
+            if (serializedValue.length() >= 2 && serializedValue.charAt(0) == '"' && serializedValue.charAt(serializedValue.length() - 1) == '"') {
+                DynamicJsonDocument decodedValue(serializedValue.length() * 2U + 64U);
+                if (!deserializeJson(decodedValue, serializedValue) && decodedValue.is<const char*>()) {
+                    rawConfig = decodedValue.as<const char*>();
+                }
+            }
+            if (rawConfig.isEmpty()) {
+                rawConfig = serializedValue;
+            }
+        }
+    }
+
+    if (rawConfig.isEmpty()) {
+        return false;
+    }
+    rawConfig.trim();
+    return !rawConfig.isEmpty();
+}
+
 bool saveSettingsFromJson(JsonVariantConst root, String& error) {
+    String postedMotorRuntimeConfig;
+    const bool hasPostedMotorRuntimeConfig = extractMotorRuntimeConfigFromJson(root, postedMotorRuntimeConfig);
+    postedMotorRuntimeConfig.trim();
+
     SettingsBundle updated = *settings;
     if (!settingsManager->updateFromJson(updated, root, error)) {
         return false;
     }
+    if (hasPostedMotorRuntimeConfig) {
+        updated.ui.motorRuntimeConfig = postedMotorRuntimeConfig.isEmpty() ? String("{}") : postedMotorRuntimeConfig;
+    } else {
+        preserveLearnedMotorStates(updated, *settings);
+    }
     updated.usingSavedSettings = true;
-    *settings = updated;
+    settingsManager->save(updated);
+
+    SettingsBundle persisted = settingsManager->load();
+    if (hasPostedMotorRuntimeConfig && persisted.ui.motorRuntimeConfig != updated.ui.motorRuntimeConfig) {
+        persisted.ui.motorRuntimeConfig = updated.ui.motorRuntimeConfig;
+        persisted.usingSavedSettings = true;
+        settingsManager->save(persisted);
+        persisted = settingsManager->load();
+    }
+
+    *settings = persisted;
     appState->setDevice(settings->device.deviceName, settings->device.friendlyName, true);
-    deferredActions->pendingSettings = updated;
+    deferredActions->pendingSettings = persisted;
     deferredActions->settingsApplyPending = true;
+    return true;
+}
+
+bool saveMotorRuntimeConfigFromJson(JsonVariantConst root, String& error) {
+    if (settings == nullptr || settingsManager == nullptr) {
+        error = "Motor settings are unavailable.";
+        return false;
+    }
+
+    String rawConfig;
+    if (root.is<JsonObjectConst>() || root.is<JsonArrayConst>()) {
+        serializeJson(root, rawConfig);
+    } else {
+        const char* rawValue = root.as<const char*>();
+        if (rawValue != nullptr) {
+            rawConfig = rawValue;
+        }
+    }
+
+    rawConfig.trim();
+    if (rawConfig.isEmpty() || rawConfig == "{}") {
+        error = "Motor settings payload is invalid.";
+        return false;
+    }
+
+    SettingsBundle updated = *settings;
+    updated.ui.motorRuntimeConfig = rawConfig;
+    preserveLearnedMotorStates(updated, *settings);
+    updated.usingSavedSettings = true;
+
+    settingsManager->save(updated);
+    *settings = settingsManager->load();
+    if (settings->ui.motorRuntimeConfig != updated.ui.motorRuntimeConfig) {
+        settings->ui.motorRuntimeConfig = updated.ui.motorRuntimeConfig;
+        settings->usingSavedSettings = true;
+        settingsManager->save(*settings);
+        *settings = settingsManager->load();
+    }
+
+    appState->setDevice(settings->device.deviceName, settings->device.friendlyName, true);
+    applyRuntimeSettings();
+    mqttManager->publishState();
+    error = "";
     return true;
 }
 
@@ -2181,6 +2685,14 @@ uint32_t clampPersistedMotorDuration(uint32_t durationMs) {
     return durationMs > 600000U ? 600000U : durationMs;
 }
 
+size_t motorRuntimeConfigJsonCapacity(const String& rawConfig) {
+    return MotorRuntimeConfig::jsonCapacity(rawConfig);
+}
+
+bool deserializeMotorRuntimeConfigDocument(const String& rawConfig, DynamicJsonDocument& document) {
+    return MotorRuntimeConfig::deserializeDocument(rawConfig, document);
+}
+
 bool updateMotorRuntimeDurationSetting(int8_t channelIndex, bool forward, uint32_t durationMs, String& error) {
     if (settings == nullptr || settingsManager == nullptr || mqttManager == nullptr) {
         error = "Motor settings are unavailable.";
@@ -2191,12 +2703,31 @@ bool updateMotorRuntimeDurationSetting(int8_t channelIndex, bool forward, uint32
         return false;
     }
 
-    JsonDocument document;
-    deserializeJson(document, settings->ui.motorRuntimeConfig.isEmpty() ? String("{}") : settings->ui.motorRuntimeConfig);
+    DynamicJsonDocument document(motorRuntimeConfigJsonCapacity(settings->ui.motorRuntimeConfig));
+    if (!deserializeMotorRuntimeConfigDocument(settings->ui.motorRuntimeConfig, document)) {
+        error = "Saved motor settings are invalid.";
+        return false;
+    }
     const char* channelKey = channelIndex == 0 ? "a" : "b";
-    const char* directionKey = forward ? "forward" : "backward";
-    JsonObject channel = document[channelKey].to<JsonObject>();
-    JsonObject direction = channel[directionKey].to<JsonObject>();
+    JsonObject channel = document[channelKey].as<JsonObject>();
+    if (channel.isNull()) {
+        channel = document[channelKey].to<JsonObject>();
+    }
+    const String targetRole = forward ? String("opening") : String("closing");
+    const String forwardRole = movementRoleFromRuntimeConfig(channel, true);
+    const String backwardRole = movementRoleFromRuntimeConfig(channel, false);
+    const char* directionKey = nullptr;
+    if (forwardRole == targetRole && backwardRole != targetRole) {
+        directionKey = "forward";
+    } else if (backwardRole == targetRole && forwardRole != targetRole) {
+        directionKey = "backward";
+    } else {
+        directionKey = forward ? "forward" : "backward";
+    }
+    JsonObject direction = channel[directionKey].as<JsonObject>();
+    if (direction.isNull()) {
+        direction = channel[directionKey].to<JsonObject>();
+    }
     direction["durationMs"] = clampPersistedMotorDuration(durationMs);
 
     String serialized;
@@ -2208,13 +2739,70 @@ bool updateMotorRuntimeDurationSetting(int8_t channelIndex, bool forward, uint32
     return true;
 }
 
-void publishMotorStateIfNeeded() {
-    if (mqttManager == nullptr || !mqttManager->isConnected()) {
+void persistLearnedMotorStateIfNeeded() {
+    if (settings == nullptr || settingsManager == nullptr || !motorController.available()) {
         return;
     }
 
+    JsonDocument statusDoc;
+    appendAugmentedMotorStatus(statusDoc.to<JsonObject>());
+    if (!(statusDoc["available"] | false)) {
+        return;
+    }
+
+    DynamicJsonDocument runtimeConfigDoc(motorRuntimeConfigJsonCapacity(settings->ui.motorRuntimeConfig));
+    if (!deserializeMotorRuntimeConfigDocument(settings->ui.motorRuntimeConfig, runtimeConfigDoc)) {
+        return;
+    }
+    JsonArrayConst channels = statusDoc["channels"].as<JsonArrayConst>();
+    bool changed = false;
+    for (uint8_t channelIndex = 0; channelIndex < 2 && channelIndex < channels.size(); ++channelIndex) {
+        JsonObjectConst channelStatus = channels[channelIndex].as<JsonObjectConst>();
+        if (channelStatus.isNull()) {
+            continue;
+        }
+
+        String learnedState = normalizeMotorLearnedState(String(static_cast<const char*>(channelStatus["learnedState"] | "unknown")));
+        if (learnedState == "unknown") {
+            continue;
+        }
+
+        JsonObject channelConfig = runtimeConfigDoc[motorRuntimeChannelKey(channelIndex)].as<JsonObject>();
+        if (channelConfig.isNull()) {
+            channelConfig = runtimeConfigDoc[motorRuntimeChannelKey(channelIndex)].to<JsonObject>();
+        }
+        const String currentState = normalizeMotorLearnedState(String(static_cast<const char*>(channelConfig["learnedState"] | "unknown")));
+        if (currentState == learnedState) {
+            continue;
+        }
+
+        channelConfig["learnedState"] = learnedState;
+        changed = true;
+    }
+
+    if (!changed) {
+        return;
+    }
+
+    String serialized;
+    serializeJson(runtimeConfigDoc.as<JsonObjectConst>(), serialized);
+    settings->ui.motorRuntimeConfig = serialized;
+    settingsManager->save(*settings);
+}
+
+void publishMotorStateIfNeeded() {
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
     const uint32_t currentVersion = motorController.stateVersion();
-    if (currentVersion == lastPublishedMotorStateVersion) {
+    if (currentVersion == lastProcessedMotorStateVersion) {
+        return;
+    }
+
+    lastProcessedMotorStateVersion = currentVersion;
+    persistLearnedMotorStateIfNeeded();
+
+    if (mqttManager == nullptr || !mqttManager->isConnected()) {
         return;
     }
 
@@ -2367,6 +2955,7 @@ void executePlaybackCommand(const PlaybackCommand& command) {
             appState->setLastError(error.isEmpty() ? String("Motor command failed.") : error);
         }
         mqttManager->publishState();
+        lastProcessedMotorStateVersion = motorController.stateVersion();
         lastPublishedMotorStateVersion = motorController.stateVersion();
     } else if (command.action == "motor_set_duration") {
         String error;
@@ -2636,20 +3225,10 @@ void setup() {
     otaManager->setProgressCallback(pumpOtaDisplayProgress);
 
     mqttManager->begin(*settings, *appState, *wifiManager, *otaManager, handleMqttCommand, [](JsonObject root) {
-        if (motorController.available()) {
-            motorController.appendStatus(root);
-        } else {
-            root["available"] = false;
-        }
+        appendAugmentedMotorStatus(root);
     });
     motorController.begin([](int8_t limitInputIndex) {
-        if (button1.configuredIndex == limitInputIndex) {
-            return button1.stablePressed;
-        }
-        if (button2.configuredIndex == limitInputIndex) {
-            return button2.stablePressed;
-        }
-        return false;
+        return limitInputIndex >= 0 ? readConfiguredLimitSwitchPressed(static_cast<size_t>(limitInputIndex)) : false;
     });
 
     webServer->begin(
@@ -2706,12 +3285,22 @@ void setup() {
                 error = "DRV8833 control is not configured.";
                 return false;
             }
-            return motorController.runChannel(channelIndex, forward, durationMs, limitInputIndex, error);
-        },
-        [](JsonObject root) {
-            if (motorController.available()) {
-                motorController.appendStatus(root);
+            if (!motorController.runChannel(channelIndex, forward, durationMs, limitInputIndex, error)) {
+                return false;
             }
+            if (appState != nullptr) {
+                appState->setLastError("");
+            }
+            if (mqttManager != nullptr) {
+                mqttManager->publishState();
+            }
+            lastProcessedMotorStateVersion = motorController.stateVersion();
+            lastPublishedMotorStateVersion = motorController.stateVersion();
+            return true;
+        },
+        saveMotorRuntimeConfigFromJson,
+        [](JsonObject root) {
+            appendAugmentedMotorStatus(root);
         },
         []() { triggerWapeDisplay(); },
         []() {
@@ -2735,6 +3324,8 @@ void setup() {
     if (settings->oled.displayType == "wape" && settings->oled.wapeTriggerEvent == "device_start") {
         requestWapeTriggerPulse();
     }
+
+    applyRuntimeSettings();
 }
 
 namespace {
@@ -3080,6 +3671,7 @@ void loop() {
         lastHeapUpdateAt = millis();
         sampleSystemMetrics();
         appState->setFreeHeap(getSystemMetricsSnapshot().freeHeapBytes);
+        mqttManager->publishChipTemperature();
         updateStatusLedForNetwork(wifiManager->isConnected(), wifiManager->isApMode());
     }
 

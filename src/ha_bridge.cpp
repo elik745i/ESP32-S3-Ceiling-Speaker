@@ -114,7 +114,7 @@ String discoveryPayloadBinarySensor(const SettingsBundle& settings, const char* 
     return out;
 }
 
-String discoveryPayloadSwitch(const SettingsBundle& settings, const char* objectId, const char* name, const char* stateTopic, const char* commandTopicValue, const char* valueTemplate, const char* icon, const String& configurationUrl, const char* payloadOn, const char* payloadOff) {
+String discoveryPayloadSwitch(const SettingsBundle& settings, const char* objectId, const char* name, const char* stateTopic, const char* commandTopicValue, const char* valueTemplate, const char* icon, const String& configurationUrl, const char* payloadOn, const char* payloadOff, bool optimistic) {
     JsonDocument doc;
     doc["name"] = name;
     doc["uniq_id"] = entityUniqueId(settings, objectId);
@@ -126,6 +126,7 @@ String discoveryPayloadSwitch(const SettingsBundle& settings, const char* object
     doc["pl_off"] = payloadOff;
     doc["stat_on"] = payloadOn;
     doc["stat_off"] = payloadOff;
+    if (optimistic) doc["optimistic"] = true;
     if (icon != nullptr) doc["ic"] = icon;
     fillDevice(settings, doc["dev"].to<JsonObject>(), configurationUrl);
     String out;

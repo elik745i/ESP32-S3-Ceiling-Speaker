@@ -13,6 +13,7 @@ import { createHardwareTab } from "./modules/hardware-tab.js";
 import { createInfoTab } from "./modules/info-tab.js";
 import { createMotorTab } from "./modules/motor-tab.js";
 import { createMqttTab } from "./modules/mqtt-tab.js";
+import { normalizeMotorRuntimeConfig } from "./modules/motor-runtime-config.js";
 import {
   createPeripheralDiagramLabelEditorModule,
   peripheralDiagramLabelId,
@@ -1049,6 +1050,9 @@ const elements = {
   motorChannelBBackwardRole: document.getElementById("motorChannelBBackwardRole"),
   motorChannelBBackwardLimit: document.getElementById("motorChannelBBackwardLimit"),
   motorChannelBStatus: document.getElementById("motorChannelBStatus"),
+  motorTouchSection: document.getElementById("motorTouchSection"),
+  motorTouchList: document.getElementById("motorTouchList"),
+  motorTouchSummary: document.getElementById("motorTouchSummary"),
   gpioBoardSelector: document.getElementById("gpioBoardSelector"),
   gpioBoardImage: document.getElementById("gpioBoardImage"),
   peripheralDiagramStage: document.getElementById("peripheralDiagramStage"),
@@ -2410,7 +2414,7 @@ function helperBindingSignalOptionsFor(groupKey, index, signalLabel) {
 
   if (groupKey === "input" && String(signalLabel || "").trim().toUpperCase() === "MAIN_CONTROL") {
     return [
-      { value: "", label: "Detect touch only" },
+      { value: "", label: "None" },
       { value: "1", label: "Use as main control" },
     ];
   }
@@ -2470,6 +2474,10 @@ function helperSignalLabels(groupKey, profileValue) {
 
   if (groupKey === "input" && profile.includes("esp32-native-touch-pad")) {
     return ["TOUCH", "MAIN_CONTROL"];
+  }
+
+  if (groupKey === "input" && profile.includes("ttp223-touch-button")) {
+    return ["MAIN_CONTROL"];
   }
 
   if (groupKey === "input" && profile.includes("limit-switch")) {
@@ -2546,6 +2554,8 @@ function peripheralDiagramNativeTouchMarkup(node) {
   const rawValue = Number(runtimeStatus?.rawValue || 0);
   const baselineValue = Number(runtimeStatus?.baselineValue || 0);
   const deltaValue = baselineValue > 0 && rawValue > 0 ? Math.abs(rawValue - baselineValue) : 0;
+  const sensitivityFieldId = `touch-sensitivity-${node.index}`;
+  const sensitivityFieldName = `touch.sensitivity.${node.index}`;
   const metrics = runtimeStatus && baselineValue > 0
     ? `Raw ${rawValue} / Base ${baselineValue} / Delta ${deltaValue}`
     : "Select a touch-capable GPIO to enable live sensing";
@@ -2564,6 +2574,8 @@ function peripheralDiagramNativeTouchMarkup(node) {
       <label class="peripheral-diagram-touch-sensitivity">
         <span class="peripheral-diagram-touch-sensitivity-label">Sensitivity</span>
         <input
+          id="${sensitivityFieldId}"
+          name="${sensitivityFieldName}"
           type="range"
           min="5"
           max="100"
@@ -6024,10 +6036,12 @@ function renderStorageRow(entry, selectionMode, selectedPaths) {
   const path = String(entry?.path || "");
   const isSelected = selectedPaths.includes(path);
   const typeClass = entry?.isDirectory ? "folder" : "file";
+  const checkboxId = `storage-checkbox-${dynamicFieldToken(path || entry?.name || "item")}`;
+  const checkboxName = `storage.checkbox.${dynamicFieldToken(path || entry?.name || "item")}`;
   return `
     <div class="storage-file-row ${entry?.isDirectory ? "storage-folder-row" : ""} ${isSelected ? "selected" : ""}" data-storage-path="${escapeHtml(path)}" data-storage-kind="${entry?.isDirectory ? "folder" : "file"}" tabindex="0" aria-selected="${isSelected ? "true" : "false"}">
-      <label class="storage-entry-check" ${selectionMode ? "" : "hidden"}>
-        <input type="checkbox" data-storage-checkbox="${escapeHtml(path)}" ${isSelected ? "checked" : ""} aria-label="Select ${escapeHtml(entry?.name || path || "item")}">
+      <label class="storage-entry-check" for="${checkboxId}" ${selectionMode ? "" : "hidden"}>
+        <input id="${checkboxId}" name="${checkboxName}" type="checkbox" data-storage-checkbox="${escapeHtml(path)}" ${isSelected ? "checked" : ""} aria-label="Select ${escapeHtml(entry?.name || path || "item")}">
       </label>
       <span class="storage-entry-icon ${typeClass}" aria-hidden="true">${storageEntryIconSvg(entry)}</span>
       <div class="storage-file-meta">
@@ -7412,7 +7426,17 @@ async function request(path, options = {}) {
   }
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `HTTP ${response.status}`);
+    let message = text || `HTTP ${response.status}`;
+    if (text) {
+      try {
+        const payload = JSON.parse(text);
+        if (payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.trim()) {
+          message = payload.error.trim();
+        }
+      } catch {
+      }
+    }
+    throw new Error(message);
   }
   const contentType = response.headers.get("content-type") || "";
   return contentType.includes("application/json") ? response.json() : response.text();
@@ -7906,57 +7930,6 @@ function normalizePeripheralHelperBindings(value) {
     }
   }
   return isPlainObject(value) ? (cloneSettingsObject(value) || {}) : {};
-}
-
-function normalizeMotorRuntimeConfig(value) {
-  let source = value;
-  if (typeof source === "string") {
-    try {
-      source = JSON.parse(source);
-    } catch {
-      source = {};
-    }
-  }
-  source = isPlainObject(source) ? source : {};
-
-  const normalizeMovementRole = (roleValue, directionKey) => {
-    const normalizedRole = String(roleValue || "").trim().toLowerCase();
-    if (normalizedRole === "opening" || normalizedRole === "closing" || normalizedRole === "none") {
-      return normalizedRole;
-    }
-    return "none";
-  };
-
-  const normalizeDirection = (channelKey, directionKey) => {
-    const legacyChannel = isPlainObject(source[channelKey]) ? source[channelKey] : {};
-    const direction = isPlainObject(legacyChannel[directionKey]) ? legacyChannel[directionKey] : {};
-    const fallbackDuration = Math.max(100, Number(legacyChannel.durationMs || 5000));
-    const fallbackLimit = legacyChannel.limitInputIndex === "" || legacyChannel.limitInputIndex === undefined || legacyChannel.limitInputIndex === null
-      ? ""
-      : String(legacyChannel.limitInputIndex);
-    const durationMs = Math.max(100, Number(direction.durationMs || fallbackDuration || 5000));
-    const limitInputIndex = direction.limitInputIndex === "" || direction.limitInputIndex === undefined || direction.limitInputIndex === null
-      ? fallbackLimit
-      : String(direction.limitInputIndex);
-    const movementRoleExplicit = direction.movementRoleExplicit === true;
-    return {
-      durationMs,
-      limitInputIndex,
-      movementRole: movementRoleExplicit ? normalizeMovementRole(direction.movementRole, directionKey) : "none",
-      movementRoleExplicit,
-    };
-  };
-
-  return {
-    a: {
-      forward: normalizeDirection("a", "forward"),
-      backward: normalizeDirection("a", "backward"),
-    },
-    b: {
-      forward: normalizeDirection("b", "forward"),
-      backward: normalizeDirection("b", "backward"),
-    },
-  };
 }
 
 function normalizeUiSettings(uiSettings = {}) {
@@ -8766,10 +8739,14 @@ loadRadioCountries().catch(handleError);
 
 uiHistoryModule.captureSnapshot({ replace: true });
 
-Promise.all([loadStatus(), loadSettings()])
-  .then(() => {
+Promise.allSettled([loadStatus(), loadSettings()])
+  .then((results) => {
+    for (const result of results) {
+      if (result.status === "rejected") {
+        handleError(result.reason);
+      }
+    }
     restoreSavedActiveTabIfVisible();
     uiHistoryModule?.captureSnapshot({ replace: true });
-  })
-  .catch(handleError);
+  });
 startStatusPolling();

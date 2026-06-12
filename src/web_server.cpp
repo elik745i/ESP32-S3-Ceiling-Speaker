@@ -24,6 +24,7 @@ void WebServerManager::begin(
     OtaHandler,
     MqttHandler,
     MotorRunHandler,
+    MotorConfigSaver,
     StatusAppender,
     SimpleHandler,
     SimpleHandler,
@@ -47,6 +48,7 @@ void WebServerManager::begin(
 namespace {
 constexpr size_t kStorageReserveBytes = 4096;
 constexpr size_t kStorageDirectoryListBatchDefault = 0;
+constexpr size_t kSettingsJsonMaxContentLength = 32768;
 
 struct StorageReindexStatus {
     bool active = false;
@@ -117,6 +119,26 @@ const EmbeddedWebAsset* findAsset(const String& path) {
         }
     }
     return nullptr;
+}
+
+String assetEtag(const EmbeddedWebAsset& asset) {
+    String tag = "\"";
+    tag += APP_VERSION;
+    tag += ':';
+    tag += asset.path;
+    tag += ':';
+    tag += String(static_cast<unsigned>(asset.size));
+    tag += asset.gzip ? ":gz" : ":raw";
+    tag += '"';
+    return tag;
+}
+
+bool requestMatchesEtag(AsyncWebServerRequest* request, const String& tag) {
+    if (request == nullptr || !request->hasHeader("If-None-Match")) {
+        return false;
+    }
+    const AsyncWebHeader* header = request->getHeader("If-None-Match");
+    return header != nullptr && header->value() == tag;
 }
 
 StorageTarget storageTargetFromRequest(AsyncWebServerRequest* request) {
@@ -882,6 +904,7 @@ void WebServerManager::begin(
     OtaHandler otaHandler,
     MqttHandler mqttHandler,
     MotorRunHandler motorRunHandler,
+    MotorConfigSaver motorConfigSaver,
     StatusAppender motorStatusAppender,
     SimpleHandler displayTriggerHandler,
     SimpleHandler serverShutdownHandler,
@@ -899,6 +922,7 @@ void WebServerManager::begin(
     otaHandler_ = otaHandler;
     mqttHandler_ = mqttHandler;
     motorRunHandler_ = motorRunHandler;
+    motorConfigSaver_ = motorConfigSaver;
     motorStatusAppender_ = motorStatusAppender;
     displayTriggerHandler_ = displayTriggerHandler;
     serverShutdownHandler_ = serverShutdownHandler;
@@ -1025,27 +1049,143 @@ void WebServerManager::registerApiRoutes() {
         sendJson(request, doc);
     });
 
-    auto* settingsHandler = new AsyncCallbackJsonWebHandler(
+    server_.on(
         "/api/settings",
-        [this](AsyncWebServerRequest* request, JsonVariant& json) {
+        HTTP_POST,
+        [this](AsyncWebServerRequest* request) {
             if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
                 return;
             }
-            if (json.isNull()) {
+            if (!request->contentType().equalsIgnoreCase("application/json")) {
+                request->send(415, "application/json", "{\"error\":\"expected application/json\"}");
+                return;
+            }
+            if (request->contentLength() > kSettingsJsonMaxContentLength) {
+                request->send(413, "application/json", "{\"error\":\"settings payload too large\"}");
+                return;
+            }
+            if (request->_tempObject == nullptr) {
                 request->send(400, "application/json", "{\"error\":\"invalid json\"}");
                 return;
             }
+
+            const size_t bodyLength = request->contentLength();
+            const size_t jsonCapacity = bodyLength == 0 ? 4096U : (bodyLength * 2U + 1024U);
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+            DynamicJsonDocument document(jsonCapacity);
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+            const DeserializationError parseError = deserializeJson(document, static_cast<const char*>(request->_tempObject));
+            if (parseError || document.overflowed() || !document.is<JsonObject>()) {
+                request->send(400, "application/json", "{\"error\":\"invalid json\"}");
+                return;
+            }
+
             String message;
-            if (!settingsSaver_(json.as<JsonVariantConst>(), message)) {
+            if (!settingsSaver_(document.as<JsonVariantConst>(), message)) {
                 request->send(400, "application/json", String("{\"error\":\"") + message + "\"}");
                 return;
             }
             JsonDocument response;
             response["ok"] = true;
             sendJson(request, response);
+        },
+        nullptr,
+        [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (total == 0 || total > kSettingsJsonMaxContentLength) {
+                return;
+            }
+
+            if (index == 0 && request->_tempObject == nullptr) {
+                request->_tempObject = calloc(total + 1, sizeof(uint8_t));
+                if (request->_tempObject == nullptr) {
+                    request->abort();
+                    return;
+                }
+            }
+
+            if (request->_tempObject == nullptr || index + len > total) {
+                request->abort();
+                return;
+            }
+
+            memcpy(static_cast<uint8_t*>(request->_tempObject) + index, data, len);
         });
-    settingsHandler->setMethod(HTTP_POST);
-    server_.addHandler(settingsHandler);
+
+    server_.on(
+        "/api/motor/config",
+        HTTP_POST,
+        [this](AsyncWebServerRequest* request) {
+            if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+                return;
+            }
+            if (!request->contentType().equalsIgnoreCase("application/json")) {
+                request->send(415, "application/json", "{\"error\":\"expected application/json\"}");
+                return;
+            }
+            if (request->contentLength() > kSettingsJsonMaxContentLength) {
+                request->send(413, "application/json", "{\"error\":\"settings payload too large\"}");
+                return;
+            }
+            if (request->_tempObject == nullptr) {
+                request->send(400, "application/json", "{\"error\":\"invalid json\"}");
+                return;
+            }
+            if (motorConfigSaver_ == nullptr) {
+                request->send(503, "application/json", "{\"error\":\"motor config unavailable\"}");
+                return;
+            }
+
+            const size_t bodyLength = request->contentLength();
+            const size_t jsonCapacity = bodyLength == 0 ? 2048U : (bodyLength * 2U + 512U);
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+            DynamicJsonDocument document(jsonCapacity);
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+            const DeserializationError parseError = deserializeJson(document, static_cast<const char*>(request->_tempObject));
+            if (parseError || document.overflowed() || !document.is<JsonObject>()) {
+                request->send(400, "application/json", "{\"error\":\"invalid json\"}");
+                return;
+            }
+
+            String message;
+            if (!motorConfigSaver_(document.as<JsonVariantConst>(), message)) {
+                request->send(400, "application/json", String("{\"error\":\"") + message + "\"}");
+                return;
+            }
+            JsonDocument response;
+            response["ok"] = true;
+            sendJson(request, response);
+        },
+        nullptr,
+        [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (total == 0 || total > kSettingsJsonMaxContentLength) {
+                return;
+            }
+
+            if (index == 0 && request->_tempObject == nullptr) {
+                request->_tempObject = calloc(total + 1, sizeof(uint8_t));
+                if (request->_tempObject == nullptr) {
+                    request->abort();
+                    return;
+                }
+            }
+
+            if (request->_tempObject == nullptr || index + len > total) {
+                request->abort();
+                return;
+            }
+
+            memcpy(static_cast<uint8_t*>(request->_tempObject) + index, data, len);
+        });
 
     auto* playHandler = new AsyncCallbackJsonWebHandler(
         "/api/play",
@@ -1687,14 +1827,31 @@ void WebServerManager::registerWebRoutes() {
             request->send(404, "text/plain", "Not found");
             return;
         }
+        const bool isHtmlShell = path == "/index.html";
+        const String tag = assetEtag(*asset);
+        if (!isHtmlShell && requestMatchesEtag(request, tag)) {
+            AsyncWebServerResponse* notModified = request->beginResponse(304);
+            notModified->addHeader("ETag", tag);
+            notModified->addHeader("Cache-Control", "public, max-age=0, must-revalidate");
+            if (asset->gzip) {
+                notModified->addHeader("Vary", "Accept-Encoding");
+            }
+            request->send(notModified);
+            return;
+        }
         AsyncWebServerResponse* response = request->beginResponse(200, asset->contentType, asset->data, asset->size);
+        response->addHeader("ETag", tag);
         if (asset->gzip) {
             response->addHeader("Content-Encoding", "gzip");
             response->addHeader("Vary", "Accept-Encoding");
         }
-        response->addHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
-        response->addHeader("Pragma", "no-cache");
-        response->addHeader("Expires", "0");
+        if (isHtmlShell) {
+            response->addHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+            response->addHeader("Pragma", "no-cache");
+            response->addHeader("Expires", "0");
+        } else {
+            response->addHeader("Cache-Control", "public, max-age=0, must-revalidate");
+        }
         request->send(response);
     };
 

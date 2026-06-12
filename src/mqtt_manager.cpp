@@ -1,5 +1,7 @@
 #include "mqtt_manager.h"
 
+#include "motor_runtime_config.h"
+#include "system_metrics.h"
 #include "version.h"
 
 namespace {
@@ -34,6 +36,10 @@ const char* mqttBinaryPayload(bool enabled) {
     return enabled ? "ON" : "OFF";
 }
 
+String chipTemperatureStateTopic(const SettingsBundle& settings) {
+    return settings.mqtt.baseTopic + "/state/cpu_temperature";
+}
+
 constexpr uint32_t kDefaultMotorDurationMs = 5000;
 constexpr uint32_t kMinimumMotorDurationMs = 100;
 constexpr uint32_t kMaximumMotorDurationMs = 600000;
@@ -56,6 +62,7 @@ const char* motorChannelLabel(uint8_t channelIndex) {
 struct MotorDirectionConfig {
     uint32_t durationMs = kDefaultMotorDurationMs;
     int8_t limitInputIndex = -1;
+    String movementRole = "none";
 };
 
 struct MotorChannelConfig {
@@ -71,6 +78,61 @@ struct MqttFeatureFlags {
     bool motor = false;
     bool motorChannels[2] = {false, false};
 };
+
+String peripheralControlProfileFromUi(const SettingsBundle& settings, size_t index) {
+    JsonDocument uiDoc;
+    deserializeJson(uiDoc, settings.ui.peripheralProfileSelections.isEmpty() ? String("{}") : settings.ui.peripheralProfileSelections);
+    JsonArray controls = uiDoc["controls"].as<JsonArray>();
+    if (controls.isNull() || index >= controls.size()) {
+        return String("none");
+    }
+    return String(static_cast<const char*>(controls[index] | "none"));
+}
+
+String peripheralHelperValue(const SettingsBundle& settings, const String& slotKey, const char* signalKey) {
+    if (signalKey == nullptr || *signalKey == '\0') {
+        return String();
+    }
+    JsonDocument bindingsDoc;
+    deserializeJson(bindingsDoc, settings.ui.peripheralHelperBindings.isEmpty() ? String("{}") : settings.ui.peripheralHelperBindings);
+    JsonVariant slot = bindingsDoc[slotKey];
+    if (slot.isNull() || !slot.is<JsonObjectConst>()) {
+        return String();
+    }
+    return String(static_cast<const char*>(slot[signalKey] | ""));
+}
+
+bool helperPinAssigned(const SettingsBundle& settings, size_t controlIndex, const char* signalKey) {
+    const String slotKey = String("control:") + String(controlIndex);
+    const String rawValue = peripheralHelperValue(settings, slotKey, signalKey);
+    if (rawValue.isEmpty()) {
+        return false;
+    }
+    const long numericValue = rawValue.toInt();
+    return numericValue >= 0 && numericValue <= 127;
+}
+
+void applyPersistedMotorFeatureFlags(const SettingsBundle& settings, MqttFeatureFlags& flags) {
+    size_t drv8833ControlIndex = SIZE_MAX;
+    for (size_t index = 0; index < 16; ++index) {
+        const String profile = peripheralControlProfileFromUi(settings, index);
+        if (profile.equalsIgnoreCase("drv8833-dual-motor-driver")) {
+            drv8833ControlIndex = index;
+            break;
+        }
+        if (profile == "none" && index > 0) {
+            break;
+        }
+    }
+
+    if (drv8833ControlIndex == SIZE_MAX) {
+        return;
+    }
+
+    flags.motorChannels[0] = helperPinAssigned(settings, drv8833ControlIndex, "IN1") && helperPinAssigned(settings, drv8833ControlIndex, "IN2");
+    flags.motorChannels[1] = helperPinAssigned(settings, drv8833ControlIndex, "IN3") && helperPinAssigned(settings, drv8833ControlIndex, "IN4");
+    flags.motor = flags.motorChannels[0] || flags.motorChannels[1];
+}
 
 String normalizedProfileName(String value) {
     value.trim();
@@ -117,18 +179,8 @@ MqttFeatureFlags configuredMqttFeatures(const SettingsBundle& settings, const Mq
     flags.storage = settings.sd.enabled && hasConfiguredProfile(profiles["storage"]);
     flags.battery = settings.battery.adcPin > 0 && hasBatterySensorProfile(profiles["sensors"]);
 
-    if (motorStatusAppender != nullptr) {
-        JsonDocument motorDoc;
-        motorStatusAppender(motorDoc.to<JsonObject>());
-        if (motorDoc["available"].isNull() || (motorDoc["available"] | false)) {
-            JsonArrayConst channels = motorDoc["channels"].as<JsonArrayConst>();
-            for (uint8_t channelIndex = 0; channelIndex < 2 && channelIndex < channels.size(); ++channelIndex) {
-                JsonObjectConst channel = channels[channelIndex].as<JsonObjectConst>();
-                flags.motorChannels[channelIndex] = !channel.isNull() && (channel["configured"] | false);
-                flags.motor = flags.motor || flags.motorChannels[channelIndex];
-            }
-        }
-    }
+    (void)motorStatusAppender;
+    applyPersistedMotorFeatureFlags(settings, flags);
 
     return flags;
 }
@@ -148,8 +200,15 @@ String mqttFeatureLayoutSignature(const SettingsBundle& settings) {
 
 MotorChannelConfig readMotorChannelConfig(const SettingsBundle& settings, const char* channelKey) {
     MotorChannelConfig config;
-    JsonDocument document;
-    if (deserializeJson(document, settings.ui.motorRuntimeConfig.isEmpty() ? String("{}") : settings.ui.motorRuntimeConfig) != DeserializationError::Ok) {
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+    DynamicJsonDocument document(MotorRuntimeConfig::jsonCapacity(settings.ui.motorRuntimeConfig));
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+    if (!MotorRuntimeConfig::deserializeDocument(settings.ui.motorRuntimeConfig, document)) {
         return config;
     }
 
@@ -167,10 +226,26 @@ MotorChannelConfig readMotorChannelConfig(const SettingsBundle& settings, const 
         if (!direction["limitInputIndex"].isNull()) {
             directionConfig.limitInputIndex = static_cast<int8_t>(direction["limitInputIndex"].as<int>());
         }
+        directionConfig.movementRole = MotorRuntimeConfig::normalizeMovementRole(String(static_cast<const char*>(direction["movementRole"] | "none")));
     };
 
-    readDirection(channel, "forward", config.open);
-    readDirection(channel, "backward", config.close);
+    MotorDirectionConfig forwardConfig;
+    MotorDirectionConfig backwardConfig;
+    readDirection(channel, "forward", forwardConfig);
+    readDirection(channel, "backward", backwardConfig);
+
+    const auto pickDirection = [&](const String& targetRole, bool fallbackForward) {
+        if (forwardConfig.movementRole == targetRole && backwardConfig.movementRole != targetRole) {
+            return forwardConfig;
+        }
+        if (backwardConfig.movementRole == targetRole && forwardConfig.movementRole != targetRole) {
+            return backwardConfig;
+        }
+        return fallbackForward ? forwardConfig : backwardConfig;
+    };
+
+    config.open = pickDirection("opening", true);
+    config.close = pickDirection("closing", false);
     return config;
 }
 
@@ -457,12 +532,14 @@ void MqttManager::handleConnected(bool sessionPresent) {
     if (featureFlags.motorChannels[0]) {
         client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_a/open").c_str(), 1);
         client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_a/close").c_str(), 1);
+        client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_a/switch").c_str(), 1);
         client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_a/open/duration").c_str(), 1);
         client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_a/close/duration").c_str(), 1);
     }
     if (featureFlags.motorChannels[1]) {
         client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_b/open").c_str(), 1);
         client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_b/close").c_str(), 1);
+        client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_b/switch").c_str(), 1);
         client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_b/open/duration").c_str(), 1);
         client_.subscribe(HaBridge::commandTopic(settings_, "motor/channel_b/close/duration").c_str(), 1);
     }
@@ -711,6 +788,7 @@ void MqttManager::handleMessage(char* topic, char* payload, AsyncMqttClientMessa
         const MotorChannelConfig channelConfig = readMotorChannelConfig(settings_, channelIndex == 0 ? "a" : "b");
         const String openTopic = HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/open").c_str());
         const String closeTopic = HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/close").c_str());
+        const String switchTopic = HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/switch").c_str());
         const String openDurationTopic = HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/open/duration").c_str());
         const String closeDurationTopic = HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/close/duration").c_str());
 
@@ -722,6 +800,28 @@ void MqttManager::handleMessage(char* topic, char* payload, AsyncMqttClientMessa
             command.motorDurationMs = directionConfig.durationMs;
             command.motorLimitInputIndex = directionConfig.limitInputIndex;
             commandHandler_(command);
+            return;
+        }
+
+        if (topicValue == switchTopic) {
+            String normalizedPayload = payloadValue;
+            normalizedPayload.trim();
+            normalizedPayload.toUpperCase();
+            if (normalizedPayload == "ON" || normalizedPayload == "OPEN") {
+                command.action = "motor_run";
+                command.motorChannelIndex = static_cast<int8_t>(channelIndex);
+                command.motorForward = true;
+                command.motorDurationMs = channelConfig.open.durationMs;
+                command.motorLimitInputIndex = channelConfig.open.limitInputIndex;
+                commandHandler_(command);
+            } else if (normalizedPayload == "OFF" || normalizedPayload == "CLOSE") {
+                command.action = "motor_run";
+                command.motorChannelIndex = static_cast<int8_t>(channelIndex);
+                command.motorForward = false;
+                command.motorDurationMs = channelConfig.close.durationMs;
+                command.motorLimitInputIndex = channelConfig.close.limitInputIndex;
+                commandHandler_(command);
+            }
             return;
         }
 
@@ -839,6 +939,8 @@ void MqttManager::publishState() {
     network["mqttConnected"] = snapshot.network.mqttConnected;
     publishJson(HaBridge::networkStateTopic(settings_), network, true);
 
+    publishChipTemperature();
+
     if (featureFlags.battery) {
         JsonDocument battery;
         battery["voltage"] = snapshot.battery.voltage;
@@ -921,6 +1023,23 @@ void MqttManager::publishState() {
 #endif
 }
 
+void MqttManager::publishChipTemperature() {
+    if (!client_.connected()) {
+        return;
+    }
+
+    const SystemMetricsSnapshot metrics = getSystemMetricsSnapshot();
+    const String topic = chipTemperatureStateTopic(settings_);
+    if (!metrics.chipTemperatureAvailable) {
+        client_.publish(topic.c_str(), 1, true, "");
+        noteBrokerActivity();
+        return;
+    }
+
+    client_.publish(topic.c_str(), 1, true, String(metrics.chipTemperatureC, 1).c_str());
+    noteBrokerActivity();
+}
+
 void MqttManager::publishBattery(float voltage, float rawAdcVoltage, uint16_t rawAdc, bool charging) {
     if (!client_.connected()) {
         return;
@@ -999,6 +1118,13 @@ void MqttManager::publishDiscovery() {
     client_.publish(
         HaBridge::discoveryTopic(settings_, "sensor", "connected_ip").c_str(), 1, true,
         HaBridge::discoveryPayloadSensor(settings_, "connected_ip", "Connected IP", HaBridge::networkStateTopic(settings_).c_str(), "{{ value_json.ip if value_json.wifiConnected and value_json.ip else 'offline' }}", nullptr, nullptr, nullptr, "mdi:ip-network-outline", -1, configurationUrl).c_str());
+    if (getSystemMetricsSnapshot().chipTemperatureAvailable) {
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "sensor", "cpu_temperature").c_str(), 1, true,
+            HaBridge::discoveryPayloadSensor(settings_, "cpu_temperature", "CPU Temperature", chipTemperatureStateTopic(settings_).c_str(), "{{ value | float(0) | round(1) }}", "°C", "temperature", "measurement", "mdi:thermometer", 1, configurationUrl).c_str());
+    } else {
+        clearDiscoveryTopic("sensor", "cpu_temperature");
+    }
     if (featureFlags.audio) {
         client_.publish(
             HaBridge::discoveryTopic(settings_, "sensor", "playback_state").c_str(), 1, true,
@@ -1095,50 +1221,44 @@ void MqttManager::publishDiscovery() {
     } else {
         clearDiscoveryTopic("text", "play_url");
     }
-    if (motorStatusAppender_ != nullptr) {
-        JsonDocument motor;
-        motorStatusAppender_(motor.to<JsonObject>());
-        if (!motor.isNull()) {
-            appendMotorConfig(motor.as<JsonObject>(), settings_);
-            JsonArrayConst channels = motor["channels"].as<JsonArrayConst>();
-            for (uint8_t channelIndex = 0; channelIndex < 2; ++channelIndex) {
-                if (channelIndex >= channels.size()) {
-                    break;
-                }
-                JsonObjectConst channel = channels[channelIndex].as<JsonObjectConst>();
-                if (channel.isNull() || !featureFlags.motorChannels[channelIndex] || !(channel["configured"] | false)) {
-                    continue;
-                }
-
-                const String channelSuffix = motorChannelSuffix(channelIndex);
-                const String channelName = motorChannelLabel(channelIndex);
-                const char* channelStatusTemplate = channelIndex == 0
-                    ? "{{ value_json.channels[0].statusText if value_json.channels and value_json.channels|count > 0 else 'idle' }}"
-                    : "{{ value_json.channels[1].statusText if value_json.channels and value_json.channels|count > 1 else 'idle' }}";
-                const char* openDurationTemplate = channelIndex == 0
-                    ? "{{ value_json.channels[0].openDurationMs | int(5000) if value_json.channels and value_json.channels|count > 0 else 5000 }}"
-                    : "{{ value_json.channels[1].openDurationMs | int(5000) if value_json.channels and value_json.channels|count > 1 else 5000 }}";
-                const char* closeDurationTemplate = channelIndex == 0
-                    ? "{{ value_json.channels[0].closeDurationMs | int(5000) if value_json.channels and value_json.channels|count > 0 else 5000 }}"
-                    : "{{ value_json.channels[1].closeDurationMs | int(5000) if value_json.channels and value_json.channels|count > 1 else 5000 }}";
-
-                client_.publish(
-                    HaBridge::discoveryTopic(settings_, "sensor", (channelSuffix + String("_status")).c_str()).c_str(), 1, true,
-                    HaBridge::discoveryPayloadSensor(settings_, (channelSuffix + String("_status")).c_str(), (channelName + " Status").c_str(), HaBridge::motorStateTopic(settings_).c_str(), channelStatusTemplate, nullptr, nullptr, nullptr, "mdi:garage-variant", -1, configurationUrl).c_str());
-                client_.publish(
-                    HaBridge::discoveryTopic(settings_, "button", (channelSuffix + String("_open")).c_str()).c_str(), 1, true,
-                    HaBridge::discoveryPayloadButton(settings_, (channelSuffix + String("_open")).c_str(), (channelName + " Open").c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/open").c_str()).c_str(), "OPEN", "mdi:arrow-expand-horizontal", configurationUrl).c_str());
-                client_.publish(
-                    HaBridge::discoveryTopic(settings_, "button", (channelSuffix + String("_close")).c_str()).c_str(), 1, true,
-                    HaBridge::discoveryPayloadButton(settings_, (channelSuffix + String("_close")).c_str(), (channelName + " Close").c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/close").c_str()).c_str(), "CLOSE", "mdi:arrow-collapse-horizontal", configurationUrl).c_str());
-                client_.publish(
-                    HaBridge::discoveryTopic(settings_, "number", (channelSuffix + String("_open_duration")).c_str()).c_str(), 1, true,
-                    HaBridge::discoveryPayloadNumber(settings_, (channelSuffix + String("_open_duration")).c_str(), (channelName + " Open Duration").c_str(), HaBridge::motorStateTopic(settings_).c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/open/duration").c_str()).c_str(), 100, 600000, 100, "ms", "mdi:timer-play-outline", configurationUrl, openDurationTemplate).c_str());
-                client_.publish(
-                    HaBridge::discoveryTopic(settings_, "number", (channelSuffix + String("_close_duration")).c_str()).c_str(), 1, true,
-                    HaBridge::discoveryPayloadNumber(settings_, (channelSuffix + String("_close_duration")).c_str(), (channelName + " Close Duration").c_str(), HaBridge::motorStateTopic(settings_).c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/close/duration").c_str()).c_str(), 100, 600000, 100, "ms", "mdi:timer-stop-outline", configurationUrl, closeDurationTemplate).c_str());
-            }
+    for (uint8_t channelIndex = 0; channelIndex < 2; ++channelIndex) {
+        if (!featureFlags.motorChannels[channelIndex]) {
+            continue;
         }
+
+        const String channelSuffix = motorChannelSuffix(channelIndex);
+        const String channelName = motorChannelLabel(channelIndex);
+        const char* channelStatusTemplate = channelIndex == 0
+            ? "{{ value_json.channels[0].statusText if value_json.channels and value_json.channels|count > 0 else 'idle' }}"
+            : "{{ value_json.channels[1].statusText if value_json.channels and value_json.channels|count > 1 else 'idle' }}";
+        const char* channelSwitchTemplate = channelIndex == 0
+            ? "{{ 'OPEN' if value_json.channels and value_json.channels|count > 0 and value_json.channels[0].positionState in ['open', 'opening'] else 'CLOSE' }}"
+            : "{{ 'OPEN' if value_json.channels and value_json.channels|count > 1 and value_json.channels[1].positionState in ['open', 'opening'] else 'CLOSE' }}";
+        const char* openDurationTemplate = channelIndex == 0
+            ? "{{ value_json.channels[0].openDurationMs | int(5000) if value_json.channels and value_json.channels|count > 0 else 5000 }}"
+            : "{{ value_json.channels[1].openDurationMs | int(5000) if value_json.channels and value_json.channels|count > 1 else 5000 }}";
+        const char* closeDurationTemplate = channelIndex == 0
+            ? "{{ value_json.channels[0].closeDurationMs | int(5000) if value_json.channels and value_json.channels|count > 0 else 5000 }}"
+            : "{{ value_json.channels[1].closeDurationMs | int(5000) if value_json.channels and value_json.channels|count > 1 else 5000 }}";
+
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "sensor", (channelSuffix + String("_status")).c_str()).c_str(), 1, true,
+            HaBridge::discoveryPayloadSensor(settings_, (channelSuffix + String("_status")).c_str(), (channelName + " Status").c_str(), HaBridge::motorStateTopic(settings_).c_str(), channelStatusTemplate, nullptr, nullptr, nullptr, "mdi:garage-variant", -1, configurationUrl).c_str());
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "switch", (channelSuffix + String("_valve")).c_str()).c_str(), 1, true,
+            HaBridge::discoveryPayloadSwitch(settings_, (channelSuffix + String("_valve")).c_str(), (channelName + " Valve").c_str(), HaBridge::motorStateTopic(settings_).c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/switch").c_str()).c_str(), channelSwitchTemplate, "mdi:valve", configurationUrl, "OPEN", "CLOSE", true).c_str());
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "button", (channelSuffix + String("_open")).c_str()).c_str(), 1, true,
+            HaBridge::discoveryPayloadButton(settings_, (channelSuffix + String("_open")).c_str(), (channelName + " Open").c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/open").c_str()).c_str(), "OPEN", "mdi:arrow-expand-horizontal", configurationUrl).c_str());
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "button", (channelSuffix + String("_close")).c_str()).c_str(), 1, true,
+            HaBridge::discoveryPayloadButton(settings_, (channelSuffix + String("_close")).c_str(), (channelName + " Close").c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/close").c_str()).c_str(), "CLOSE", "mdi:arrow-collapse-horizontal", configurationUrl).c_str());
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "number", (channelSuffix + String("_open_duration")).c_str()).c_str(), 1, true,
+            HaBridge::discoveryPayloadNumber(settings_, (channelSuffix + String("_open_duration")).c_str(), (channelName + " Open Duration").c_str(), HaBridge::motorStateTopic(settings_).c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/open/duration").c_str()).c_str(), 100, 600000, 100, "ms", "mdi:timer-play-outline", configurationUrl, openDurationTemplate).c_str());
+        client_.publish(
+            HaBridge::discoveryTopic(settings_, "number", (channelSuffix + String("_close_duration")).c_str()).c_str(), 1, true,
+            HaBridge::discoveryPayloadNumber(settings_, (channelSuffix + String("_close_duration")).c_str(), (channelName + " Close Duration").c_str(), HaBridge::motorStateTopic(settings_).c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/close/duration").c_str()).c_str(), 100, 600000, 100, "ms", "mdi:timer-stop-outline", configurationUrl, closeDurationTemplate).c_str());
     }
     for (uint8_t channelIndex = 0; channelIndex < 2; ++channelIndex) {
         if (featureFlags.motorChannels[channelIndex]) {
@@ -1146,6 +1266,7 @@ void MqttManager::publishDiscovery() {
         }
         const String channelSuffix = motorChannelSuffix(channelIndex);
         clearDiscoveryTopic("sensor", (channelSuffix + String("_status")).c_str());
+        clearDiscoveryTopic("switch", (channelSuffix + String("_valve")).c_str());
         clearDiscoveryTopic("button", (channelSuffix + String("_open")).c_str());
         clearDiscoveryTopic("button", (channelSuffix + String("_close")).c_str());
         clearDiscoveryTopic("number", (channelSuffix + String("_open_duration")).c_str());
