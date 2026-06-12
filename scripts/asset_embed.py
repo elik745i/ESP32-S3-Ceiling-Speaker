@@ -1,6 +1,7 @@
 from pathlib import Path
 from functools import lru_cache
 import gzip
+import os
 import re
 import shutil
 import subprocess
@@ -62,11 +63,15 @@ def minify_svg(text: str) -> str:
     return text.strip()
 
 
+def npx_command() -> list[str]:
+    return ["npx.cmd"] if os.name == "nt" else ["npx"]
+
+
 @lru_cache(maxsize=1)
 def has_svgo() -> bool:
     try:
         completed = subprocess.run(
-            ["cmd", "/c", "npx", "--no-install", "svgo", "--version"],
+            [*npx_command(), "--no-install", "svgo", "--version"],
             cwd=ROOT,
             check=False,
             capture_output=True,
@@ -89,9 +94,7 @@ def optimize_svg(path: Path) -> bytes:
     input_path.write_text(optimized, encoding="utf-8")
 
     svgo_cmd = [
-        "cmd",
-        "/c",
-        "npx",
+        *npx_command(),
         "--no-install",
         "svgo",
         "--input",
@@ -124,9 +127,7 @@ def build_web_assets() -> None:
     BUILD_WEB_DIR.mkdir(parents=True, exist_ok=True)
 
     esbuild_cmd = [
-        "cmd",
-        "/c",
-        "npx",
+        *npx_command(),
         "--no-install",
         "esbuild",
         str(WEB_DIR / "app.js"),
@@ -141,7 +142,7 @@ def build_web_assets() -> None:
         raise SystemExit("Node.js and npm are required to build the bundled web UI.") from exc
     except subprocess.CalledProcessError as exc:
         raise SystemExit(
-            "Bundling web assets failed. Run `cmd /c npm install` in the project root to install frontend build dependencies."
+            "Bundling web assets failed. Run `npm install` in the project root to install frontend build dependencies."
         ) from exc
 
     for path in sorted(WEB_DIR.rglob("*")):
