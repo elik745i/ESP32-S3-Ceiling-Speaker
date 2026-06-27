@@ -906,15 +906,15 @@ void OtaManager::runTask(bool applyAfterCheck) {
     updateAvailable_ = result.updateAvailable;
     lastMessage_ = result.message;
     if (!result.success) {
-        syncAppState("error", result.message);
         busy_ = false;
+        syncAppState("error", result.message);
         return;
     }
 
     if (!applyAfterCheck || !result.updateAvailable) {
         updatePhase_ = "";
-        syncAppState(result.updateAvailable ? "available" : "current");
         busy_ = false;
+        syncAppState(result.updateAvailable ? "available" : "current");
         return;
     }
 
@@ -922,8 +922,8 @@ void OtaManager::runTask(bool applyAfterCheck) {
     String installMessage;
     if (!installNow(result, installMessage)) {
         lastMessage_ = installMessage;
-        syncAppState("error", installMessage);
         busy_ = false;
+        syncAppState("error", installMessage);
         if (recoveryRebootRequested_) {
             updatePhase_ = "Restarting";
             lastMessage_ = installMessage + " Restarting...";
@@ -934,8 +934,8 @@ void OtaManager::runTask(bool applyAfterCheck) {
     }
 
     lastMessage_ = installMessage;
-    syncAppState("installed");
     busy_ = false;
+    syncAppState("installed");
     scheduleReboot(1500);
 }
 
@@ -961,8 +961,8 @@ void OtaManager::runVersionTask(const String& version, const String& assetName, 
     } else {
         if (!resolveVersionResult(version, assetName, result, error)) {
             lastMessage_ = error;
-            syncAppState("error", error);
             busy_ = false;
+            syncAppState("error", error);
             return;
         }
     }
@@ -974,8 +974,8 @@ void OtaManager::runVersionTask(const String& version, const String& assetName, 
     String installMessage;
     if (!installNow(result, installMessage)) {
         lastMessage_ = installMessage;
-        syncAppState("error", installMessage);
         busy_ = false;
+        syncAppState("error", installMessage);
         if (recoveryRebootRequested_) {
             updatePhase_ = "Restarting";
             lastMessage_ = installMessage + " Restarting...";
@@ -986,8 +986,8 @@ void OtaManager::runVersionTask(const String& version, const String& assetName, 
     }
 
     lastMessage_ = installMessage;
-    syncAppState("installed");
     busy_ = false;
+    syncAppState("installed");
     scheduleReboot(1500);
 }
 

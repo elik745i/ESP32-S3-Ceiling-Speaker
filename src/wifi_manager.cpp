@@ -27,11 +27,25 @@ bool wifiRestartRequired(const SettingsBundle& current, const SettingsBundle& ne
 }
 }  // namespace
 
+void WiFiManager::updateRadioModeAndSleep() {
+    wifi_mode_t targetMode = WIFI_MODE_NULL;
+    if (hasStaCredentials()) {
+        targetMode = apMode_ ? WIFI_MODE_APSTA : WIFI_MODE_STA;
+    } else if (apMode_) {
+        targetMode = WIFI_MODE_AP;
+    }
+
+    WiFi.mode(targetMode);
+
+    // Allow modem sleep whenever we are not actively hosting an AP.
+    // AP mode is kept fully awake so the captive portal remains responsive.
+    WiFi.setSleep(!apMode_);
+    WiFi.setTxPower(apMode_ ? WIFI_POWER_15dBm : WIFI_POWER_8_5dBm);
+}
+
 void WiFiManager::begin(const SettingsBundle& settings, AppState& appState) {
     appState_ = &appState;
-    WiFi.mode(WIFI_MODE_APSTA);
     WiFi.setAutoReconnect(true);
-    WiFi.setSleep(false);
     if (disconnectEventId_ == 0) {
         disconnectEventId_ = WiFi.onEvent(
             [this](arduino_event_id_t, arduino_event_info_t info) { handleDisconnectEvent(info); },
@@ -65,6 +79,7 @@ void WiFiManager::applySettings(const SettingsBundle& settings) {
 }
 
 void WiFiManager::startStation() {
+    updateRadioModeAndSleep();
     WiFi.disconnect(true, true);
     delay(100);
     if (!hasStaCredentials()) {
@@ -130,10 +145,11 @@ void WiFiManager::startAccessPoint() {
     if (apMode_) {
         return;
     }
+    apMode_ = true;
+    updateRadioModeAndSleep();
     WiFi.softAP(apSsid_.c_str(), settings_.wifi.apPassword.c_str());
     dnsServer_.start(DNS_PORT, "*", WiFi.softAPIP());
     dnsStarted_ = true;
-    apMode_ = true;
     apShutdownPending_ = false;
     apShutdownAt_ = 0;
     Serial.printf("[wifi] AP started ssid='%s' ip=%s\n", apSsid_.c_str(), WiFi.softAPIP().toString().c_str());
@@ -148,6 +164,7 @@ void WiFiManager::stopAccessPoint() {
     if (apMode_) {
         WiFi.softAPdisconnect(true);
         apMode_ = false;
+        updateRadioModeAndSleep();
     }
     apShutdownPending_ = false;
     apShutdownAt_ = 0;

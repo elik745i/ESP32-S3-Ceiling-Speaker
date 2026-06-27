@@ -86,4 +86,5 @@ class WiFiManager {
     void handleDisconnectEvent(arduino_event_info_t info);
     void registerFailedAttempt(const char* reason);
     PreferredAccessPoint findPreferredAccessPoint();
+    void updateRadioModeAndSleep();
 };

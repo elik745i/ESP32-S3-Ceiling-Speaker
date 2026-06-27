@@ -11,10 +11,10 @@ Project story and current device write-up:
 
 ## Current Release
 
-- Firmware version: `v0.1.23`
+- Firmware version: `v0.1.24`
 - Primary release repository: `elma-iot/ELMA-IoT`
 - GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.23.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.24.bin`
 
 This version is intended to be published as a standard GitHub release using the normal OTA asset names without a prerelease suffix.
 
@@ -492,14 +492,14 @@ Current OTA and rollback behavior:
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.23`:
+Release asset names for `v0.1.24`:
 
-- `esp32-notifier-v0.1.23.bin`
-- `esp32-notifier-hacs-v0.1.23.bin`
-- `esp32-notifier-hacs-slim-v0.1.23.bin`
-- `esp32s3-notifier-v0.1.23.bin`
-- `esp32s3-notifier-hacs-v0.1.23.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.23.bin`
+- `esp32-notifier-v0.1.24.bin`
+- `esp32-notifier-hacs-v0.1.24.bin`
+- `esp32-notifier-hacs-slim-v0.1.24.bin`
+- `esp32s3-notifier-v0.1.24.bin`
+- `esp32s3-notifier-hacs-v0.1.24.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.24.bin`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard release variants and upload the matching OTA assets back to that release.
 
@@ -580,4 +580,4 @@ Key files and directories:
 
 Current release notes live here:
 
-- [release-assets/v0.1.23/release-notes.md](release-assets/v0.1.23/release-notes.md)
+- [release-assets/v0.1.24/release-notes.md](release-assets/v0.1.24/release-notes.md)

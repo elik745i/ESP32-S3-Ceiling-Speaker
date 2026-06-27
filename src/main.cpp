@@ -387,6 +387,7 @@ String lastRolledBackVersion;
 String lastRollbackReason;
 uint32_t lastProcessedMotorStateVersion = 0;
 uint32_t lastPublishedMotorStateVersion = 0;
+uint32_t activeCpuFrequencyMhz = 240;
 
 constexpr float kBatteryPercentEmptyVoltage = 3.2f;
 constexpr float kBatteryPercentFullVoltage = 4.2f;
@@ -397,7 +398,7 @@ constexpr unsigned long kLowBatteryWakeWindowMs = 30000UL;
 constexpr unsigned long kVolumePersistDelayMs = 750UL;
 constexpr unsigned long kButtonDebounceMs = 30UL;
 constexpr unsigned long kTouchDebounceMs = 20UL;
-constexpr unsigned long kInputPollIntervalMs = 4UL;
+constexpr unsigned long kInputPollIntervalMs = 10UL;
 constexpr uint8_t kDefaultTouchSensitivityPercent = 55;
 constexpr size_t kMaxPeripheralInputProfiles = 10;
 constexpr uint8_t kTouchPressCandidateSamples = 3;
@@ -425,6 +426,7 @@ constexpr char kPowerCycleCountKey[] = "pc_count";
 bool playRequest(const String& url, const String& label, const String& type, const String& source, String& error, bool addToHistory);
 void flushPendingSettingsNow();
 void restoreAmbientVolumeIfNeeded();
+void applyCpuFrequencyPolicy(const AppStateSnapshot& snapshot);
 
 bool isResumablePlaybackSelection(const String& url, const String& type, const String& source) {
     String normalizedUrl = url;
@@ -604,6 +606,31 @@ bool parseStorageFileReference(const String& raw, StorageTarget& target, String&
     }
 
     return true;
+}
+
+void applyCpuFrequencyPolicy(const AppStateSnapshot& snapshot) {
+    uint32_t targetFrequencyMhz = 80;
+    const String playbackState = snapshot.playback.state;
+    const bool playbackActive = playbackState == "playing" || playbackState == "buffering";
+    const bool highPerformanceRequired =
+        playbackActive ||
+        snapshot.ota.busy ||
+        (wifiManager != nullptr && wifiManager->isApMode());
+
+    if (highPerformanceRequired) {
+        targetFrequencyMhz = 240;
+    }
+
+    if (targetFrequencyMhz == activeCpuFrequencyMhz) {
+        return;
+    }
+
+    if (setCpuFrequencyMhz(targetFrequencyMhz)) {
+        activeCpuFrequencyMhz = targetFrequencyMhz;
+        Serial.printf("[power] cpu frequency set to %lu MHz\n", static_cast<unsigned long>(activeCpuFrequencyMhz));
+    } else {
+        Serial.printf("[power] cpu frequency change to %lu MHz failed\n", static_cast<unsigned long>(targetFrequencyMhz));
+    }
 }
 
 PhysicalButtonState button1 { -1, 0, DefaultConfig::BUTTON1_PIN, "Button 1" };
@@ -3658,6 +3685,7 @@ void loop() {
     mqttManager->loop();
 
     const AppStateSnapshot snapshot = appState->snapshot();
+    applyCpuFrequencyPolicy(snapshot);
     processSoundEffectTransitions(snapshot);
     serviceRuntimeAudioAutomation(snapshot);
     displayManager->loop(snapshot);
