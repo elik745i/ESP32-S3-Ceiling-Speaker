@@ -56,6 +56,7 @@ const state = {
     suppressAutoAdvance: false,
     loop: false,
     shuffle: false,
+    autoplay: true,
   },
   storageClickTimer: null,
   storageInitialLoadRequested: false,
@@ -1147,8 +1148,19 @@ const elements = {
   storagePlayButton: document.getElementById("storagePlayButton"),
   storageUploadButton: document.getElementById("storageUploadButton"),
   storageFileInput: document.getElementById("storageFileInput"),
+  storageProgressWrap: document.getElementById("storageProgressWrap"),
   storageProgressFill: document.getElementById("storageProgressFill"),
   storageProgressLabel: document.getElementById("storageProgressLabel"),
+  storageInlineTrackLabel: document.getElementById("storageInlineTrackLabel"),
+  storageInlinePlaybackState: document.getElementById("storageInlinePlaybackState"),
+  storageInlinePrevButton: document.getElementById("storageInlinePrevButton"),
+  storageInlinePlayButton: document.getElementById("storageInlinePlayButton"),
+  storageInlineNextButton: document.getElementById("storageInlineNextButton"),
+  storageInlineShuffleButton: document.getElementById("storageInlineShuffleButton"),
+  storageInlineRepeatButton: document.getElementById("storageInlineRepeatButton"),
+  storageInlineAutoplayButton: document.getElementById("storageInlineAutoplayButton"),
+  storageInlineVolumeSlider: document.getElementById("storageInlineVolumeSlider"),
+  storageInlineVolumeValue: document.getElementById("storageInlineVolumeValue"),
   storageFileList: document.getElementById("storageFileList"),
   storagePreviewModal: document.getElementById("storagePreviewModal"),
   storagePreviewCloseButton: document.getElementById("storagePreviewCloseButton"),
@@ -1606,6 +1618,8 @@ storageTab = createStorageTab({
   setStorageSelectionMode,
   setStorageStatus,
   selectedStoragePlaybackEntry,
+  currentStoragePlayingEntry,
+  storageEntryIsPlaying,
   shouldDeferSdReads,
   storageParentPath,
   uploadStorageFiles,
@@ -1614,6 +1628,8 @@ storageTab = createStorageTab({
   selectAllStorageEntries,
   updateStoragePreviewPlaybackControls,
   advanceStoragePreviewTrack,
+  stopStoragePreviewPlayback,
+  setVolume,
   normalizeStorageDirectoryPath,
 });
 
@@ -1695,6 +1711,7 @@ statusRenderModule = createStatusRenderModule({
   updateWifiActionButton,
   updateMqttActionButton,
   updateStoragePreviewPlaybackControls,
+  updateStorageFolderPlaybackStatus,
   populateButtonActionSelects,
   renderOledPreview,
 });
@@ -5531,6 +5548,7 @@ function updateStorageToolbar(storage = state.storageInfoByTarget[state.activeSt
   const entries = activeStorageEntries();
   const selectedPaths = activeStorageSelection();
   const playableEntry = selectedStoragePlaybackEntry();
+  const selectedTrackPlaying = storageEntryIsPlaying(playableEntry);
   const allVisibleSelected = entries.length > 0 && entries.every((entry) => selectedPaths.includes(entry.path));
   const setButtonLabel = (button, label) => {
     if (!button) {
@@ -5556,10 +5574,19 @@ function updateStorageToolbar(storage = state.storageInfoByTarget[state.activeSt
   }
   if (elements.storagePlayButton) {
     elements.storagePlayButton.disabled = !playableEntry;
-    elements.storagePlayButton.classList.toggle("active", Boolean(playableEntry));
+    elements.storagePlayButton.classList.toggle("active", Boolean(playableEntry) && !selectedTrackPlaying);
+    elements.storagePlayButton.classList.toggle("playing", selectedTrackPlaying);
     elements.storagePlayButton.title = playableEntry
-      ? `Play ${playableEntry.name || playableEntry.path}`
+      ? `${selectedTrackPlaying ? "Stop" : "Play"} ${playableEntry.name || playableEntry.path}`
       : "Select one audio file to play";
+    elements.storagePlayButton.setAttribute("aria-label", elements.storagePlayButton.title);
+    const iconState = selectedTrackPlaying ? "stop" : "play";
+    if (elements.storagePlayButton.dataset.iconState !== iconState) {
+      elements.storagePlayButton.dataset.iconState = iconState;
+      elements.storagePlayButton.innerHTML = selectedTrackPlaying
+        ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z"></path></svg>'
+        : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>';
+    }
   }
   if (elements.storageUploadButton) {
     elements.storageUploadButton.disabled = !storage.mounted || state.storageUploadInProgress;
@@ -5598,7 +5625,48 @@ function updateStoragePreviewPlaybackControls() {
     elements.storagePreviewShuffleButton.setAttribute("aria-pressed", String(Boolean(state.storagePreviewPlaybackMode.shuffle)));
   }
 
+  const playingEntry = currentStoragePlayingEntry();
+  const selectedEntry = selectedStoragePlaybackEntry();
+  const actionableEntry = selectedEntry || playingEntry || state.storagePreviewItem;
+  const activeEntryPlaying = storageEntryIsPlaying(actionableEntry);
+  const canStep = audioEntries.length > 1 && Boolean(playingEntry || state.storagePreviewItem);
+  if (elements.storageInlineTrackLabel) {
+    elements.storageInlineTrackLabel.textContent = playingEntry?.name || selectedEntry?.name || state.storagePreviewItem?.name || "Select a song from this folder";
+    elements.storageInlineTrackLabel.title = playingEntry?.path || selectedEntry?.path || state.storagePreviewItem?.path || "";
+  }
+  if (elements.storageInlinePlaybackState) {
+    elements.storageInlinePlaybackState.textContent = playingEntry
+      ? (String(state.status?.playback?.state || "playing") === "buffering" ? "Buffering" : "Playing")
+      : "Stopped";
+  }
+  if (elements.storageInlinePlayButton) {
+    elements.storageInlinePlayButton.textContent = activeEntryPlaying ? "■" : "▶";
+    elements.storageInlinePlayButton.disabled = !actionableEntry;
+    elements.storageInlinePlayButton.title = activeEntryPlaying ? "Stop this song" : "Play selected song";
+    elements.storageInlinePlayButton.setAttribute("aria-label", elements.storageInlinePlayButton.title);
+  }
+  if (elements.storageInlinePrevButton) elements.storageInlinePrevButton.disabled = !canStep;
+  if (elements.storageInlineNextButton) elements.storageInlineNextButton.disabled = !canStep;
+  if (elements.storageInlineShuffleButton) elements.storageInlineShuffleButton.setAttribute("aria-pressed", String(Boolean(state.storagePreviewPlaybackMode.shuffle)));
+  if (elements.storageInlineRepeatButton) elements.storageInlineRepeatButton.setAttribute("aria-pressed", String(Boolean(state.storagePreviewPlaybackMode.loop)));
+  if (elements.storageInlineAutoplayButton) elements.storageInlineAutoplayButton.setAttribute("aria-pressed", String(Boolean(state.storagePreviewPlaybackMode.autoplay)));
+
   updateStoragePreviewProgressUi();
+}
+
+function updateStorageFolderPlaybackStatus(status = state.status) {
+  const playingPath = storagePlaybackPathFromStatus(status);
+  const entriesByPath = new Map(activeStorageEntries().map((entry) => [entry.path, entry]));
+  for (const row of elements.storageFileList?.querySelectorAll(".storage-file-row") || []) {
+    const playing = Boolean(playingPath && row.dataset.storagePath === playingPath && isPlaybackActive(status));
+    row.classList.toggle("playing", playing);
+    row.toggleAttribute("aria-current", playing);
+    const badge = row.querySelector(".storage-file-badge");
+    const entry = entriesByPath.get(row.dataset.storagePath);
+    if (badge && entry) badge.textContent = playing ? "Playing" : storageBadgeLabel(entry);
+  }
+  updateStorageToolbar();
+  updateStoragePreviewPlaybackControls();
 }
 
 function releaseStoragePreviewUrls() {
@@ -6019,6 +6087,38 @@ function storagePlaybackRef(path, target = state.activeStorageTarget) {
   return `${resolveStorageTarget(target)}:${normalizeStorageDirectoryPath(path)}`;
 }
 
+function storagePlaybackPathFromStatus(status = state.status, target = state.activeStorageTarget) {
+  const resolvedTarget = resolveStorageTarget(target);
+  const playbackUrl = String(status?.playback?.url || "").replaceAll("\\", "/");
+  const prefix = `${resolvedTarget}:`;
+  return playbackUrl.toLowerCase().startsWith(prefix)
+    ? normalizeStorageDirectoryPath(playbackUrl.slice(prefix.length))
+    : "";
+}
+
+function currentStoragePlayingEntry(target = state.activeStorageTarget, status = state.status) {
+  const playingPath = storagePlaybackPathFromStatus(status, target);
+  return playingPath
+    ? activeStorageAudioEntries(target).find((entry) => normalizeStorageDirectoryPath(entry.path) === playingPath) || null
+    : null;
+}
+
+function storageEntryIsPlaying(entry, target = state.activeStorageTarget, status = state.status) {
+  if (!entry || !isPlaybackActive(status)) {
+    return false;
+  }
+  return storagePlaybackRef(entry.path, target) === String(status?.playback?.url || "");
+}
+
+function scrollStorageTrackIntoView(path, behavior = "smooth") {
+  if (!path || !elements.storageFileList) {
+    return;
+  }
+  const row = [...elements.storageFileList.querySelectorAll(".storage-file-row")]
+    .find((candidate) => candidate.dataset.storagePath === path);
+  row?.scrollIntoView({ block: "nearest", behavior });
+}
+
 function renderStorageBreadcrumbs(currentPath) {
   if (!elements.storageBreadcrumbs || !elements.storageUpButton) {
     return;
@@ -6049,8 +6149,9 @@ function renderStorageRow(entry, selectionMode, selectedPaths) {
   const typeClass = entry?.isDirectory ? "folder" : "file";
   const checkboxId = `storage-checkbox-${dynamicFieldToken(path || entry?.name || "item")}`;
   const checkboxName = `storage.checkbox.${dynamicFieldToken(path || entry?.name || "item")}`;
+  const playing = storageEntryIsPlaying(entry);
   return `
-    <div class="storage-file-row ${entry?.isDirectory ? "storage-folder-row" : ""} ${isSelected ? "selected" : ""}" data-storage-path="${escapeHtml(path)}" data-storage-kind="${entry?.isDirectory ? "folder" : "file"}" tabindex="0" aria-selected="${isSelected ? "true" : "false"}">
+    <div class="storage-file-row ${entry?.isDirectory ? "storage-folder-row" : ""} ${isSelected ? "selected" : ""} ${playing ? "playing" : ""}" data-storage-path="${escapeHtml(path)}" data-storage-kind="${entry?.isDirectory ? "folder" : "file"}" tabindex="0" aria-selected="${isSelected ? "true" : "false"}" ${playing ? 'aria-current="true"' : ""}>
       <label class="storage-entry-check" for="${checkboxId}" ${selectionMode ? "" : "hidden"}>
         <input id="${checkboxId}" name="${checkboxName}" type="checkbox" data-storage-checkbox="${escapeHtml(path)}" ${isSelected ? "checked" : ""} aria-label="Select ${escapeHtml(entry?.name || path || "item")}">
       </label>
@@ -6060,7 +6161,7 @@ function renderStorageRow(entry, selectionMode, selectedPaths) {
         <div class="storage-file-subtitle">${escapeHtml(storageItemSubtitle(entry))}</div>
       </div>
       <div class="storage-file-trailing">
-        <div class="storage-file-badge">${escapeHtml(storageBadgeLabel(entry))}</div>
+        <div class="storage-file-badge">${escapeHtml(playing ? "Playing" : storageBadgeLabel(entry))}</div>
         <span class="storage-file-chevron" aria-hidden="true">&#8250;</span>
       </div>
     </div>
@@ -6175,6 +6276,13 @@ async function queueStoragePlayback(entry, target = state.activeStorageTarget) {
   }
 
   const resolvedTarget = resolveStorageTarget(target);
+  state.storagePreviewItem = entry;
+  state.storagePreviewTarget = resolvedTarget;
+  setStorageSelection([entry.path], resolvedTarget);
+  state.storagePreviewPlaybackMode.suppressAutoAdvance = false;
+  if (resolvedTarget === state.activeStorageTarget) {
+    rerenderStorageManager(resolvedTarget);
+  }
   const payload = {
     url: storagePlaybackRef(entry.path, resolvedTarget),
     label: normalizePlaybackTitle(entry.name || entry.path, entry.path),
@@ -6203,6 +6311,9 @@ async function queueStoragePlayback(entry, target = state.activeStorageTarget) {
     await loadStatus();
   }
 
+  updateStorageFolderPlaybackStatus();
+  scrollStorageTrackIntoView(entry.path);
+
   return started;
 }
 
@@ -6226,6 +6337,7 @@ async function stopStoragePreviewPlayback() {
   state.storagePreviewPlaybackMode.suppressAutoAdvance = true;
   await request("/api/stop", { method: "POST", body: JSON.stringify({}) });
   state.storagePreviewPlaybackMode.deviceActive = false;
+  state.storagePreviewPlaybackMode.previousDeviceActive = false;
   updateStoragePreviewPlaybackControls();
   await loadStatus();
   setStorageStatus("Playback stopped");
@@ -6239,8 +6351,15 @@ async function toggleStoragePreviewPlayback() {
   await playStoragePreviewOnDevice();
 }
 
-async function activateStoragePreviewEntry(entry, { autoplayDevice = false } = {}) {
-  await openStoragePreview(entry);
+async function activateStoragePreviewEntry(entry, { autoplayDevice = false, showPreview = Boolean(elements.storagePreviewModal?.open) } = {}) {
+  if (showPreview) {
+    await openStoragePreview(entry);
+  } else {
+    state.storagePreviewItem = entry;
+    state.storagePreviewTarget = state.activeStorageTarget;
+    setStorageSelection([entry.path], state.activeStorageTarget);
+    updateStoragePreviewPlaybackControls();
+  }
   if (autoplayDevice) {
     await playStoragePreviewOnDevice();
   } else {
@@ -6390,7 +6509,7 @@ async function hydrateStoragePreviewMetadataAndArtwork(entry, requestId) {
 }
 
 async function advanceStoragePreviewTrack(delta, options = {}) {
-  const { autoplayDevice = false, respectModes = false } = options;
+  const { autoplayDevice = false, respectModes = false, showPreview = Boolean(elements.storagePreviewModal?.open) } = options;
   const entries = activeStorageAudioEntries();
   if (!entries.length) {
     return;
@@ -6398,7 +6517,8 @@ async function advanceStoragePreviewTrack(delta, options = {}) {
 
   const currentIndex = currentStoragePreviewQueueIndex();
   if (currentIndex < 0) {
-    await activateStoragePreviewEntry(entries[0], { autoplayDevice });
+    await activateStoragePreviewEntry(entries[0], { autoplayDevice, showPreview });
+    scrollStorageTrackIntoView(entries[0].path);
     return;
   }
 
@@ -6428,7 +6548,8 @@ async function advanceStoragePreviewTrack(delta, options = {}) {
     return;
   }
 
-  await activateStoragePreviewEntry(entries[nextIndex], { autoplayDevice });
+  await activateStoragePreviewEntry(entries[nextIndex], { autoplayDevice, showPreview });
+  scrollStorageTrackIntoView(entries[nextIndex].path);
 }
 
 async function openStoragePreview(entry) {
@@ -6543,6 +6664,7 @@ function renderStorageManager(payload) {
     : "";
   elements.storageFileList.innerHTML = `${entries.map((entry) => renderStorageRow(entry, state.storageSelectionMode, selectedPaths)).join("")}${loadingRow}`;
   updateStorageToolbar(storage);
+  updateStoragePreviewPlaybackControls();
 }
 
 async function loadMoreStorageEntries(target = state.activeStorageTarget) {
@@ -6762,6 +6884,7 @@ async function uploadStorageFiles(selectedFiles = [...(elements.storageFileInput
 
       renderStorageManager({ storage: info, files: [] });
       setStorageStatus(`Uploading ${file.name} (${index + 1}/${files.length})...`);
+      if (elements.storageProgressWrap) elements.storageProgressWrap.hidden = false;
       elements.storageProgressFill.style.width = "0%";
       elements.storageProgressLabel.textContent = `Uploading ${file.name} (${index + 1}/${files.length})... 0%`;
 
@@ -6835,6 +6958,7 @@ async function uploadStorageFiles(selectedFiles = [...(elements.storageFileInput
     throw error;
   } finally {
     state.storageUploadInProgress = false;
+    if (elements.storageProgressWrap) elements.storageProgressWrap.hidden = true;
     elements.storageFileInput.value = "";
     if (state.storageInfoByTarget[state.activeStorageTarget]) {
       elements.storageUploadButton.disabled = !state.storageInfoByTarget[state.activeStorageTarget].mounted || state.storageUploadInProgress;

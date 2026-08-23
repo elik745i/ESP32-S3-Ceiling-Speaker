@@ -628,21 +628,14 @@ const OtaManager::ReleaseInfo* OtaManager::findReleaseForOption(const String& op
 
 void OtaManager::ensureSelectedReleaseStillValid() {
     for (const ReleaseInfo& release : releaseCache_) {
-        if (release.tag == selectedVersion_ && release.assetName == selectedAssetName_) {
+        if (release.tag == selectedVersion_ && release.assetName == selectedAssetName_ &&
+            release.tag == latestVersion_) {
             return;
         }
     }
 
     selectedVersion_ = "";
     selectedAssetName_ = "";
-    for (const ReleaseInfo& release : releaseCache_) {
-        if (release.isInstalled) {
-            selectedVersion_ = release.tag;
-            selectedAssetName_ = release.assetName;
-            return;
-        }
-    }
-
     // Prefer the same build variant as the installed firmware for the newest
     // release. GitHub returns assets alphabetically, which otherwise tends to
     // select HACS Slim before the full HACS build.
@@ -979,6 +972,13 @@ void OtaManager::runVersionTask(const String& version, const String& assetName, 
             lastMessage_ = error;
             busy_ = false;
             syncAppState("error", error);
+            return;
+        }
+    }
+    for (const ReleaseInfo& release : releaseCache_) {
+        if (release.isInstalled) {
+            selectedVersion_ = release.tag;
+            selectedAssetName_ = release.assetName;
             return;
         }
     }

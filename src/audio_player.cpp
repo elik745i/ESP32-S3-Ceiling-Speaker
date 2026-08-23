@@ -16,7 +16,6 @@ AudioPlayer::Impl* g_impl = nullptr;
 constexpr unsigned long kSwitchFadeOutMs = 70UL;
 constexpr unsigned long kStartFadeInMs = 90UL;
 constexpr unsigned long kSwitchQuietTimeMs = 18UL;
-
 constexpr uint32_t kPreferredDiagnosticSampleRateHz = DefaultConfig::AUDIO_DIAGNOSTIC_PREFERRED_SAMPLE_RATE_HZ;
 
 uint8_t percentToLibraryVolume(uint8_t volumePercent) {
@@ -101,6 +100,8 @@ class AudioPlayer::Impl {
     uint8_t retryCount = 0;
     unsigned long retryAt = 0;
     bool stopRequested = false;
+    bool playbackCompletionPending = false;
+    String completedPlaybackSource;
     OverlayState overlay;
 
     void publish() {
@@ -330,7 +331,12 @@ void audio_showstreamtitle(const char* info) {
 }
 
 void audio_eof_stream(const char* info) {
-    if (g_impl != nullptr) {
+    // ESP32-audioI2S can emit the generic stream callback while an SD-backed
+    // MP3 is still being initialized. Local files have their own MP3 EOF
+    // callback, so never let this transient tear down or retry SD playback.
+    if (g_impl != nullptr && !g_impl->storageLeaseActive) {
+        g_impl->completedPlaybackSource = g_impl->source;
+        g_impl->playbackCompletionPending = true;
         g_impl->state = "idle";
         g_impl->publish();
         if (!g_impl->stopRequested && !g_impl->url.isEmpty() && g_impl->retryCount < 3) {
@@ -389,6 +395,8 @@ void audio_commercial(const char* info) {
 
 void audio_eof_mp3(const char* info) {
     if (g_impl != nullptr && g_impl->storageLeaseActive) {
+        g_impl->completedPlaybackSource = g_impl->source;
+        g_impl->playbackCompletionPending = true;
         releaseStorageLease(g_impl);
         g_impl->state = "idle";
         g_impl->type = "idle";
@@ -450,15 +458,6 @@ void AudioPlayer::loop() {
         return;
     }
     impl_->audio.loop();
-    if (impl_->storageLeaseActive && !impl_->audio.isRunning() && impl_->state == "playing") {
-        releaseStorageLease(impl_);
-        impl_->state = "idle";
-        impl_->type = "idle";
-        impl_->title = "Idle";
-        impl_->url = "";
-        impl_->source = "manual";
-        impl_->publish();
-    }
     if (impl_->retryPending && millis() >= impl_->retryAt) {
         impl_->retryPending = false;
         impl_->audio.stopSong();
@@ -638,6 +637,8 @@ void AudioPlayer::stop() {
         impl_->fadeToPercent(0, kSwitchFadeOutMs);
         delay(kSwitchQuietTimeMs);
     }
+    impl_->completedPlaybackSource = impl_->source;
+    impl_->playbackCompletionPending = true;
     impl_->audio.stopSong();
     clearOverlay(impl_);
     releaseStorageLease(impl_);
@@ -800,6 +801,16 @@ bool AudioPlayer::consumeOverlayFinished() {
     }
     impl_->overlay.finished = false;
     clearOverlay(impl_);
+    return true;
+}
+
+bool AudioPlayer::consumePlaybackCompletion(String& source) {
+    if (impl_ == nullptr || !impl_->playbackCompletionPending) {
+        return false;
+    }
+    source = impl_->completedPlaybackSource;
+    impl_->completedPlaybackSource = "";
+    impl_->playbackCompletionPending = false;
     return true;
 }
 

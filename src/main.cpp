@@ -294,6 +294,7 @@ DeferredActions* deferredActions = nullptr;
 
 struct RuntimeAudioAutomation {
     bool startupEffectPending = false;
+    bool startupEffectActive = false;
     bool bootUpdateCheckQueued = false;
     bool updateAvailableHandled = false;
     bool pendingAutoUpdateInstall = false;
@@ -312,6 +313,8 @@ struct RuntimeAudioAutomation {
     uint8_t previewResumeVolume = 0;
     uint8_t startupEffectAttempts = 0;
     unsigned long startupEffectEligibleAt = 0;
+    unsigned long resumeSavedPlaybackEligibleAt = 0;
+    unsigned long updateAvailableEffectEligibleAt = 0;
     unsigned long ambientEligibleAt = 0;
     unsigned long restartForceAt = 0;
     PlaybackCommand pendingCommand;
@@ -1585,6 +1588,8 @@ void restoreAmbientVolumeIfNeeded() {
 
 void startAmbientIfEligible(const AppStateSnapshot& snapshot) {
     if (settings == nullptr || audioPlayer == nullptr || runtimeAudio.alarmActive || runtimeAudio.restartPending ||
+        runtimeAudio.startupEffectPending || runtimeAudio.startupEffectActive || runtimeAudio.resumeSavedPlaybackPending ||
+        (deferredActions != nullptr && deferredActions->playPending) ||
         settings->effects.ambientSoundFile.isEmpty() || snapshot.playback.state != "idle") {
         return;
     }
@@ -3438,12 +3443,15 @@ void setup() {
     displayManager->setBootMessage("Idle");
 #if !APP_AUDIO_DIAGNOSTIC_TEST
     runtimeAudio.startupEffectPending = !effectFileForSource("effect-startup").isEmpty();
+    runtimeAudio.startupEffectActive = false;
     runtimeAudio.startupEffectAttempts = 0;
     runtimeAudio.startupEffectEligibleAt = millis() + kStartupEffectDelayMs;
 #endif
     runtimeAudio.ambientEligibleAt = millis() + kAmbientResumeDelayMs;
     runtimeAudio.bootUpdateCheckQueued = settings->ota.autoCheck || settings->ota.autoUpdate;
     runtimeAudio.resumeSavedPlaybackPending = settings->audio.rememberLastPlayed && settings->audio.lastPlayback.resumeAfterBoot && !settings->audio.lastPlayback.url.isEmpty();
+    runtimeAudio.resumeSavedPlaybackEligibleAt = 0;
+    runtimeAudio.updateAvailableEffectEligibleAt = 0;
     if (settings->oled.displayType == "wape" && settings->oled.wapeTriggerEvent == "device_start") {
         requestWapeTriggerPulse();
     }
@@ -3473,9 +3481,23 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
         return;
     }
 
+    String completedPlaybackSource;
+    const bool playbackCompletionReported = audioPlayer != nullptr && audioPlayer->consumePlaybackCompletion(completedPlaybackSource);
+    if (playbackCompletionReported) {
+        Serial.printf("[audio] completion source=%s\n", completedPlaybackSource.c_str());
+    }
+    if (playbackCompletionReported && completedPlaybackSource == "effect-startup") {
+        runtimeAudio.startupEffectActive = false;
+        runtimeAudio.resumeSavedPlaybackEligibleAt = millis() + 250UL;
+        runtimeAudio.updateAvailableEffectEligibleAt = millis() + 3000UL;
+        restoreEffectVolumeIfNeeded();
+    }
+
     const bool nowPlaying = snapshot.playback.state == "playing" || snapshot.playback.state == "buffering";
     const bool wasPlaying = previousPlaybackState == "playing" || previousPlaybackState == "buffering";
-    const bool playbackStopped = wasPlaying && !nowPlaying;
+    const bool playbackStopped = wasPlaying && !nowPlaying &&
+        (previousPlaybackSource != "effect-startup" ||
+         (playbackCompletionReported && completedPlaybackSource == "effect-startup"));
     const bool playbackStarted = !wasPlaying && nowPlaying;
 
     if (!transitionStateInitialized) {
@@ -3500,17 +3522,22 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
     }
 
     if (playbackStarted) {
+        if (snapshot.playback.source == "effect-startup") {
+            runtimeAudio.startupEffectActive = true;
+        }
         if (runtimeAudio.previewResumePending && snapshot.playback.source == runtimeAudio.previewResumeSource) {
             clearPreviewResumeState();
         }
-        soundEffects->playPlaybackStart();
+        if (!snapshot.playback.source.startsWith("effect-")) {
+            soundEffects->playPlaybackStart();
+        }
         if (snapshot.playback.source != "effect-ambient") {
-            scheduleAmbientResume();
+            scheduleAmbientResume(snapshot.playback.source.startsWith("effect-") ? kAmbientResumeDelayMs : 0UL);
         }
         if (settings != nullptr && settings->oled.wapeTriggerEvent == "play_start") {
             requestWapeTriggerPulse();
         }
-    } else if (playbackStopped) {
+    } else if (playbackStopped && !previousPlaybackSource.startsWith("effect-")) {
         soundEffects->playPlaybackStop();
     }
 
@@ -3569,7 +3596,11 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
         }
     }
 
-    if (!runtimeAudio.updateAvailableHandled && snapshot.ota.updateAvailable && !snapshot.ota.latestVersion.isEmpty()) {
+    if (!runtimeAudio.updateAvailableHandled && snapshot.ota.updateAvailable && !snapshot.ota.latestVersion.isEmpty() &&
+        !runtimeAudio.startupEffectPending && !runtimeAudio.startupEffectActive && !runtimeAudio.resumeSavedPlaybackPending &&
+        snapshot.playback.state == "idle" && deferredActions != nullptr && !deferredActions->playPending &&
+        (runtimeAudio.updateAvailableEffectEligibleAt == 0 ||
+         static_cast<long>(millis() - runtimeAudio.updateAvailableEffectEligibleAt) >= 0)) {
         runtimeAudio.updateAvailableHandled = true;
         runtimeAudio.pendingAutoUpdateInstall = settings->ota.autoUpdate;
         const bool playedUpdateAvailableCue =
@@ -3584,6 +3615,7 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
         }
     } else if (!snapshot.ota.updateAvailable) {
         runtimeAudio.updateAvailableHandled = false;
+        runtimeAudio.updateAvailableEffectEligibleAt = 0;
     }
 
     if (!previousCharging && snapshot.battery.charging) {
@@ -3614,6 +3646,7 @@ void serviceRuntimeAudioAutomation(const AppStateSnapshot& snapshot) {
             const bool storageReference = parseStorageFileReference(startupEffectRef, storageTarget, storagePath);
             if (startupEffectRef.isEmpty()) {
                 runtimeAudio.startupEffectPending = false;
+                runtimeAudio.startupEffectActive = false;
                 runtimeAudio.startupEffectAttempts = 0;
             } else {
                 if (storageReference && !storageMounted(storageTarget)) {
@@ -3624,6 +3657,7 @@ void serviceRuntimeAudioAutomation(const AppStateSnapshot& snapshot) {
                 String startupEffectError;
                 if (playConfiguredEffect(startupEffectRef, "Startup", "effect-startup", &startupEffectError)) {
                     runtimeAudio.startupEffectPending = false;
+                    runtimeAudio.startupEffectActive = true;
                     runtimeAudio.startupEffectAttempts = 0;
                 } else {
                     const bool retryableStorageFailure = storageReference && runtimeAudio.startupEffectAttempts < kStartupEffectMaxAttempts;
@@ -3635,6 +3669,7 @@ void serviceRuntimeAudioAutomation(const AppStateSnapshot& snapshot) {
                                       startupEffectError.c_str());
                     } else {
                         runtimeAudio.startupEffectPending = false;
+                        runtimeAudio.startupEffectActive = false;
                         runtimeAudio.startupEffectAttempts = 0;
                         if (!startupEffectError.isEmpty()) {
                             Serial.printf("[effect] startup not played: %s\n", startupEffectError.c_str());
@@ -3672,12 +3707,17 @@ void serviceRuntimeAudioAutomation(const AppStateSnapshot& snapshot) {
         otaManager->triggerCheck(false);
     }
 
-    if (!runtimeAudio.startupEffectPending && runtimeAudio.resumeSavedPlaybackPending && snapshot.playback.state != "playing" && snapshot.playback.state != "buffering") {
+    const bool savedPlaybackResumeEligible = runtimeAudio.resumeSavedPlaybackEligibleAt == 0 ||
+        static_cast<long>(millis() - runtimeAudio.resumeSavedPlaybackEligibleAt) >= 0;
+    if (!runtimeAudio.startupEffectPending && !runtimeAudio.startupEffectActive && runtimeAudio.resumeSavedPlaybackPending &&
+        savedPlaybackResumeEligible && deferredActions != nullptr && !deferredActions->playPending &&
+        snapshot.playback.state != "playing" && snapshot.playback.state != "buffering") {
         StorageTarget storageTarget = StorageTarget::Flash;
         String storagePath;
         const bool storageReference = settings != nullptr && parseStorageFileReference(settings->audio.lastPlayback.url, storageTarget, storagePath);
         const bool resumeReady = storageReference || (wifiManager != nullptr && wifiManager->isConnected());
         if (resumeReady) {
+            Serial.printf("[audio] resuming saved playback after boot: %s\n", settings->audio.lastPlayback.url.c_str());
             runtimeAudio.resumeSavedPlaybackPending = false;
             queueSavedPlaybackResume();
         }

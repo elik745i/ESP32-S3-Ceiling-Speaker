@@ -9,6 +9,9 @@ ESP32 Notifier v0.1.26
 - Added a persistent three-band I2S equalizer to the Audio tab with mouse-controllable custom gains plus Flat, Clear, Rock, Bass, Classical, Voice, Jazz, Podcast, and Night presets.
 - Moved EQ updates to an independent real-time endpoint so changing a preset or band no longer remounts storage or reapplies unrelated runtime settings during playback; presets and custom gains are stored in NVS.
 - Fixed Play/Stop state detection so background ambient audio no longer leaves the radio control stuck on Stop after the foreground station has stopped.
+- Added an inline External Storage folder player with a synchronized volume slider, backend-derived current-track highlighting, selected-track-aware Play/Stop, previous/next, shuffle, repeat, and autoplay.
+- Folder playback now keeps shuffled and advanced tracks visible in the list, while the storage progress bar appears only during a real upload instead of showing a misleading idle meter.
+- Serialized boot audio around real decoder EOF events so the startup effect completes before remembered media or update notifications; background ambient audio resumes after its quiet interval.
 - Removed the redundant embedded ICO favicon while retaining the optimized SVG logo, recovering substantial OTA flash headroom without changing visible artwork.
 - Audited embedded illustrations and retained multipass SVGO plus maximum gzip compression for every built-in SVG; added a build-time compressed-asset size report to catch future flash regressions.
 - Fixed migration of the legacy `ESP32-S3-Ceiling-Speaker` OTA repository setting to `elma-iot/ELMA-IoT`, including devices that already saved the new owner with the old repository name.

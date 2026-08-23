@@ -43,6 +43,7 @@ export function createStatusRenderModule({
   updateWifiActionButton,
   updateMqttActionButton,
   updateStoragePreviewPlaybackControls,
+  updateStorageFolderPlaybackStatus,
   populateButtonActionSelects,
   renderOledPreview,
 }) {
@@ -182,11 +183,14 @@ export function createStatusRenderModule({
     state.status = status;
     const previewRef = state.storagePreviewItem ? storagePlaybackRef(state.storagePreviewItem.path, state.storagePreviewTarget) : "";
     const currentPlaybackUrl = String(status?.playback?.url || "");
-    const wasDeviceActive = Boolean(state.storagePreviewPlaybackMode.deviceActive);
+    const wasDeviceActive = Boolean(previewRef &&
+      String(previousStatus?.playback?.url || "") === previewRef &&
+      isPlaybackActive(previousStatus));
     const isDeviceActive = Boolean(previewRef && currentPlaybackUrl === previewRef && isPlaybackActive(status));
     state.storagePreviewPlaybackMode.previousDeviceActive = wasDeviceActive;
     state.storagePreviewPlaybackMode.deviceActive = isDeviceActive;
-    if (wasDeviceActive && !isDeviceActive && previewRef && !state.storagePreviewPlaybackMode.suppressAutoAdvance) {
+    const deviceBecameIdle = !isPlaybackActive(status) && !currentPlaybackUrl;
+    if (wasDeviceActive && deviceBecameIdle && previewRef && !state.storagePreviewPlaybackMode.suppressAutoAdvance && state.storagePreviewPlaybackMode.autoplay) {
       advanceStoragePreviewTrack(1, { autoplayDevice: true, respectModes: true }).catch(handleError);
     }
     if (!isDeviceActive && state.storagePreviewPlaybackMode.suppressAutoAdvance) {
@@ -245,10 +249,17 @@ export function createStatusRenderModule({
     if (elements.storagePreviewVolumeValue) {
       elements.storagePreviewVolumeValue.textContent = `${document.activeElement === elements.storagePreviewVolumeSlider ? elements.storagePreviewVolumeSlider.value : savedVolumePercent}%`;
     }
+    if (document.activeElement !== elements.storageInlineVolumeSlider && elements.storageInlineVolumeSlider) {
+      elements.storageInlineVolumeSlider.value = savedVolumePercent;
+    }
+    if (elements.storageInlineVolumeValue) {
+      elements.storageInlineVolumeValue.textContent = `${document.activeElement === elements.storageInlineVolumeSlider ? elements.storageInlineVolumeSlider.value : savedVolumePercent}%`;
+    }
     const audioMuted = Boolean(elements.audioMutedToggle?.checked);
 
     updatePlaybackActionButton();
     updateAudioUiState();
+    updateStorageFolderPlaybackStatus(status);
 
     renderWifiHero(wifiConnected, network.ip || (network.apMode ? "192.168.4.1" : "No IP"), network.wifiRssi);
     setPill(elements.mqttPill, mqttConnected ? "MQTT Connected" : "MQTT Offline", mqttConnected ? "ok" : "warn");

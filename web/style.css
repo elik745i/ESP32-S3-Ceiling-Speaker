@@ -3602,6 +3602,83 @@ body {
     margin-top: 0;
   }
 
+  .storage-playback-strip {
+    display: grid;
+    gap: 12px;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #ffffff;
+  }
+
+  .storage-playback-strip-head,
+  .storage-playback-strip-body {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    justify-content: space-between;
+    min-width: 0;
+  }
+
+  .storage-playback-strip-head > div {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .storage-playback-strip-head strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .storage-playback-eyebrow {
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .storage-inline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .storage-mode-button {
+    width: auto;
+    min-height: 38px;
+    padding: 0 12px;
+    border-radius: 999px;
+  }
+
+  .storage-mode-button[aria-pressed="true"] {
+    background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+    border-color: #cf8400;
+    color: #ffffff;
+  }
+
+  .storage-inline-volume {
+    display: grid;
+    gap: 5px;
+    width: min(320px, 42%);
+    min-width: 220px;
+  }
+
+  .storage-inline-volume span {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+
+  .storage-inline-volume input {
+    width: 100%;
+    accent-color: var(--accent-strong);
+  }
+
   .storage-file-list {
     display: grid;
     gap: 0;
@@ -3637,6 +3714,27 @@ body {
 
   .storage-file-row.selected {
     background: #eaf3ff;
+  }
+
+  .storage-file-row.playing {
+    background: #fff4df;
+    box-shadow: inset 4px 0 0 var(--accent-strong);
+  }
+
+  .storage-file-row.playing .storage-file-badge {
+    color: var(--accent-strong);
+  }
+
+  @media (max-width: 760px) {
+    .storage-playback-strip-body {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .storage-inline-volume {
+      width: 100%;
+      min-width: 0;
+    }
   }
 
   .storage-folder-row {

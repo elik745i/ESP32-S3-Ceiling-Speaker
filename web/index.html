@@ -1116,9 +1116,32 @@
               </div>
             </div>
             <input id="storageFileInput" name="storageFileInput" type="file" accept=".mp3,.wav,.aac,.m4a,.ogg,.opus,.flac,audio/*" aria-labelledby="storageUploadButton" multiple hidden>
-            <div class="progress-wrap storage-progress-wrap">
+            <section class="storage-playback-strip" aria-label="Folder playback controls">
+              <div class="storage-playback-strip-head">
+                <div>
+                  <span class="storage-playback-eyebrow">Folder player</span>
+                  <strong id="storageInlineTrackLabel">Select a song from this folder</strong>
+                </div>
+                <span id="storageInlinePlaybackState" class="scan-status">Stopped</span>
+              </div>
+              <div class="storage-playback-strip-body">
+                <div class="storage-inline-actions">
+                  <button id="storageInlinePrevButton" type="button" class="secondary icon-only-button" title="Previous song" aria-label="Previous song">&#9664;</button>
+                  <button id="storageInlinePlayButton" type="button" class="icon-only-button" title="Play selected song" aria-label="Play selected song">&#9654;</button>
+                  <button id="storageInlineNextButton" type="button" class="secondary icon-only-button" title="Next song" aria-label="Next song">&#9654;</button>
+                  <button id="storageInlineShuffleButton" type="button" class="secondary storage-mode-button" aria-pressed="false">Shuffle</button>
+                  <button id="storageInlineRepeatButton" type="button" class="secondary storage-mode-button" aria-pressed="false">Repeat</button>
+                  <button id="storageInlineAutoplayButton" type="button" class="secondary storage-mode-button" aria-pressed="true">Autoplay</button>
+                </div>
+                <label class="storage-inline-volume" for="storageInlineVolumeSlider">
+                  <span>Volume <output id="storageInlineVolumeValue">0%</output></span>
+                  <input id="storageInlineVolumeSlider" type="range" min="0" max="100" step="1">
+                </label>
+              </div>
+            </section>
+            <div id="storageProgressWrap" class="progress-wrap storage-progress-wrap" hidden>
               <div class="progress-bar"><div id="storageProgressFill" class="progress-fill"></div></div>
-              <div id="storageProgressLabel" class="progress-label">Idle</div>
+              <div id="storageProgressLabel" class="progress-label">Storage operation</div>
             </div>
             <div id="storageFileList" class="storage-file-list"></div>
           </div>

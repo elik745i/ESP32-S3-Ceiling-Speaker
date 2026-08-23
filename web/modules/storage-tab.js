@@ -22,6 +22,8 @@ export function createStorageTab({
   setStorageSelectionMode,
   setStorageStatus,
   selectedStoragePlaybackEntry,
+  currentStoragePlayingEntry,
+  storageEntryIsPlaying,
   shouldDeferSdReads,
   storageParentPath,
   uploadStorageFiles,
@@ -30,6 +32,8 @@ export function createStorageTab({
   selectAllStorageEntries,
   updateStoragePreviewPlaybackControls,
   advanceStoragePreviewTrack,
+  stopStoragePreviewPlayback,
+  setVolume,
   normalizeStorageDirectoryPath,
 }) {
   async function refreshExternalStorageTab(directoryPath = state.currentStoragePathByTarget.sd || "/", options = {}) {
@@ -63,8 +67,9 @@ export function createStorageTab({
       elements.storageProgressFill.style.width = "0%";
     }
     if (elements.storageProgressLabel) {
-      elements.storageProgressLabel.textContent = "Idle";
+      elements.storageProgressLabel.textContent = "Storage operation";
     }
+    if (elements.storageProgressWrap) elements.storageProgressWrap.hidden = true;
     if (!payload?.hasMore) {
       setStorageStatus("Ready");
     }
@@ -168,7 +173,9 @@ export function createStorageTab({
         setStorageStatus("Select one audio file first.", true);
         return;
       }
-      queueStoragePlayback(entry, state.activeStorageTarget).catch(handleError);
+      (storageEntryIsPlaying(entry)
+        ? stopStoragePreviewPlayback()
+        : queueStoragePlayback(entry, state.activeStorageTarget)).catch(handleError);
     });
     elements.storageUploadButton?.addEventListener("click", () => {
       if (!elements.storageFileInput || elements.storageUploadButton.disabled || state.storageUploadInProgress) {
@@ -285,6 +292,49 @@ export function createStorageTab({
     elements.storagePreviewShuffleButton?.addEventListener("click", () => {
       state.storagePreviewPlaybackMode.shuffle = !state.storagePreviewPlaybackMode.shuffle;
       updateStoragePreviewPlaybackControls();
+    });
+    elements.storageInlinePlayButton?.addEventListener("click", () => {
+      const entry = selectedStoragePlaybackEntry() || currentStoragePlayingEntry() || state.storagePreviewItem;
+      if (!entry) {
+        setStorageStatus("Select a song from this folder first.", true);
+        return;
+      }
+      (storageEntryIsPlaying(entry)
+        ? stopStoragePreviewPlayback()
+        : queueStoragePlayback(entry, state.activeStorageTarget)).catch(handleError);
+    });
+    const prepareInlineQueue = () => {
+      const playingEntry = currentStoragePlayingEntry();
+      if (playingEntry) {
+        state.storagePreviewItem = playingEntry;
+        state.storagePreviewTarget = state.activeStorageTarget;
+      }
+    };
+    elements.storageInlinePrevButton?.addEventListener("click", () => {
+      prepareInlineQueue();
+      advanceStoragePreviewTrack(-1, { autoplayDevice: true, respectModes: true, showPreview: false }).catch(handleError);
+    });
+    elements.storageInlineNextButton?.addEventListener("click", () => {
+      prepareInlineQueue();
+      advanceStoragePreviewTrack(1, { autoplayDevice: true, respectModes: true, showPreview: false }).catch(handleError);
+    });
+    elements.storageInlineShuffleButton?.addEventListener("click", () => {
+      state.storagePreviewPlaybackMode.shuffle = !state.storagePreviewPlaybackMode.shuffle;
+      updateStoragePreviewPlaybackControls();
+    });
+    elements.storageInlineRepeatButton?.addEventListener("click", () => {
+      state.storagePreviewPlaybackMode.loop = !state.storagePreviewPlaybackMode.loop;
+      updateStoragePreviewPlaybackControls();
+    });
+    elements.storageInlineAutoplayButton?.addEventListener("click", () => {
+      state.storagePreviewPlaybackMode.autoplay = !state.storagePreviewPlaybackMode.autoplay;
+      updateStoragePreviewPlaybackControls();
+    });
+    elements.storageInlineVolumeSlider?.addEventListener("input", (event) => {
+      if (elements.storageInlineVolumeValue) elements.storageInlineVolumeValue.textContent = `${event.target.value}%`;
+    });
+    elements.storageInlineVolumeSlider?.addEventListener("change", (event) => {
+      setVolume(Number(event.target.value)).catch(handleError);
     });
     elements.storagePreviewCloseButton?.addEventListener("click", () => {
       closeStoragePreview();

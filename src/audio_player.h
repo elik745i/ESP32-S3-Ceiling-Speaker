@@ -27,6 +27,7 @@ class AudioPlayer {
     void stop();
     bool overlayActive() const;
     bool consumeOverlayFinished();
+    bool consumePlaybackCompletion(String& source);
     bool reconfigureOutputPins(uint8_t bclkPin, uint8_t wsPin, uint8_t doutPin);
     bool disableOutput();
     void setVolumePercent(uint8_t volumePercent);

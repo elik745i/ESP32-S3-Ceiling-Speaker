@@ -25,6 +25,9 @@ This version is intended to be published as a standard GitHub release using the 
 - The Audio tab now includes a persistent three-band equalizer with mouse-controllable gains plus Flat, Clear, Rock, Bass, Classical, Voice, Jazz, Podcast, and Night presets applied directly to the I2S DSP.
 - Equalizer changes use an independent real-time path, avoiding the storage remount and full settings reapply that previously interrupted or jittered active playback.
 - Play/Stop now treats the looping ambient effect as background audio, so stopping a radio station reliably changes the control back to Play.
+- The External Storage tab now has an inline folder player with synchronized volume, current-track highlighting, selected-track-aware Play/Stop, previous/next, shuffle, repeat, and autoplay controls.
+- Storage playback advances within the open folder and scrolls shuffled or advanced tracks into view; the upload progress bar is hidden while no transfer is running.
+- Boot audio is serialized using real decoder completion events: startup effects cannot be interrupted by remembered media or update cues, and ambient playback resumes after the configured quiet interval.
 - CPU sampling uses cache-safe IRAM FreeRTOS tick hooks, including during NVS and OTA flash operations.
 - The redundant embedded ICO favicon was removed while retaining the visually equivalent SVG favicon; all embedded SVG illustrations continue through multipass SVGO and maximum gzip compression.
 - Legacy OTA settings for `ESP32-S3-Ceiling-Speaker` migrate to `elma-iot/ELMA-IoT` even when the owner had already been updated separately.
