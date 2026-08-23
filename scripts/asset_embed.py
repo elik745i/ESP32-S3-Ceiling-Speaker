@@ -16,6 +16,9 @@ HEADER = ROOT / "include" / "generated_web_assets.h"
 SOURCE = ROOT / "src" / "generated_web_assets.cpp"
 SKIPPED_WEB_ASSETS = {
     "favicon.ico",
+    # The SVG logo is the canonical favicon. This legacy multi-resolution ICO
+    # costs about 87 KiB even after gzip and is not needed by modern browsers.
+    "elma_iot_favicon.ico",
     # Unreferenced UI assets still cost flash when embedded.
     "esp32-38pinwide-breadboard.svg",
     "esp32-s3-devkit-c1-n8r8-v1-schematic.svg",
@@ -190,6 +193,11 @@ for path in sorted(BUILD_WEB_DIR.rglob("*")):
     symbol_base = re.sub(r"[^0-9a-zA-Z_]+", "_", relative_path)
     symbol = symbol_base.strip("_") or "asset"
     assets.append((relative_path, symbol, mime, payload, gzip_encoded or is_gzip_payload(payload)))
+
+total_embedded_bytes = sum(len(payload) for _, _, _, payload, _ in assets)
+print(f"[web-assets] embedded gzip payload: {total_embedded_bytes / 1024:.1f} KiB across {len(assets)} files")
+for asset_path, _, _, payload, _ in sorted(assets, key=lambda item: len(item[3]), reverse=True)[:10]:
+    print(f"[web-assets] {len(payload) / 1024:7.1f} KiB  {asset_path}")
 
 header_lines = [
     "#pragma once",

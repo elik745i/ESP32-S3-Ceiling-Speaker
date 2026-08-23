@@ -80,6 +80,7 @@ export function createHardwareTab({
 
     if (!systemReady) {
       updateResourceCard(elements.deviceCpuLoadValue, elements.deviceCpuLoadBar, elements.deviceCpuLoadMeta, "--", 0, "Live metrics appear after the first status refresh.");
+      updateResourceCard(elements.deviceCpuClockValue, elements.deviceCpuClockBar, elements.deviceCpuClockMeta, "--", 0, "Waiting for live CPU frequency telemetry.");
       updateResourceCard(elements.deviceSramValue, elements.deviceSramBar, elements.deviceSramMeta, "--", 0, "Waiting for SRAM usage from the device.");
       updateResourceCard(elements.devicePsramValue, elements.devicePsramBar, elements.devicePsramMeta, "--", 0, "Waiting for PSRAM status from the device.");
       updateResourceCard(elements.deviceSpiffsValue, elements.deviceSpiffsBar, elements.deviceSpiffsMeta, "--", 0, "Waiting for filesystem telemetry from the device.");
@@ -89,7 +90,13 @@ export function createHardwareTab({
       return;
     }
 
+    const cpuLoadAvailable = system.cpuLoadAvailable !== false;
     const cpuLoadPercent = Math.max(0, Math.min(100, Number(system.cpuLoadPercent || 0)));
+    const coreLoads = Array.isArray(system.cpuLoadCorePercent)
+      ? system.cpuLoadCorePercent.map((value) => Math.max(0, Math.min(100, Number(value || 0))))
+      : [];
+    const cpuFrequencyMhz = Math.max(0, Number(hardware.cpuFreqMHz || 0));
+    const cpuFrequencyPercent = Math.max(0, Math.min(100, (cpuFrequencyMhz / 240) * 100));
     const chipTemperatureAvailable = Boolean(system.chipTemperatureAvailable);
     const chipTemperatureC = Number(system.chipTemperatureC);
     const chipTemperaturePercent = chipTemperatureAvailable && Number.isFinite(chipTemperatureC)
@@ -101,7 +108,27 @@ export function createHardwareTab({
     const flashHeadroomBytes = flashSlotSizeBytes > firmwareSizeBytes ? flashSlotSizeBytes - firmwareSizeBytes : 0;
     const flashUsedPercent = flashSlotSizeBytes > 0 ? (firmwareSizeBytes * 100) / flashSlotSizeBytes : 0;
 
-    updateResourceCard(elements.deviceCpuLoadValue, elements.deviceCpuLoadBar, elements.deviceCpuLoadMeta, `${Math.round(cpuLoadPercent)}%`, cpuLoadPercent, "Approximate load derived from FreeRTOS idle time.");
+    const coreLoadSummary = coreLoads.length
+      ? coreLoads.map((value, index) => `Core ${index}: ${Math.round(value)}%`).join(" • ")
+      : "Per-core sampling unavailable";
+    updateResourceCard(
+      elements.deviceCpuLoadValue,
+      elements.deviceCpuLoadBar,
+      elements.deviceCpuLoadMeta,
+      cpuLoadAvailable ? `${Math.round(cpuLoadPercent)}%` : "Unavailable",
+      cpuLoadAvailable ? cpuLoadPercent : 0,
+      cpuLoadAvailable ? `${coreLoadSummary} • sampled from FreeRTOS scheduler ticks` : "CPU load sampling is unavailable on this target."
+    );
+    updateResourceCard(
+      elements.deviceCpuClockValue,
+      elements.deviceCpuClockBar,
+      elements.deviceCpuClockMeta,
+      cpuFrequencyMhz > 0 ? `${Math.round(cpuFrequencyMhz)} MHz` : "Unavailable",
+      cpuFrequencyPercent,
+      cpuFrequencyMhz > 0
+        ? "Dynamic policy: 80 MHz idle • 160 MHz playback • 240 MHz buffering, OTA, or AP"
+        : "Runtime CPU frequency telemetry is unavailable."
+    );
     updateResourceCard(
       elements.deviceChipTempValue,
       elements.deviceChipTempBar,

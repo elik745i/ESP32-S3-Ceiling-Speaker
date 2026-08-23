@@ -212,11 +212,15 @@ bool usesLegacyOtaRepository(const String& owner, const String& repository) {
     normalizedRepository.trim();
     normalizedRepository.toLowerCase();
 
-    return normalizedOwner == "elik745i" && (
-        normalizedRepository == "elma-iot" ||
-        normalizedRepository == "esp32-notifier-for-homeassistant" ||
-        normalizedRepository == "esp32-s3-ceiling-speaker"
-    );
+    // ESP32-S3-Ceiling-Speaker was the device-specific repository used by
+    // early ceiling-speaker builds. Some installations already have the new
+    // owner saved alongside that old repository name, so match it regardless
+    // of owner. The other legacy names only belonged to the previous owner.
+    return normalizedRepository == "esp32-s3-ceiling-speaker" ||
+        (normalizedOwner == "elik745i" && (
+            normalizedRepository == "elma-iot" ||
+            normalizedRepository == "esp32-notifier-for-homeassistant"
+        ));
 }
 
 String defaultOtaAssetTemplate() {
@@ -601,10 +605,13 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     if (settings.mqtt.clientId.isEmpty() || isLegacyDefaultMqttClientId(settings.mqtt.clientId)) {
         settings.mqtt.clientId = settings.device.deviceName;
     }
-    if (settings.ota.owner.isEmpty() || usesLegacyOtaRepository(settings.ota.owner, settings.ota.repository)) {
+    // Evaluate this once before changing either field. Rechecking after the
+    // owner is migrated can hide a legacy repository and leave OTA on a 404.
+    const bool legacyOtaRepository = usesLegacyOtaRepository(settings.ota.owner, settings.ota.repository);
+    if (settings.ota.owner.isEmpty() || legacyOtaRepository) {
         settings.ota.owner = DefaultConfig::OTA_OWNER;
     }
-    if (settings.ota.repository.isEmpty() || usesLegacyOtaRepository(settings.ota.owner, settings.ota.repository)) {
+    if (settings.ota.repository.isEmpty() || legacyOtaRepository) {
         settings.ota.repository = DefaultConfig::OTA_REPOSITORY;
     }
     if (settings.ota.assetTemplate.isEmpty() || settings.ota.assetTemplate == DefaultConfig::OTA_ASSET_TEMPLATE ||

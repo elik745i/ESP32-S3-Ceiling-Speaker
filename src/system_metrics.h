@@ -24,7 +24,10 @@ struct HardwareInfoSnapshot {
 };
 
 struct SystemMetricsSnapshot {
+    bool cpuLoadAvailable = false;
     uint8_t cpuLoadPercent = 0;
+    uint8_t cpuLoadCoreCount = 0;
+    uint8_t cpuLoadCorePercent[2] = {0, 0};
     bool chipTemperatureAvailable = false;
     float chipTemperatureC = 0.0f;
     uint32_t freeHeapBytes = 0;

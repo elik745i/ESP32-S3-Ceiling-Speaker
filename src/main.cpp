@@ -387,7 +387,10 @@ String lastRolledBackVersion;
 String lastRollbackReason;
 uint32_t lastProcessedMotorStateVersion = 0;
 uint32_t lastPublishedMotorStateVersion = 0;
-uint32_t activeCpuFrequencyMhz = 240;
+uint32_t activeCpuFrequencyMhz = 0;
+uint32_t pendingCpuFrequencyMhz = 0;
+unsigned long pendingCpuFrequencySince = 0;
+unsigned long lastCpuFrequencyFailureAt = 0;
 
 constexpr float kBatteryPercentEmptyVoltage = 3.2f;
 constexpr float kBatteryPercentFullVoltage = 4.2f;
@@ -414,6 +417,11 @@ constexpr unsigned long kRestartEffectForceDelayMs = 7000UL;
 constexpr unsigned long kEffectPreviewRetryDelayMs = 150UL;
 constexpr unsigned long kPowerCycleCounterClearDelayMs = 10000UL;
 constexpr uint8_t kPowerCycleFactoryResetThreshold = 7;
+constexpr uint32_t kCpuFrequencyIdleMhz = 80;
+constexpr uint32_t kCpuFrequencyPlaybackMhz = 160;
+constexpr uint32_t kCpuFrequencyBurstMhz = 240;
+constexpr unsigned long kCpuFrequencyDownshiftDelayMs = 5000UL;
+constexpr unsigned long kCpuFrequencyRetryDelayMs = 5000UL;
 
 constexpr char kOtaRollbackNamespace[] = "ota_state";
 constexpr char kOtaPendingVersionKey[] = "pend_ver";
@@ -609,27 +617,76 @@ bool parseStorageFileReference(const String& raw, StorageTarget& target, String&
 }
 
 void applyCpuFrequencyPolicy(const AppStateSnapshot& snapshot) {
-    uint32_t targetFrequencyMhz = 80;
-    const String playbackState = snapshot.playback.state;
-    const bool playbackActive = playbackState == "playing" || playbackState == "buffering";
-    const bool highPerformanceRequired =
-        playbackActive ||
-        snapshot.ota.busy ||
-        (wifiManager != nullptr && wifiManager->isApMode());
+    const unsigned long now = millis();
+    const uint32_t measuredFrequencyMhz = ESP.getCpuFreqMHz();
+    if (measuredFrequencyMhz != 0 && measuredFrequencyMhz != activeCpuFrequencyMhz) {
+        activeCpuFrequencyMhz = measuredFrequencyMhz;
+    }
 
-    if (highPerformanceRequired) {
-        targetFrequencyMhz = 240;
+    uint32_t targetFrequencyMhz = kCpuFrequencyIdleMhz;
+    const char* policyReason = "idle";
+    const String playbackState = snapshot.playback.state;
+    const bool playbackBuffering = playbackState == "buffering";
+    const bool playbackActive = playbackState == "playing";
+    const bool accessPointActive = wifiManager != nullptr && wifiManager->isApMode();
+
+    // OTA writes, AP service, and audio buffering get the full clock. Stable
+    // playback uses 160 MHz, which leaves ample decode headroom without
+    // pinning a continuously playing ceiling speaker at 240 MHz. Fully idle
+    // operation runs at 80 MHz.
+    if (snapshot.ota.busy) {
+        targetFrequencyMhz = kCpuFrequencyBurstMhz;
+        policyReason = "ota";
+    } else if (accessPointActive) {
+        targetFrequencyMhz = kCpuFrequencyBurstMhz;
+        policyReason = "access-point";
+    } else if (playbackBuffering) {
+        targetFrequencyMhz = kCpuFrequencyBurstMhz;
+        policyReason = "audio-buffering";
+    } else if (playbackActive) {
+        targetFrequencyMhz = kCpuFrequencyPlaybackMhz;
+        policyReason = "audio-playback";
     }
 
     if (targetFrequencyMhz == activeCpuFrequencyMhz) {
+        pendingCpuFrequencyMhz = 0;
+        pendingCpuFrequencySince = 0;
+        return;
+    }
+
+    // Upshift immediately so OTA and audio startup never wait for headroom.
+    // Delay downshifts to avoid clock thrashing across short state changes.
+    if (targetFrequencyMhz < activeCpuFrequencyMhz) {
+        if (pendingCpuFrequencyMhz != targetFrequencyMhz) {
+            pendingCpuFrequencyMhz = targetFrequencyMhz;
+            pendingCpuFrequencySince = now;
+            return;
+        }
+        if (now - pendingCpuFrequencySince < kCpuFrequencyDownshiftDelayMs) {
+            return;
+        }
+    } else {
+        pendingCpuFrequencyMhz = 0;
+        pendingCpuFrequencySince = 0;
+    }
+
+    if (lastCpuFrequencyFailureAt != 0 && now - lastCpuFrequencyFailureAt < kCpuFrequencyRetryDelayMs) {
         return;
     }
 
     if (setCpuFrequencyMhz(targetFrequencyMhz)) {
-        activeCpuFrequencyMhz = targetFrequencyMhz;
-        Serial.printf("[power] cpu frequency set to %lu MHz\n", static_cast<unsigned long>(activeCpuFrequencyMhz));
+        activeCpuFrequencyMhz = ESP.getCpuFreqMHz();
+        pendingCpuFrequencyMhz = 0;
+        pendingCpuFrequencySince = 0;
+        lastCpuFrequencyFailureAt = 0;
+        Serial.printf("[power] cpu frequency set to %lu MHz reason=%s\n",
+                      static_cast<unsigned long>(activeCpuFrequencyMhz),
+                      policyReason);
     } else {
-        Serial.printf("[power] cpu frequency change to %lu MHz failed\n", static_cast<unsigned long>(targetFrequencyMhz));
+        lastCpuFrequencyFailureAt = now;
+        Serial.printf("[power] cpu frequency change to %lu MHz failed reason=%s\n",
+                      static_cast<unsigned long>(targetFrequencyMhz),
+                      policyReason);
     }
 }
 
@@ -3156,6 +3213,7 @@ void setup() {
     waitForSerialConsole();
     delay(200);
     beginSystemMetrics();
+    activeCpuFrequencyMhz = ESP.getCpuFreqMHz();
 
     const esp_reset_reason_t resetReason = esp_reset_reason();
     loadRollbackState();

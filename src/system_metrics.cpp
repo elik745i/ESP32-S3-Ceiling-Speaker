@@ -2,68 +2,82 @@
 
 #include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
+#include <esp_freertos_hooks.h>
+#include <freertos/task.h>
 
 #include "storage_backend.h"
-
-#if __has_include(<esp_freertos_hooks.h>)
-#include <esp_freertos_hooks.h>
-#define APP_HAS_FREERTOS_IDLE_HOOKS 1
-#else
-#define APP_HAS_FREERTOS_IDLE_HOOKS 0
-#endif
 
 namespace {
 SystemMetricsSnapshot metricsSnapshot;
 bool metricsInitialized = false;
-uint32_t lastIdleCounts[portNUM_PROCESSORS] = {0};
-uint32_t peakIdleDeltas[portNUM_PROCESSORS] = {1};
-volatile uint32_t idleCounts[portNUM_PROCESSORS] = {0};
+TaskHandle_t idleTaskHandles[portNUM_PROCESSORS] = {nullptr};
+volatile uint32_t sampledTickCounts[portNUM_PROCESSORS] = {0};
+volatile uint32_t idleTickCounts[portNUM_PROCESSORS] = {0};
+uint32_t lastSampledTickCounts[portNUM_PROCESSORS] = {0};
+uint32_t lastIdleTickCounts[portNUM_PROCESSORS] = {0};
+bool tickHookRegistered[portNUM_PROCESSORS] = {false};
 
 #ifndef APP_BOARD_PROFILE
 #define APP_BOARD_PROFILE ""
-#endif
-
-#if APP_HAS_FREERTOS_IDLE_HOOKS
-bool idleHookCpu0() {
-    ++idleCounts[0];
-    return false;
-}
-
-#if portNUM_PROCESSORS > 1
-bool idleHookCpu1() {
-    ++idleCounts[1];
-    return false;
-}
-#endif
 #endif
 
 uint64_t clampUsedBytes(uint64_t totalBytes, uint64_t freeBytes) {
     return totalBytes > freeBytes ? totalBytes - freeBytes : 0;
 }
 
-uint8_t approximateCpuLoadPercent() {
-    uint32_t totalIdlePercent = 0;
-    for (size_t cpuIndex = 0; cpuIndex < portNUM_PROCESSORS; ++cpuIndex) {
-        const uint32_t currentIdleCount = idleCounts[cpuIndex];
-        const uint32_t idleDelta = currentIdleCount - lastIdleCounts[cpuIndex];
-        lastIdleCounts[cpuIndex] = currentIdleCount;
+// Tick hooks can run while the SPI flash cache is disabled. Keep the complete
+// application-side callback in IRAM and touch only DRAM-backed counters. The
+// FreeRTOS current-task accessor is linked into IRAM by ESP-IDF.
+void IRAM_ATTR tickHookCpu0() {
+    ++sampledTickCounts[0];
+    if (idleTaskHandles[0] != nullptr && xTaskGetCurrentTaskHandleForCPU(0) == idleTaskHandles[0]) {
+        ++idleTickCounts[0];
+    }
+}
 
-        if (idleDelta > peakIdleDeltas[cpuIndex]) {
-            peakIdleDeltas[cpuIndex] = idleDelta;
-        } else if (peakIdleDeltas[cpuIndex] > 8) {
-            peakIdleDeltas[cpuIndex] -= max<uint32_t>(1U, peakIdleDeltas[cpuIndex] / 128U);
-            if (idleDelta > peakIdleDeltas[cpuIndex]) {
-                peakIdleDeltas[cpuIndex] = idleDelta;
-            }
+#if portNUM_PROCESSORS > 1
+void IRAM_ATTR tickHookCpu1() {
+    ++sampledTickCounts[1];
+    if (idleTaskHandles[1] != nullptr && xTaskGetCurrentTaskHandleForCPU(1) == idleTaskHandles[1]) {
+        ++idleTickCounts[1];
+    }
+}
+#endif
+
+void sampleCpuLoad(SystemMetricsSnapshot& snapshot) {
+    uint32_t aggregateLoadPercent = 0;
+    uint8_t sampledCoreCount = 0;
+
+    for (size_t cpuIndex = 0; cpuIndex < portNUM_PROCESSORS; ++cpuIndex) {
+        const uint32_t sampledTicks = sampledTickCounts[cpuIndex];
+        const uint32_t idleTicks = idleTickCounts[cpuIndex];
+        const uint32_t sampledDelta = sampledTicks - lastSampledTickCounts[cpuIndex];
+        const uint32_t idleDelta = idleTicks - lastIdleTickCounts[cpuIndex];
+        lastSampledTickCounts[cpuIndex] = sampledTicks;
+        lastIdleTickCounts[cpuIndex] = idleTicks;
+
+        if (!tickHookRegistered[cpuIndex] || sampledDelta == 0) {
+            continue;
         }
 
-        const uint32_t referenceIdle = max<uint32_t>(peakIdleDeltas[cpuIndex], 1U);
-        const uint32_t idlePercent = min<uint32_t>(100U, (idleDelta * 100U) / referenceIdle);
-        totalIdlePercent += idlePercent;
+        const uint32_t boundedIdleDelta = min<uint32_t>(idleDelta, sampledDelta);
+        const uint8_t coreLoadPercent = static_cast<uint8_t>(
+            100U - ((boundedIdleDelta * 100U + sampledDelta / 2U) / sampledDelta));
+        if (cpuIndex < 2) {
+            snapshot.cpuLoadCorePercent[cpuIndex] = coreLoadPercent;
+        }
+        aggregateLoadPercent += coreLoadPercent;
+        ++sampledCoreCount;
     }
 
-    const uint32_t averageIdlePercent = totalIdlePercent / max<size_t>(1, portNUM_PROCESSORS);
-    return static_cast<uint8_t>(100U - min<uint32_t>(100U, averageIdlePercent));
+    if (sampledCoreCount == 0) {
+        return;
+    }
+
+    snapshot.cpuLoadAvailable = true;
+    snapshot.cpuLoadCoreCount = min<uint8_t>(sampledCoreCount, 2);
+    snapshot.cpuLoadPercent = static_cast<uint8_t>(
+        (aggregateLoadPercent + sampledCoreCount / 2U) / sampledCoreCount);
 }
 
 void populateStaticHardwareInfo(HardwareInfoSnapshot& hardware) {
@@ -104,11 +118,13 @@ void beginSystemMetrics() {
     metricsSnapshot = {};
     populateStaticHardwareInfo(metricsSnapshot.hardware);
 
-#if APP_HAS_FREERTOS_IDLE_HOOKS
-    esp_register_freertos_idle_hook_for_cpu(idleHookCpu0, 0);
+    idleTaskHandles[0] = xTaskGetIdleTaskHandleForCPU(0);
+    tickHookRegistered[0] = idleTaskHandles[0] != nullptr &&
+        esp_register_freertos_tick_hook_for_cpu(tickHookCpu0, 0) == ESP_OK;
 #if portNUM_PROCESSORS > 1
-    esp_register_freertos_idle_hook_for_cpu(idleHookCpu1, 1);
-#endif
+    idleTaskHandles[1] = xTaskGetIdleTaskHandleForCPU(1);
+    tickHookRegistered[1] = idleTaskHandles[1] != nullptr &&
+        esp_register_freertos_tick_hook_for_cpu(tickHookCpu1, 1) == ESP_OK;
 #endif
 
     metricsInitialized = true;
@@ -121,7 +137,10 @@ void sampleSystemMetrics() {
     }
 
     SystemMetricsSnapshot next = metricsSnapshot;
-    next.cpuLoadPercent = approximateCpuLoadPercent();
+    // CPU frequency is governed at runtime, so unlike the other hardware
+    // fields it must be refreshed instead of remaining at its boot value.
+    next.hardware.cpuFreqMHz = ESP.getCpuFreqMHz();
+    sampleCpuLoad(next);
 #if defined(ARDUINO_ARCH_ESP32)
     next.chipTemperatureC = temperatureRead();
     next.chipTemperatureAvailable = isfinite(next.chipTemperatureC);
@@ -170,7 +189,12 @@ void appendSystemMetricsJson(JsonObject root) {
     system["freeHeap"] = snapshot.freeHeapBytes;
     system["minFreeHeapBytes"] = snapshot.minFreeHeapBytes;
     system["largestHeapBlockBytes"] = snapshot.largestHeapBlockBytes;
+    system["cpuLoadAvailable"] = snapshot.cpuLoadAvailable;
     system["cpuLoadPercent"] = snapshot.cpuLoadPercent;
+    JsonArray cpuLoadCores = system["cpuLoadCorePercent"].to<JsonArray>();
+    for (uint8_t coreIndex = 0; coreIndex < snapshot.cpuLoadCoreCount; ++coreIndex) {
+        cpuLoadCores.add(snapshot.cpuLoadCorePercent[coreIndex]);
+    }
     system["chipTemperatureAvailable"] = snapshot.chipTemperatureAvailable;
     if (snapshot.chipTemperatureAvailable) {
         system["chipTemperatureC"] = snapshot.chipTemperatureC;

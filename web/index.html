@@ -4,7 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ELMA IoT</title>
-  <link rel="icon" type="image/x-icon" href="/elma_iot_favicon.ico">
   <link rel="icon" type="image/svg+xml" href="/elma_iot_logo.svg">
   <link rel="apple-touch-icon" href="/elma_iot_apple_only.svg">
   <link rel="stylesheet" href="/style.css">
@@ -514,7 +513,12 @@
             <div class="resource-card">
               <div class="resource-head"><span>CPU Load</span><strong id="deviceCpuLoadValue">-</strong></div>
               <div class="progress-bar"><div id="deviceCpuLoadBar" class="progress-fill"></div></div>
-              <div id="deviceCpuLoadMeta" class="resource-meta">Approximate idle-derived load</div>
+              <div id="deviceCpuLoadMeta" class="resource-meta">Scheduler-tick sampled load</div>
+            </div>
+            <div class="resource-card">
+              <div class="resource-head"><span>CPU Clock</span><strong id="deviceCpuClockValue">-</strong></div>
+              <div class="progress-bar"><div id="deviceCpuClockBar" class="progress-fill"></div></div>
+              <div id="deviceCpuClockMeta" class="resource-meta">Dynamic clock policy</div>
             </div>
             <div class="resource-card">
               <div class="resource-head"><span>Chip Temperature</span><strong id="deviceChipTempValue">-</strong></div>

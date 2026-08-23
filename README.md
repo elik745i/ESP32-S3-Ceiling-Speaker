@@ -11,12 +11,22 @@ Project story and current device write-up:
 
 ## Current Release
 
-- Firmware version: `v0.1.24`
+- Firmware version: `v0.1.25`
 - Primary release repository: `elma-iot/ELMA-IoT`
 - GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.24.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.25.bin`
 
 This version is intended to be published as a standard GitHub release using the normal OTA asset names without a prerelease suffix.
+
+### v0.1.25 highlights
+
+- Dynamic ESP32 CPU policy: 80 MHz while idle, 160 MHz during stable playback, and 240 MHz while buffering, updating firmware, or serving access-point mode.
+- Hardware Monitor now reports the live clock rate, aggregate CPU load, and per-core CPU load instead of allowing the old adaptive estimate to drift toward a false 0%.
+- CPU sampling uses cache-safe IRAM FreeRTOS tick hooks, including during NVS and OTA flash operations.
+- The redundant embedded ICO favicon was removed while retaining the visually equivalent SVG favicon; all embedded SVG illustrations continue through multipass SVGO and maximum gzip compression.
+- Legacy OTA settings for `ESP32-S3-Ceiling-Speaker` migrate to `elma-iot/ELMA-IoT` even when the owner had already been updated separately.
+
+The ESP32-S3 HACS build was validated on the ceiling-speaker hardware over USB and Wi-Fi: saved settings survived, Wi-Fi and MQTT reconnected, ambient SD playback resumed, the playback clock settled at 160 MHz, CPU load reported per core, and the OTA health state cleared without rollback.
 
 Latest release highlights:
 
@@ -132,7 +142,7 @@ Current UI highlights:
 - Header gear menu with inline refresh, reboot, and shutdown actions.
 - Centered reboot countdown overlay that waits for reconnect before forcing a refresh.
 - Live Wi-Fi, MQTT, playback, battery, heap, and firmware status.
-- Hardware Monitor cards for CPU load, SRAM, PSRAM, flash FS, SD, and board metadata.
+- Hardware Monitor cards for aggregate and per-core CPU load, live CPU clock speed, chip temperature, SRAM, PSRAM, flash FS, SD, and board metadata.
 - MQTT discovery now also exposes chip CPU temperature to Home Assistant as a retained temperature sensor.
 - Radio Browser country and station selection with recent playback history.
 - Direct URL playback and TTS playback entry.
@@ -483,6 +493,7 @@ Current MQTT behavior:
 
 Current OTA and rollback behavior:
 
+- Legacy OTA repository values are migrated to `elma-iot/ELMA-IoT` before release checks, including mixed saved owner/repository states.
 - OTA rollback bookkeeping now suppresses harmless `Preferences` `NOT_FOUND` log spam on normal boots when no pending or bad-version keys exist in NVS.
 - OTA release downloads now treat a no-progress socket as a stalled transfer after 15 seconds, retry up to three resumed HTTP range requests, and force a recovery reboot if the download still cannot progress.
 - If the firmware host does not support OTA resume after a stall, the device aborts the update and reboots back into the current firmware instead of staying stuck in a busy flashing state.
@@ -492,14 +503,14 @@ Current OTA and rollback behavior:
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.24`:
+Release asset names for `v0.1.25`:
 
-- `esp32-notifier-v0.1.24.bin`
-- `esp32-notifier-hacs-v0.1.24.bin`
-- `esp32-notifier-hacs-slim-v0.1.24.bin`
-- `esp32s3-notifier-v0.1.24.bin`
-- `esp32s3-notifier-hacs-v0.1.24.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.24.bin`
+- `esp32-notifier-v0.1.25.bin`
+- `esp32-notifier-hacs-v0.1.25.bin`
+- `esp32-notifier-hacs-slim-v0.1.25.bin`
+- `esp32s3-notifier-v0.1.25.bin`
+- `esp32s3-notifier-hacs-v0.1.25.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.25.bin`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard release variants and upload the matching OTA assets back to that release.
 
@@ -580,4 +591,4 @@ Key files and directories:
 
 Current release notes live here:
 
-- [release-assets/v0.1.24/release-notes.md](release-assets/v0.1.24/release-notes.md)
+- [release-assets/v0.1.25/release-notes.md](release-assets/v0.1.25/release-notes.md)
