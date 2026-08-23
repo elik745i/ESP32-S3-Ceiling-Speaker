@@ -1,6 +1,6 @@
 ESP32 Notifier v0.1.27
 
-- Fixed selected GitHub firmware installs getting stuck at `Resolving release` after the release list had been refreshed; compatible current, older, and alternate build assets can now be deliberately reinstalled.
+- Fixed selected GitHub firmware installs getting stuck at `Resolving release` after the release list had been refreshed; compatible current, older, and alternate build assets can now be deliberately reinstalled. Release-refresh and install TLS work is serialized to prevent concurrent downloads, parse failures, and recovery reboots.
 - Optimized the idle service loop by rate-limiting unchanged Wi-Fi state publication, reducing full runtime snapshots to 50 Hz, bypassing disabled audio/battery work, and using a playback-aware idle yield.
 - Hardware validation reduced idle load from about 25-31% aggregate / 48-53% Core 1 to typically 0-2%, with the ESP32-S3 die reading falling from 71 C to about 42 C at 80 MHz.
 - Added a Tasmota-style AP-to-STA browser handoff that displays the assigned station IP and reconnects the setup client to the device after the fallback AP closes.

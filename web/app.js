@@ -1016,6 +1016,7 @@ const elements = {
   latestVersion: document.getElementById("latestVersion"),
   otaProgressFill: document.getElementById("otaProgressFill"),
   otaProgressLabel: document.getElementById("otaProgressLabel"),
+  applyOtaButton: document.getElementById("applyOtaButton"),
   firmwareList: document.getElementById("firmwareList"),
   firmwareSelectionLabel: document.getElementById("firmwareSelectionLabel"),
   firmwareRollbackAlert: document.getElementById("firmwareRollbackAlert"),

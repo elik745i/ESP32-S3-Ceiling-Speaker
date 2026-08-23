@@ -401,6 +401,22 @@ void OtaManager::loop() {
             ESP.restart();
         }
     }
+    // A selected install must never overlap a GitHub release refresh: both
+    // operations allocate TLS/HTTP state and stream data. If a refresh is
+    // already running, wait for it to finish. Once it does, the explicit
+    // install takes priority over any queued refresh retry.
+    if (!pendingInstallVersion_.isEmpty() && !busy_ && !releaseRefreshInProgress_) {
+        pendingReleaseRefresh_ = false;
+        releaseRefreshAttemptsRemaining_ = 0;
+        const String version = pendingInstallVersion_;
+        const String assetName = pendingInstallAssetName_;
+        const String assetUrl = pendingInstallAssetUrl_;
+        pendingInstallVersion_ = "";
+        pendingInstallAssetName_ = "";
+        pendingInstallAssetUrl_ = "";
+        runVersionTask(version, assetName, assetUrl);
+        return;
+    }
     if (pendingReleaseRefresh_ && !busy_ && !releaseRefreshInProgress_ &&
         static_cast<long>(millis() - releaseRefreshNextAttemptAtMs_) >= 0) {
         releaseRefreshInProgress_ = true;
@@ -415,17 +431,7 @@ void OtaManager::loop() {
         }
         return;
     }
-    if (!pendingInstallVersion_.isEmpty() && !busy_) {
-        const String version = pendingInstallVersion_;
-        const String assetName = pendingInstallAssetName_;
-        const String assetUrl = pendingInstallAssetUrl_;
-        pendingInstallVersion_ = "";
-        pendingInstallAssetName_ = "";
-        pendingInstallAssetUrl_ = "";
-        runVersionTask(version, assetName, assetUrl);
-        return;
-    }
-    if (pendingCheck_ && !busy_) {
+    if (pendingCheck_ && !busy_ && !releaseRefreshInProgress_) {
         const bool applyAfterCheck = pendingApply_;
         pendingCheck_ = false;
         pendingApply_ = false;

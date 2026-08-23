@@ -161,6 +161,9 @@ export function createFirmwareTab({ state, elements, request, loadStatus, setMes
 
   async function refreshFirmwareInfo(forceRefresh = false) {
     state.firmwareReleasesLoading = true;
+    if (elements.applyOtaButton) {
+      elements.applyOtaButton.disabled = true;
+    }
     if (forceRefresh) {
       elements.otaStatusLabel.textContent = "Checking releases...";
       showFirmwareListStatus("Checking available firmware releases...");
@@ -210,6 +213,9 @@ export function createFirmwareTab({ state, elements, request, loadStatus, setMes
       }
     } finally {
       state.firmwareReleasesLoading = false;
+      if (elements.applyOtaButton) {
+        elements.applyOtaButton.disabled = false;
+      }
     }
   }
 
