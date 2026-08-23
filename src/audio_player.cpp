@@ -761,6 +761,15 @@ void AudioPlayer::setDirectLibraryVolume(uint8_t libraryVolume) {
     impl_->publish();
 }
 
+void AudioPlayer::setEqualizer(const String& preset, int8_t lowDb, int8_t presenceDb, int8_t highDb) {
+    if (impl_ == nullptr) {
+        return;
+    }
+    impl_->audio.setTone(lowDb, presenceDb, highDb);
+    Serial.printf("[audio] equalizer preset=%s low=%d presence=%d high=%d dB\n",
+                  preset.c_str(), lowDb, presenceDb, highDb);
+}
+
 uint8_t AudioPlayer::volumePercent() const {
     return impl_ == nullptr ? 0 : impl_->volume;
 }

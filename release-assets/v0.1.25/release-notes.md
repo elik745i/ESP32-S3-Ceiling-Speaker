@@ -6,6 +6,7 @@ ESP32 Notifier v0.1.25
 - Replaced the drifting idle-loop CPU-load estimate with per-core FreeRTOS scheduler-tick sampling, preventing steady workloads from gradually falling to a false 0% reading.
 - Kept the scheduler-tick callbacks and their complete application-side sampling path in IRAM so NVS and OTA flash operations cannot invoke cached firmware code while the SPI flash cache is disabled.
 - Added a dedicated CPU Clock card plus aggregate and per-core CPU load details to the Hardware Monitor.
+- Added a persistent three-band I2S equalizer to the Audio tab with Flat, Clear, Rock, Bass, Classical, Voice, Jazz, Podcast, and Night presets; the selected preset is stored in NVS and restored on boot.
 - Removed the redundant embedded ICO favicon while retaining the optimized SVG logo, recovering substantial OTA flash headroom without changing visible artwork.
 - Audited embedded illustrations and retained multipass SVGO plus maximum gzip compression for every built-in SVG; added a build-time compressed-asset size report to catch future flash regressions.
 - Fixed migration of the legacy `ESP32-S3-Ceiling-Speaker` OTA repository setting to `elma-iot/ELMA-IoT`, including devices that already saved the new owner with the old repository name.

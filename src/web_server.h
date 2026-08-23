@@ -22,6 +22,7 @@ class WebServerManager {
     using PlayHandler = std::function<bool(const String&, const String&, const String&, String&)>;
     using StopHandler = std::function<void(void)>;
     using VolumeHandler = std::function<void(uint8_t)>;
+    using EqualizerHandler = std::function<void(const String&, int8_t, int8_t, int8_t)>;
     using SimpleHandler = std::function<void(void)>;
     using OtaHandler = std::function<bool(bool)>;
     using MqttHandler = std::function<bool(const String&, String&)>;
@@ -40,6 +41,7 @@ class WebServerManager {
         PlayHandler playHandler,
         StopHandler stopHandler,
         VolumeHandler volumeHandler,
+        EqualizerHandler equalizerHandler,
         OtaHandler otaHandler,
         MqttHandler mqttHandler,
         MotorRunHandler motorRunHandler,
@@ -64,6 +66,7 @@ class WebServerManager {
     PlayHandler playHandler_;
     StopHandler stopHandler_;
     VolumeHandler volumeHandler_;
+    EqualizerHandler equalizerHandler_;
     OtaHandler otaHandler_;
     MqttHandler mqttHandler_;
     MotorRunHandler motorRunHandler_;

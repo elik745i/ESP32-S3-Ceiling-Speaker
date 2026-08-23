@@ -12,6 +12,36 @@ constexpr char PREF_MARKER[] = "saved";
 constexpr float kLegacyEsp32BatteryCalibration = 3.866f;
 constexpr uint8_t kDocumentedBuzzerPin = 7;
 
+void normalizeEqualizer(AudioSettings& audio) {
+    audio.equalizerPreset.trim();
+    audio.equalizerPreset.toLowerCase();
+    if (audio.equalizerPreset == "flat") {
+        audio.equalizerLowDb = 0; audio.equalizerPresenceDb = 0; audio.equalizerHighDb = 0;
+    } else if (audio.equalizerPreset == "clear") {
+        audio.equalizerLowDb = -1; audio.equalizerPresenceDb = 1; audio.equalizerHighDb = 4;
+    } else if (audio.equalizerPreset == "rock") {
+        audio.equalizerLowDb = 4; audio.equalizerPresenceDb = 1; audio.equalizerHighDb = 3;
+    } else if (audio.equalizerPreset == "bass") {
+        audio.equalizerLowDb = 6; audio.equalizerPresenceDb = 0; audio.equalizerHighDb = -1;
+    } else if (audio.equalizerPreset == "classical") {
+        audio.equalizerLowDb = 1; audio.equalizerPresenceDb = 2; audio.equalizerHighDb = 4;
+    } else if (audio.equalizerPreset == "voice") {
+        audio.equalizerLowDb = -3; audio.equalizerPresenceDb = 5; audio.equalizerHighDb = 2;
+    } else if (audio.equalizerPreset == "jazz") {
+        audio.equalizerLowDb = 3; audio.equalizerPresenceDb = 2; audio.equalizerHighDb = 3;
+    } else if (audio.equalizerPreset == "podcast") {
+        audio.equalizerLowDb = -4; audio.equalizerPresenceDb = 6; audio.equalizerHighDb = 1;
+    } else if (audio.equalizerPreset == "night") {
+        audio.equalizerLowDb = -3; audio.equalizerPresenceDb = 2; audio.equalizerHighDb = -3;
+    } else if (audio.equalizerPreset != "custom") {
+        audio.equalizerPreset = "flat";
+        audio.equalizerLowDb = 0; audio.equalizerPresenceDb = 0; audio.equalizerHighDb = 0;
+    }
+    audio.equalizerLowDb = constrain(audio.equalizerLowDb, static_cast<int8_t>(-6), static_cast<int8_t>(6));
+    audio.equalizerPresenceDb = constrain(audio.equalizerPresenceDb, static_cast<int8_t>(-6), static_cast<int8_t>(6));
+    audio.equalizerHighDb = constrain(audio.equalizerHighDb, static_cast<int8_t>(-6), static_cast<int8_t>(6));
+}
+
 String defaultPeripheralHelperBindings() {
     return "{}";
 }
@@ -677,6 +707,7 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     if (!settings.audio.rememberLastPlayed) {
         settings.audio.lastPlayback.resumeAfterBoot = false;
     }
+    normalizeEqualizer(settings.audio);
     settings.audio.lastPlayback.type.toLowerCase();
     if (settings.audio.lastPlayback.type != "stream" && settings.audio.lastPlayback.type != "media") {
         settings.audio.lastPlayback.resumeAfterBoot = false;
@@ -798,6 +829,10 @@ SettingsBundle SettingsManager::load() {
 
     settings.audio.enabled = readBool("aud_en", settings.audio.enabled);
     settings.audio.rememberLastPlayed = readBool("aud_rem", settings.audio.rememberLastPlayed);
+    settings.audio.equalizerPreset = readString("aud_eq", settings.audio.equalizerPreset);
+    settings.audio.equalizerLowDb = readInt("aud_eq_lo", settings.audio.equalizerLowDb);
+    settings.audio.equalizerPresenceDb = readInt("aud_eq_mid", settings.audio.equalizerPresenceDb);
+    settings.audio.equalizerHighDb = readInt("aud_eq_hi", settings.audio.equalizerHighDb);
     settings.audio.doutPin = readUInt("aud_dout", settings.audio.doutPin);
     settings.audio.wsPin = readUInt("aud_ws", settings.audio.wsPin);
     settings.audio.bclkPin = readUInt("aud_bclk", settings.audio.bclkPin);
@@ -918,6 +953,10 @@ bool SettingsManager::save(const SettingsBundle& settings) {
 
     changed |= writeBoolIfChanged("aud_en", sanitized.audio.enabled);
     changed |= writeBoolIfChanged("aud_rem", sanitized.audio.rememberLastPlayed);
+    changed |= writeStringIfChanged("aud_eq", sanitized.audio.equalizerPreset);
+    changed |= writeIntIfChanged("aud_eq_lo", sanitized.audio.equalizerLowDb);
+    changed |= writeIntIfChanged("aud_eq_mid", sanitized.audio.equalizerPresenceDb);
+    changed |= writeIntIfChanged("aud_eq_hi", sanitized.audio.equalizerHighDb);
     changed |= writeUIntIfChanged("aud_dout", sanitized.audio.doutPin);
     changed |= writeUIntIfChanged("aud_ws", sanitized.audio.wsPin);
     changed |= writeUIntIfChanged("aud_bclk", sanitized.audio.bclkPin);
@@ -985,6 +1024,18 @@ bool SettingsManager::save(const SettingsBundle& settings) {
     return changed;
 }
 
+bool SettingsManager::saveAudioEqualizer(const AudioSettings& audio) {
+    AudioSettings sanitized = audio;
+    normalizeEqualizer(sanitized);
+    bool changed = false;
+    changed |= writeStringIfChanged("aud_eq", sanitized.equalizerPreset);
+    changed |= writeIntIfChanged("aud_eq_lo", sanitized.equalizerLowDb);
+    changed |= writeIntIfChanged("aud_eq_mid", sanitized.equalizerPresenceDb);
+    changed |= writeIntIfChanged("aud_eq_hi", sanitized.equalizerHighDb);
+    changed |= writeBoolIfChanged(PREF_MARKER, true);
+    return changed;
+}
+
 bool SettingsManager::reset() {
     return preferences_.clear();
 }
@@ -1038,6 +1089,10 @@ void SettingsManager::toJson(const SettingsBundle& settings, JsonObject root) co
     JsonObject audio = root["audio"].to<JsonObject>();
     audio["enabled"] = settings.audio.enabled;
     audio["rememberLastPlayed"] = settings.audio.rememberLastPlayed;
+    audio["equalizerPreset"] = settings.audio.equalizerPreset;
+    audio["equalizerLowDb"] = settings.audio.equalizerLowDb;
+    audio["equalizerPresenceDb"] = settings.audio.equalizerPresenceDb;
+    audio["equalizerHighDb"] = settings.audio.equalizerHighDb;
     audio["doutPin"] = settings.audio.doutPin;
     audio["wsPin"] = settings.audio.wsPin;
     audio["bclkPin"] = settings.audio.bclkPin;
@@ -1227,6 +1282,10 @@ bool SettingsManager::updateFromJson(SettingsBundle& settings, JsonVariantConst 
     if (!audio.isNull()) {
         if (audio["enabled"].is<bool>()) settings.audio.enabled = audio["enabled"].as<bool>();
         if (audio["rememberLastPlayed"].is<bool>()) settings.audio.rememberLastPlayed = audio["rememberLastPlayed"].as<bool>();
+        copyString(audio, "equalizerPreset", settings.audio.equalizerPreset);
+        if (audio["equalizerLowDb"].is<int8_t>()) settings.audio.equalizerLowDb = audio["equalizerLowDb"].as<int8_t>();
+        if (audio["equalizerPresenceDb"].is<int8_t>()) settings.audio.equalizerPresenceDb = audio["equalizerPresenceDb"].as<int8_t>();
+        if (audio["equalizerHighDb"].is<int8_t>()) settings.audio.equalizerHighDb = audio["equalizerHighDb"].as<int8_t>();
         if (audio["doutPin"].is<uint8_t>()) settings.audio.doutPin = audio["doutPin"].as<uint8_t>();
         if (audio["wsPin"].is<uint8_t>()) settings.audio.wsPin = audio["wsPin"].as<uint8_t>();
         if (audio["bclkPin"].is<uint8_t>()) settings.audio.bclkPin = audio["bclkPin"].as<uint8_t>();

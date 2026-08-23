@@ -21,6 +21,7 @@ void WebServerManager::begin(
     PlayHandler,
     StopHandler,
     VolumeHandler,
+    EqualizerHandler,
     OtaHandler,
     MqttHandler,
     MotorRunHandler,
@@ -901,6 +902,7 @@ void WebServerManager::begin(
     PlayHandler playHandler,
     StopHandler stopHandler,
     VolumeHandler volumeHandler,
+    EqualizerHandler equalizerHandler,
     OtaHandler otaHandler,
     MqttHandler mqttHandler,
     MotorRunHandler motorRunHandler,
@@ -919,6 +921,7 @@ void WebServerManager::begin(
     playHandler_ = playHandler;
     stopHandler_ = stopHandler;
     volumeHandler_ = volumeHandler;
+    equalizerHandler_ = equalizerHandler;
     otaHandler_ = otaHandler;
     mqttHandler_ = mqttHandler;
     motorRunHandler_ = motorRunHandler;
@@ -1231,6 +1234,27 @@ void WebServerManager::registerApiRoutes() {
             volumeHandler_(volume);
             request->send(200, "application/json", "{\"ok\":true}");
         });
+
+    auto* equalizerHandler = new AsyncCallbackJsonWebHandler(
+        "/api/equalizer",
+        [this](AsyncWebServerRequest* request, JsonVariant& json) {
+            if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+                return;
+            }
+            if (json.isNull() || !equalizerHandler_) {
+                request->send(400, "application/json", "{\"error\":\"invalid equalizer request\"}");
+                return;
+            }
+            JsonObjectConst object = json.as<JsonObjectConst>();
+            String preset = object["preset"] | "custom";
+            const int8_t lowDb = constrain(object["lowDb"] | 0, -6, 6);
+            const int8_t presenceDb = constrain(object["presenceDb"] | 0, -6, 6);
+            const int8_t highDb = constrain(object["highDb"] | 0, -6, 6);
+            equalizerHandler_(preset, lowDb, presenceDb, highDb);
+            request->send(200, "application/json", "{\"ok\":true}");
+        });
+    equalizerHandler->setMethod(HTTP_POST);
+    server_.addHandler(equalizerHandler);
 
     server_.on("/api/stop", HTTP_POST, [this](AsyncWebServerRequest* request) {
         if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {

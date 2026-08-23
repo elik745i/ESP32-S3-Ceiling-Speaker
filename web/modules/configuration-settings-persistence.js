@@ -17,6 +17,7 @@ export function createConfigurationSettingsPersistenceModule({
   effectVolumePercentValue,
   effectVolumeSetting,
   populateAudioI2sPinOptions,
+  renderEqualizerPreset,
   populateSdPinOptions,
   populateStatusLedPinOptions,
   populateOledPinOptions,
@@ -180,6 +181,11 @@ export function createConfigurationSettingsPersistenceModule({
     if (elements.audioDoutPin && data.audio?.doutPin !== undefined) {
       elements.audioDoutPin.value = String(data.audio.doutPin);
     }
+    renderEqualizerPreset(data.audio?.equalizerPreset || "flat", [
+      data.audio?.equalizerLowDb ?? 0,
+      data.audio?.equalizerPresenceDb ?? 0,
+      data.audio?.equalizerHighDb ?? 0,
+    ]);
     if (elements.statusLedPin && data.device?.statusLedPin !== undefined) {
       elements.statusLedPin.value = String(data.device.statusLedPin);
     }

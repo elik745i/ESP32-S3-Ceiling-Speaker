@@ -224,6 +224,8 @@ class AudioPlayerStub {
         publish();
     }
 
+    void setEqualizer(const String&, int8_t, int8_t, int8_t) {}
+
     uint8_t volumePercent() const { return volume_; }
     String currentState() const { return state_; }
 
@@ -276,6 +278,11 @@ struct DeferredActions {
     bool volumeSavePending = false;
     uint8_t pendingVolume = 0;
     unsigned long volumeSaveAt = 0;
+    bool equalizerPending = false;
+    String pendingEqualizerPreset;
+    int8_t pendingEqualizerLowDb = 0;
+    int8_t pendingEqualizerPresenceDb = 0;
+    int8_t pendingEqualizerHighDb = 0;
     String playUrl;
     String playStoragePath;
     String playLabel;
@@ -391,6 +398,7 @@ uint32_t activeCpuFrequencyMhz = 0;
 uint32_t pendingCpuFrequencyMhz = 0;
 unsigned long pendingCpuFrequencySince = 0;
 unsigned long lastCpuFrequencyFailureAt = 0;
+unsigned long equalizerBoostUntil = 0;
 
 constexpr float kBatteryPercentEmptyVoltage = 3.2f;
 constexpr float kBatteryPercentFullVoltage = 4.2f;
@@ -634,9 +642,13 @@ void applyCpuFrequencyPolicy(const AppStateSnapshot& snapshot) {
     // playback uses 160 MHz, which leaves ample decode headroom without
     // pinning a continuously playing ceiling speaker at 240 MHz. Fully idle
     // operation runs at 80 MHz.
+    const bool equalizerUpdateActive = static_cast<long>(equalizerBoostUntil - now) > 0;
     if (snapshot.ota.busy) {
         targetFrequencyMhz = kCpuFrequencyBurstMhz;
         policyReason = "ota";
+    } else if (equalizerUpdateActive) {
+        targetFrequencyMhz = kCpuFrequencyBurstMhz;
+        policyReason = "equalizer-update";
     } else if (accessPointActive) {
         targetFrequencyMhz = kCpuFrequencyBurstMhz;
         policyReason = "access-point";
@@ -2468,6 +2480,10 @@ void applyRuntimeSettings() {
         runtimeAudio.effectVolumeApplied = false;
     }
 #endif
+    audioPlayer->setEqualizer(settings->audio.equalizerPreset,
+                              settings->audio.equalizerLowDb,
+                              settings->audio.equalizerPresenceDb,
+                              settings->audio.equalizerHighDb);
     soundEffects->applySettings(*settings);
     mqttManager->applySettings(*settings);
     otaManager->applySettings(*settings);
@@ -3128,6 +3144,20 @@ void processDeferredActions() {
         deferredActions->volumeSavePending = false;
     }
 
+    if (deferredActions->equalizerPending) {
+        settings->audio.equalizerPreset = deferredActions->pendingEqualizerPreset;
+        settings->audio.equalizerLowDb = deferredActions->pendingEqualizerLowDb;
+        settings->audio.equalizerPresenceDb = deferredActions->pendingEqualizerPresenceDb;
+        settings->audio.equalizerHighDb = deferredActions->pendingEqualizerHighDb;
+        audioPlayer->setEqualizer(settings->audio.equalizerPreset,
+                                  settings->audio.equalizerLowDb,
+                                  settings->audio.equalizerPresenceDb,
+                                  settings->audio.equalizerHighDb);
+        settingsManager->saveAudioEqualizer(settings->audio);
+        deferredActions->equalizerPending = false;
+        mqttManager->publishState();
+    }
+
     if (deferredActions->playPending) {
         const AppStateSnapshot playbackSnapshotBeforeStart = appState != nullptr ? appState->snapshot() : AppStateSnapshot{};
         bool started = false;
@@ -3343,6 +3373,14 @@ void setup() {
         [](uint8_t volume) {
             deferredActions->pendingVolume = volume;
             deferredActions->volumePending = true;
+        },
+        [](const String& preset, int8_t lowDb, int8_t presenceDb, int8_t highDb) {
+            deferredActions->pendingEqualizerPreset = preset;
+            deferredActions->pendingEqualizerLowDb = lowDb;
+            deferredActions->pendingEqualizerPresenceDb = presenceDb;
+            deferredActions->pendingEqualizerHighDb = highDb;
+            deferredActions->equalizerPending = true;
+            equalizerBoostUntil = millis() + 1500UL;
         },
         [](bool apply) { return otaManager->triggerCheck(apply); },
         [](const String& action, String& error) {

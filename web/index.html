@@ -198,6 +198,49 @@
               <label for="volumeSlider">Volume <span id="volumeValue">0%</span></label>
               <input id="volumeSlider" name="device.savedVolumePercent" form="settingsForm" type="range" min="0" max="100" step="1">
             </div>
+            <section class="equalizer-card" aria-labelledby="equalizerTitle">
+              <div class="equalizer-head">
+                <div>
+                  <h3 id="equalizerTitle">Equalizer</h3>
+                  <p>Three-band DSP applied directly to the I2S audio output.</p>
+                </div>
+                <label>Preset
+                  <select id="audioEqualizerPreset" name="audio.equalizerPreset" form="settingsForm">
+                    <option value="custom">Custom</option>
+                    <option value="flat">Flat</option>
+                    <option value="clear">Clear</option>
+                    <option value="rock">Rock</option>
+                    <option value="bass">Bass</option>
+                    <option value="classical">Classical</option>
+                    <option value="voice">Voice</option>
+                    <option value="jazz">Jazz</option>
+                    <option value="podcast">Podcast</option>
+                    <option value="night">Night</option>
+                  </select>
+                </label>
+              </div>
+              <div class="equalizer-bands" aria-live="polite">
+                <div class="equalizer-band">
+                  <span class="equalizer-frequency">Low shelf</span>
+                  <strong>500 Hz</strong>
+                  <input id="equalizerLowSlider" name="audio.equalizerLowDb" form="settingsForm" type="range" min="-6" max="6" step="1" value="0" aria-label="500 Hz equalizer gain">
+                  <output id="equalizerLowValue">0 dB</output>
+                </div>
+                <div class="equalizer-band">
+                  <span class="equalizer-frequency">Presence</span>
+                  <strong>3 kHz</strong>
+                  <input id="equalizerPresenceSlider" name="audio.equalizerPresenceDb" form="settingsForm" type="range" min="-6" max="6" step="1" value="0" aria-label="3 kHz equalizer gain">
+                  <output id="equalizerPresenceValue">0 dB</output>
+                </div>
+                <div class="equalizer-band">
+                  <span class="equalizer-frequency">High shelf</span>
+                  <strong>6 kHz</strong>
+                  <input id="equalizerHighSlider" name="audio.equalizerHighDb" form="settingsForm" type="range" min="-6" max="6" step="1" value="0" aria-label="6 kHz equalizer gain">
+                  <output id="equalizerHighValue">0 dB</output>
+                </div>
+              </div>
+              <p class="equalizer-note">Drag any band for a custom sound. Changes apply without restarting playback and are restored at every boot.</p>
+            </section>
             <div class="row gpio-remap-source">
               <label>I2S LRC / WS
                 <select id="audioWsPin" name="audio.wsPin" form="settingsForm"></select>

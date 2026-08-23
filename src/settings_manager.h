@@ -11,6 +11,7 @@ class SettingsManager {
     bool begin();
     SettingsBundle load();
     bool save(const SettingsBundle& settings);
+    bool saveAudioEqualizer(const AudioSettings& audio);
     bool reset();
     SettingsBundle defaults() const;
     void toJson(const SettingsBundle& settings, JsonObject root) const;

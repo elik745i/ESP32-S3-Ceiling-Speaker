@@ -31,6 +31,7 @@ class AudioPlayer {
     bool disableOutput();
     void setVolumePercent(uint8_t volumePercent);
     void setDirectLibraryVolume(uint8_t libraryVolume);
+    void setEqualizer(const String& preset, int8_t lowDb, int8_t presenceDb, int8_t highDb);
     uint8_t volumePercent() const;
     uint8_t libraryVolume() const;
     String currentTitle() const;

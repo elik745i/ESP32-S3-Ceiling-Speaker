@@ -1523,6 +1523,71 @@ body {
     margin-top: 14px;
   }
 
+  .equalizer-card {
+    margin-top: 14px;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: linear-gradient(145deg, #fffdf8, #f7f7f7);
+  }
+
+  .equalizer-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 210px);
+    gap: 16px;
+    align-items: end;
+  }
+
+  .equalizer-head h3,
+  .equalizer-head p {
+    margin: 0;
+  }
+
+  .equalizer-head p,
+  .equalizer-note {
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+
+  .equalizer-bands {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+  }
+
+  .equalizer-band {
+    display: grid;
+    gap: 5px;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.82);
+    text-align: center;
+  }
+
+  .equalizer-frequency,
+  .equalizer-band output {
+    color: var(--muted);
+    font-size: 0.76rem;
+  }
+
+  .equalizer-band input[type="range"] {
+    width: 100%;
+    margin: 2px 0;
+    accent-color: #ed9700;
+  }
+
+  .equalizer-note {
+    margin: 10px 0 0;
+  }
+
+  @media (max-width: 620px) {
+    .equalizer-head {
+      grid-template-columns: 1fr;
+    }
+  }
+
   .log-box {
     margin: 12px 0 0;
     white-space: pre-wrap;

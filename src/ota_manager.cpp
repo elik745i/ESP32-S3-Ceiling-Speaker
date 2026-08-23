@@ -85,7 +85,11 @@ String effectiveAssetTemplate(const SettingsBundle& settings) {
 
 String currentReleaseAssetName(const SettingsBundle& settings) {
     const String version = normalizedVersionTag(APP_VERSION);
-        return applyVersionTemplate(effectiveAssetTemplate(settings), version);
+    return applyVersionTemplate(effectiveAssetTemplate(settings), version);
+}
+
+String releaseAssetNameForVersion(const SettingsBundle& settings, const String& version) {
+    return applyVersionTemplate(effectiveAssetTemplate(settings), normalizedVersionTag(version));
 }
 
 String variantLabelForAssetName(const String& assetName) {
@@ -638,8 +642,20 @@ void OtaManager::ensureSelectedReleaseStillValid() {
             return;
         }
     }
+
+    // Prefer the same build variant as the installed firmware for the newest
+    // release. GitHub returns assets alphabetically, which otherwise tends to
+    // select HACS Slim before the full HACS build.
+    const String preferredLatestAsset = releaseAssetNameForVersion(settings_, latestVersion_);
     for (const ReleaseInfo& release : releaseCache_) {
-        if (release.isLatest) {
+        if (release.tag == latestVersion_ && release.assetName == preferredLatestAsset) {
+            selectedVersion_ = release.tag;
+            selectedAssetName_ = release.assetName;
+            return;
+        }
+    }
+    for (const ReleaseInfo& release : releaseCache_) {
+        if (release.tag == latestVersion_) {
             selectedVersion_ = release.tag;
             selectedAssetName_ = release.assetName;
             return;
@@ -1099,6 +1115,9 @@ bool OtaManager::fetchAvailableReleases(bool refresh, String& error) {
         const String releaseName = String(static_cast<const char*>(release["name"] | ""));
         const String publishedAt = String(static_cast<const char*>(release["published_at"] | ""));
         const bool prerelease = release["prerelease"] | false;
+        if (latestVersion_.isEmpty() && !prerelease) {
+            latestVersion_ = releaseTag;
+        }
 
         bool matchedAsset = false;
         for (JsonObjectConst asset : release["assets"].as<JsonArrayConst>()) {
@@ -1125,12 +1144,8 @@ bool OtaManager::fetchAvailableReleases(bool refresh, String& error) {
             item.chipFamily = chipFamily;
             item.prerelease = prerelease;
             item.isInstalled = compareVersions(currentVersion, releaseTag) == 0 && assetName == installedAssetName;
-            item.isLatest = false;
+            item.isLatest = !latestVersion_.isEmpty() && releaseTag == latestVersion_;
             item.isNew = compareVersions(currentVersion, releaseTag) < 0;
-            if (latestVersion_.isEmpty() && !prerelease) {
-                latestVersion_ = releaseTag;
-                item.isLatest = true;
-            }
             releaseCache_.push_back(item);
             matchedAsset = true;
         }
@@ -1147,12 +1162,8 @@ bool OtaManager::fetchAvailableReleases(bool refresh, String& error) {
             item.chipFamily = chipFamilyForAssetName(item.assetName);
             if (isCompatibleChipFamily(item.chipFamily)) {
                 item.isInstalled = compareVersions(currentVersion, releaseTag) == 0 && item.assetName == installedAssetName;
-                item.isLatest = false;
+                item.isLatest = !latestVersion_.isEmpty() && releaseTag == latestVersion_;
                 item.isNew = compareVersions(currentVersion, releaseTag) < 0;
-                if (latestVersion_.isEmpty() && !prerelease) {
-                    latestVersion_ = releaseTag;
-                    item.isLatest = true;
-                }
                 releaseCache_.push_back(item);
             }
         }
@@ -1172,7 +1183,9 @@ bool OtaManager::resolveVersionResult(const String& version, const String& asset
         return false;
     }
 
-    const String preferredAssetName = assetName.isEmpty() ? currentReleaseAssetName(settings_) : assetName;
+    const String preferredAssetName = assetName.isEmpty()
+        ? releaseAssetNameForVersion(settings_, version)
+        : assetName;
     const ReleaseInfo* fallbackRelease = nullptr;
     if (!assetName.isEmpty()) {
         const String targetChipFamily = chipFamilyForAssetName(assetName);
@@ -1303,7 +1316,7 @@ OtaManager::CheckResult OtaManager::checkNow() {
         }
         http.end();
         result.latestVersion = normalizeVersion(String(static_cast<const char*>(doc["tag_name"] | "")));
-        result.assetName = currentReleaseAssetName(settings_);
+        result.assetName = releaseAssetNameForVersion(settings_, result.latestVersion);
         for (JsonObject asset : doc["assets"].as<JsonArray>()) {
             const String name = String(static_cast<const char*>(asset["name"] | ""));
             if (name == result.assetName) {

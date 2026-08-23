@@ -11,22 +11,26 @@ Project story and current device write-up:
 
 ## Current Release
 
-- Firmware version: `v0.1.25`
+- Firmware version: `v0.1.26`
 - Primary release repository: `elma-iot/ELMA-IoT`
 - GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.25.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.26.bin`
 
 This version is intended to be published as a standard GitHub release using the normal OTA asset names without a prerelease suffix.
 
-### v0.1.25 highlights
+### v0.1.26 highlights
 
-- Dynamic ESP32 CPU policy: 80 MHz while idle, 160 MHz during stable playback, and 240 MHz while buffering, updating firmware, or serving access-point mode.
+- Dynamic ESP32 CPU policy: 80 MHz while idle, 160 MHz during stable playback, and 240 MHz while buffering, changing EQ filters, updating firmware, or serving access-point mode.
 - Hardware Monitor now reports the live clock rate, aggregate CPU load, and per-core CPU load instead of allowing the old adaptive estimate to drift toward a false 0%.
+- The Audio tab now includes a persistent three-band equalizer with mouse-controllable gains plus Flat, Clear, Rock, Bass, Classical, Voice, Jazz, Podcast, and Night presets applied directly to the I2S DSP.
+- Equalizer changes use an independent real-time path, avoiding the storage remount and full settings reapply that previously interrupted or jittered active playback.
+- Play/Stop now treats the looping ambient effect as background audio, so stopping a radio station reliably changes the control back to Play.
 - CPU sampling uses cache-safe IRAM FreeRTOS tick hooks, including during NVS and OTA flash operations.
 - The redundant embedded ICO favicon was removed while retaining the visually equivalent SVG favicon; all embedded SVG illustrations continue through multipass SVGO and maximum gzip compression.
 - Legacy OTA settings for `ESP32-S3-Ceiling-Speaker` migrate to `elma-iot/ELMA-IoT` even when the owner had already been updated separately.
+- OTA checks now substitute the target release version into the asset filename and default to the installed build variant, preventing version-mismatched 404s and accidental HACS-to-HACS-Slim selection.
 
-The ESP32-S3 HACS build was validated on the ceiling-speaker hardware over USB and Wi-Fi: saved settings survived, Wi-Fi and MQTT reconnected, ambient SD playback resumed, the playback clock settled at 160 MHz, CPU load reported per core, and the OTA health state cleared without rollback.
+The ESP32-S3 HACS release candidate was validated on the ceiling-speaker hardware over USB and Wi-Fi: saved settings survived, Wi-Fi and MQTT reconnected, playback resumed, the playback clock settled at 160 MHz, EQ changes temporarily raised it to 240 MHz before a delayed downshift, CPU load reported per core, custom EQ gains persisted in NVS, and Stop returned to Play when only ambient audio remained.
 
 Latest release highlights:
 
@@ -148,6 +152,7 @@ Current UI highlights:
 - Direct URL playback and TTS playback entry.
 - Previous, play or stop, and next station transport controls from the top playback card.
 - Audio Effects tab for assigning local files to startup, alert, ambient, and OTA cues.
+- Persistent three-band I2S equalizer below the main volume control, with visual 500 Hz, 3 kHz, and 6 kHz gain indicators and nine selectable presets.
 - Audio Effects ambient playback now uses the real looping ambient source and automatically returns after manual playback or streams stop.
 - Configuration tab with board selection, peripheral-profile selectors, conflict-aware GPIO mapping, and a live peripheral diagram.
 - Peripheral diagram editing with draggable modules, label editing, node rotation, saved layout, and label-based rewiring.
@@ -503,14 +508,14 @@ Current OTA and rollback behavior:
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.25`:
+Release asset names for `v0.1.26`:
 
-- `esp32-notifier-v0.1.25.bin`
-- `esp32-notifier-hacs-v0.1.25.bin`
-- `esp32-notifier-hacs-slim-v0.1.25.bin`
-- `esp32s3-notifier-v0.1.25.bin`
-- `esp32s3-notifier-hacs-v0.1.25.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.25.bin`
+- `esp32-notifier-v0.1.26.bin`
+- `esp32-notifier-hacs-v0.1.26.bin`
+- `esp32-notifier-hacs-slim-v0.1.26.bin`
+- `esp32s3-notifier-v0.1.26.bin`
+- `esp32s3-notifier-hacs-v0.1.26.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.26.bin`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard release variants and upload the matching OTA assets back to that release.
 
@@ -591,4 +596,4 @@ Key files and directories:
 
 Current release notes live here:
 
-- [release-assets/v0.1.25/release-notes.md](release-assets/v0.1.25/release-notes.md)
+- [release-assets/v0.1.26/release-notes.md](release-assets/v0.1.26/release-notes.md)

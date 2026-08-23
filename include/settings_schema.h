@@ -70,6 +70,10 @@ struct WebAuthSettings {
 struct AudioSettings {
     bool enabled = true;
     bool rememberLastPlayed = true;
+    String equalizerPreset = "flat";
+    int8_t equalizerLowDb = 0;
+    int8_t equalizerPresenceDb = 0;
+    int8_t equalizerHighDb = 0;
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
     uint8_t doutPin = 9;
     uint8_t wsPin = 12;

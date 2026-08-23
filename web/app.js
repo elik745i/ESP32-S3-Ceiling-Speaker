@@ -889,6 +889,13 @@ const elements = {
   audioWsPin: document.getElementById("audioWsPin"),
   audioBclkPin: document.getElementById("audioBclkPin"),
   audioDoutPin: document.getElementById("audioDoutPin"),
+  audioEqualizerPreset: document.getElementById("audioEqualizerPreset"),
+  equalizerLowSlider: document.getElementById("equalizerLowSlider"),
+  equalizerLowValue: document.getElementById("equalizerLowValue"),
+  equalizerPresenceSlider: document.getElementById("equalizerPresenceSlider"),
+  equalizerPresenceValue: document.getElementById("equalizerPresenceValue"),
+  equalizerHighSlider: document.getElementById("equalizerHighSlider"),
+  equalizerHighValue: document.getElementById("equalizerHighValue"),
   effectStartupFile: document.getElementById("effectStartupFile"),
   effectStartupVolumePercent: document.getElementById("effectStartupVolumePercent"),
   effectAlarmFile: document.getElementById("effectAlarmFile"),
@@ -1444,6 +1451,7 @@ configurationSettingsPersistenceModule = createConfigurationSettingsPersistenceM
   effectVolumePercentValue,
   effectVolumeSetting,
   populateAudioI2sPinOptions,
+  renderEqualizerPreset,
   populateSdPinOptions,
   populateStatusLedPinOptions,
   populateOledPinOptions,
@@ -1637,7 +1645,7 @@ playbackStatusModule = createPlaybackStatusModule({
   state,
   elements,
   normalizePlaybackTitle,
-  isPlaybackActive,
+  isPlaybackActive: isForegroundPlaybackActive,
   toast,
   applySelectedRadioStation: (options = {}) => radioBrowserModule?.applySelectedRadioStation(options),
 });
@@ -8042,6 +8050,63 @@ function createConfigurationBackupMarkdown(settings) {
   return configurationBackupModule?.createConfigurationBackupMarkdown(settings) || "";
 }
 
+function isForegroundPlaybackActive(status = state.status) {
+  return isPlaybackActive(status) && String(status?.playback?.source || "") !== "effect-ambient";
+}
+
+const EQUALIZER_PRESET_GAINS = Object.freeze({
+  flat: [0, 0, 0],
+  clear: [-1, 1, 4],
+  rock: [4, 1, 3],
+  bass: [6, 0, -1],
+  classical: [1, 2, 4],
+  voice: [-3, 5, 2],
+  jazz: [3, 2, 3],
+  podcast: [-4, 6, 1],
+  night: [-3, 2, -3],
+});
+
+function renderEqualizerPreset(preset = elements.audioEqualizerPreset?.value, customGains = null) {
+  const normalizedPreset = String(preset || "flat").toLowerCase();
+  const gains = normalizedPreset === "custom" && Array.isArray(customGains)
+    ? customGains.map((value) => Math.max(-6, Math.min(6, Number(value) || 0)))
+    : (EQUALIZER_PRESET_GAINS[normalizedPreset] || EQUALIZER_PRESET_GAINS.flat);
+  if (elements.audioEqualizerPreset) {
+    elements.audioEqualizerPreset.value = normalizedPreset;
+  }
+  const bands = [
+    [elements.equalizerLowSlider, elements.equalizerLowValue, gains[0]],
+    [elements.equalizerPresenceSlider, elements.equalizerPresenceValue, gains[1]],
+    [elements.equalizerHighSlider, elements.equalizerHighValue, gains[2]],
+  ];
+  for (const [slider, output, gain] of bands) {
+    if (slider) {
+      slider.value = String(gain);
+    }
+    if (output) {
+      output.textContent = `${gain > 0 ? "+" : ""}${gain} dB`;
+    }
+  }
+}
+
+function currentEqualizerGains() {
+  return [elements.equalizerLowSlider, elements.equalizerPresenceSlider, elements.equalizerHighSlider]
+    .map((slider) => Math.max(-6, Math.min(6, Number(slider?.value) || 0)));
+}
+
+async function setEqualizer(preset, gains) {
+  const normalizedPreset = String(preset || "custom").toLowerCase();
+  const [lowDb, presenceDb, highDb] = gains;
+  state.settings ||= {};
+  state.settings.audio ||= {};
+  Object.assign(state.settings.audio, { equalizerPreset: normalizedPreset, equalizerLowDb: lowDb, equalizerPresenceDb: presenceDb, equalizerHighDb: highDb });
+  await request("/api/equalizer", {
+    method: "POST",
+    body: JSON.stringify({ preset: normalizedPreset, lowDb, presenceDb, highDb }),
+  });
+  setMessage(`Equalizer ${normalizedPreset === "custom" ? "custom curve" : normalizedPreset} saved`);
+}
+
 function downloadTextFile(filename, content, mimeType = "text/markdown;charset=utf-8") {
   configurationBackupModule?.downloadTextFile(filename, content, mimeType);
 }
@@ -8168,7 +8233,7 @@ function updatePlaybackActionButton() {
   }
 
   const playbackActionInProgress = String(state.playbackActionInProgress || "");
-  const playbackActive = isPlaybackActive();
+  const playbackActive = isForegroundPlaybackActive();
   const audioEnabled = Boolean(state.status?.firmware?.audioEnabled);
 
   if (playbackActionInProgress === "play") {
@@ -8333,8 +8398,7 @@ async function submitPlay(event) {
     renderRecentPlayback();
     const started = await pollStatusUntil(
       (status) => {
-        const playbackState = String(status?.playback?.state || "idle");
-        return playbackState === "playing" || playbackState === "buffering";
+        return isForegroundPlaybackActive(status) && String(status?.playback?.url || "") === String(payload.url || "");
       },
       12,
       150,
@@ -8357,8 +8421,7 @@ async function stopPlayback() {
     await request("/api/stop", { method: "POST", body: JSON.stringify({}) });
     const stopped = await pollStatusUntil(
       (status) => {
-        const playbackState = String(status?.playback?.state || "idle");
-        return playbackState !== "playing" && playbackState !== "buffering";
+        return !isForegroundPlaybackActive(status);
       },
       12,
       150,
@@ -8390,7 +8453,7 @@ async function setVolume(volumePercent) {
 }
 
 async function handlePlaybackAction() {
-  if (isPlaybackActive()) {
+  if (isForegroundPlaybackActive()) {
     await stopPlayback();
     return;
   }
@@ -8590,6 +8653,23 @@ elements.storagePreviewVolumeSlider?.addEventListener("change", (event) => setVo
 elements.volumeSlider.addEventListener("input", (event) => {
   elements.volumeValue.textContent = `${event.target.value}%`;
 });
+elements.audioEqualizerPreset?.addEventListener("change", (event) => {
+  const preset = event.target.value;
+  const gains = EQUALIZER_PRESET_GAINS[preset] || currentEqualizerGains();
+  renderEqualizerPreset(preset, gains);
+  setEqualizer(preset, gains).catch(handleError);
+});
+for (const slider of [elements.equalizerLowSlider, elements.equalizerPresenceSlider, elements.equalizerHighSlider]) {
+  slider?.addEventListener("input", () => {
+    renderEqualizerPreset("custom", currentEqualizerGains());
+  });
+  slider?.addEventListener("change", () => {
+    const gains = currentEqualizerGains();
+    renderEqualizerPreset("custom", gains);
+    setEqualizer("custom", gains).catch(handleError);
+  });
+}
+renderEqualizerPreset();
 elements.storagePreviewVolumeSlider?.addEventListener("input", (event) => {
   if (elements.storagePreviewVolumeValue) {
     elements.storagePreviewVolumeValue.textContent = `${event.target.value}%`;
@@ -8619,6 +8699,11 @@ for (const field of elements.settingsForm.elements) {
   }
 
   if (field.name === "device.savedVolumePercent") {
+    continue;
+  }
+
+  if (field.name === "audio.equalizerPreset" || field.name === "audio.equalizerLowDb" ||
+      field.name === "audio.equalizerPresenceDb" || field.name === "audio.equalizerHighDb") {
     continue;
   }
 
