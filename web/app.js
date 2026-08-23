@@ -1159,8 +1159,6 @@ const elements = {
   storageProgressWrap: document.getElementById("storageProgressWrap"),
   storageProgressFill: document.getElementById("storageProgressFill"),
   storageProgressLabel: document.getElementById("storageProgressLabel"),
-  storageInlineTrackLabel: document.getElementById("storageInlineTrackLabel"),
-  storageInlinePlaybackState: document.getElementById("storageInlinePlaybackState"),
   storageInlinePrevButton: document.getElementById("storageInlinePrevButton"),
   storageInlinePlayButton: document.getElementById("storageInlinePlayButton"),
   storageInlineNextButton: document.getElementById("storageInlineNextButton"),
@@ -1168,9 +1166,9 @@ const elements = {
   storageInlineRepeatButton: document.getElementById("storageInlineRepeatButton"),
   storageInlineAutoplayButton: document.getElementById("storageInlineAutoplayButton"),
   storageInlineVolumeSlider: document.getElementById("storageInlineVolumeSlider"),
-  storageInlineVolumeValue: document.getElementById("storageInlineVolumeValue"),
+  storageInlineVolumeMeter: document.getElementById("storageInlineVolumeMeter"),
   storageInlineSeekSlider: document.getElementById("storageInlineSeekSlider"),
-  storageInlineSeekLabel: document.getElementById("storageInlineSeekLabel"),
+  storageInlineTrackMeter: document.getElementById("storageInlineTrackMeter"),
   storageFileList: document.getElementById("storageFileList"),
   storagePreviewModal: document.getElementById("storagePreviewModal"),
   storagePreviewCloseButton: document.getElementById("storagePreviewCloseButton"),
@@ -1637,6 +1635,8 @@ storageTab = createStorageTab({
   toggleStorageSelection,
   selectAllStorageEntries,
   updateStoragePreviewPlaybackControls,
+  updateStorageMeter,
+  updateStorageVolumeMeter,
   advanceStoragePreviewTrack,
   stopStoragePreviewPlayback,
   setVolume,
@@ -1727,6 +1727,7 @@ statusRenderModule = createStatusRenderModule({
   syncStoragePlaybackFromStatus,
   populateButtonActionSelects,
   renderOledPreview,
+  updateStorageVolumeMeter,
 });
 
 deviceTab.bindEvents();
@@ -5640,18 +5641,9 @@ function updateStoragePreviewPlaybackControls() {
 
   const playingEntry = currentStoragePlayingEntry();
   const selectedEntry = selectedStoragePlaybackEntry();
-  const actionableEntry = selectedEntry || playingEntry || state.storagePreviewItem;
-  const activeEntryPlaying = storageEntryIsPlaying(actionableEntry);
+  const actionableEntry = playingEntry || selectedEntry || state.storagePreviewItem;
+  const activeEntryPlaying = Boolean(playingEntry && isPlaybackActive(state.status));
   const canStep = audioEntries.length > 1 && Boolean(playingEntry || state.storagePreviewItem);
-  if (elements.storageInlineTrackLabel) {
-    elements.storageInlineTrackLabel.textContent = playingEntry?.name || selectedEntry?.name || state.storagePreviewItem?.name || "Select a song from this folder";
-    elements.storageInlineTrackLabel.title = playingEntry?.path || selectedEntry?.path || state.storagePreviewItem?.path || "";
-  }
-  if (elements.storageInlinePlaybackState) {
-    elements.storageInlinePlaybackState.textContent = playingEntry
-      ? (String(state.status?.playback?.state || "playing") === "buffering" ? "Buffering" : "Playing")
-      : "Stopped";
-  }
   if (elements.storageInlinePlayButton) {
     elements.storageInlinePlayButton.textContent = activeEntryPlaying ? "■" : "▶";
     elements.storageInlinePlayButton.disabled = !actionableEntry;
@@ -5733,19 +5725,42 @@ function updateStoragePreviewProgressUi() {
   const fileManagerActive = deviceActive && String(state.status?.playback?.source || "") === "file-manager";
   const duration = fileManagerActive ? Math.max(0, Number(state.status?.playback?.durationSeconds || 0)) : 0;
   const position = fileManagerActive ? Math.min(duration, Math.max(0, Number(state.status?.playback?.positionSeconds || 0))) : 0;
-  const label = `${formatPlaybackClock(position)} / ${formatPlaybackClock(duration)}`;
+  const trackName = currentStoragePlayingEntry()?.name || selectedStoragePlaybackEntry()?.name || state.storagePreviewItem?.name || "Select a song";
+  const clockLabel = `${formatPlaybackClock(position)} / ${formatPlaybackClock(duration)}`;
+  const label = `${trackName} · ${clockLabel}`;
+  const progressPercent = duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
   for (const slider of [elements.storageInlineSeekSlider, elements.storagePreviewSeekSlider]) {
     if (!slider) continue;
     slider.max = String(duration);
     if (!state.storagePreviewPlaybackMode.seeking) slider.value = String(position);
     slider.disabled = !fileManagerActive || duration <= 0;
   }
-  if (elements.storageInlineSeekLabel) elements.storageInlineSeekLabel.textContent = label;
+  updateStorageMeter(elements.storageInlineTrackMeter, "[data-storage-track-text]", label, progressPercent);
+  if (elements.storageInlineSeekSlider) elements.storageInlineSeekSlider.setAttribute("aria-valuetext", label);
   if (elements.storagePreviewProgressLabel) {
     elements.storagePreviewProgressLabel.textContent = buffering && duration <= 0
       ? "Reading track duration..."
-      : (fileManagerActive ? label : (hasPreviewItem ? "Ready on device" : label));
+      : (fileManagerActive ? clockLabel : (hasPreviewItem ? "Ready on device" : clockLabel));
   }
+}
+
+function updateStorageMeter(meter, textSelector, label, percent) {
+  if (!meter) return;
+  const normalizedPercent = Math.min(100, Math.max(0, Number(percent) || 0));
+  meter.style.setProperty("--meter-width", `${meter.clientWidth}px`);
+  meter.style.setProperty("--meter-progress", `${normalizedPercent}%`);
+  meter.querySelectorAll(textSelector).forEach((node) => { node.textContent = label; });
+  window.requestAnimationFrame(() => {
+    const primary = meter.querySelector(`${textSelector}[data-meter-primary]`);
+    const available = Math.max(0, meter.clientWidth - 30);
+    meter.classList.toggle("is-overflowing", Boolean(primary && primary.scrollWidth > available));
+  });
+}
+
+function updateStorageVolumeMeter(value) {
+  const volume = Math.min(100, Math.max(0, Number(value) || 0));
+  updateStorageMeter(elements.storageInlineVolumeMeter, "[data-storage-volume-text]", `Volume ${Math.round(volume)}%`, volume);
+  elements.storageInlineVolumeSlider?.setAttribute("aria-valuetext", `Volume ${Math.round(volume)}%`);
 }
 
 function parseSynchsafeInt(bytes) {

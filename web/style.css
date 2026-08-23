@@ -3643,33 +3643,12 @@ body {
     background: #ffffff;
   }
 
-  .storage-playback-strip-head,
   .storage-playback-strip-body {
     display: flex;
     gap: 14px;
     align-items: center;
     justify-content: space-between;
     min-width: 0;
-  }
-
-  .storage-playback-strip-head > div {
-    display: grid;
-    gap: 2px;
-    min-width: 0;
-  }
-
-  .storage-playback-strip-head strong {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .storage-playback-eyebrow {
-    color: var(--muted);
-    font-size: 0.72rem;
-    font-weight: 800;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
   }
 
   .storage-inline-actions {
@@ -3693,22 +3672,8 @@ body {
   }
 
   .storage-inline-volume {
-    display: grid;
-    gap: 5px;
-    width: min(320px, 42%);
+    width: min(420px, 44%);
     min-width: 220px;
-  }
-
-  .storage-inline-volume span {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.78rem;
-    font-weight: 700;
-  }
-
-  .storage-inline-volume input {
-    width: 100%;
-    accent-color: var(--accent-strong);
   }
 
   .storage-file-list {
@@ -4349,20 +4314,158 @@ body {
     }
   }
 .storage-inline-seek {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.75rem;
-  margin-top: 0.75rem;
+  width: 100%;
 }
 
-.storage-inline-seek input,
 .storage-preview-progress-wrap input[type="range"] {
   width: 100%;
 }
 
-.storage-inline-seek span {
-  min-width: 6.8rem;
-  text-align: right;
+.storage-meter {
+  --meter-progress: 0%;
+  position: relative;
+  display: block;
+  min-height: 42px;
+  border-radius: 13px;
+  cursor: pointer;
+  isolation: isolate;
+}
+
+.storage-meter-rail {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+  border: 1px solid #aeb6bf;
+  border-radius: inherit;
+  background: linear-gradient(180deg, #f9fafb 0%, #d9dde2 48%, #eef1f4 100%);
+  box-shadow:
+    inset 0 2px 3px rgba(255, 255, 255, 0.95),
+    inset 0 -3px 5px rgba(60, 70, 82, 0.22),
+    0 2px 4px rgba(38, 45, 54, 0.2);
+}
+
+.storage-meter-fill,
+.storage-meter-contrast-clip {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--meter-progress);
+  overflow: hidden;
+  transition: width 650ms linear;
+}
+
+.storage-inline-volume .storage-meter-fill,
+.storage-inline-volume .storage-meter-contrast-clip {
+  transition-duration: 120ms;
+}
+
+.storage-meter.is-dragging .storage-meter-fill,
+.storage-meter.is-dragging .storage-meter-contrast-clip {
+  transition: none;
+}
+
+.storage-meter-fill {
+  background: linear-gradient(180deg, #ffbd38 0%, var(--accent) 48%, #cc7600 100%);
+  box-shadow:
+    inset 0 2px 3px rgba(255, 244, 193, 0.7),
+    inset 0 -3px 5px rgba(127, 66, 0, 0.3),
+    2px 0 5px rgba(154, 89, 0, 0.28);
+}
+
+.storage-meter-fill::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 3px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 1px 0 2px rgba(89, 50, 0, 0.5);
+}
+
+.storage-meter-copy {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  padding: 0 15px;
+  font-size: 0.84rem;
+  font-weight: 850;
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.storage-meter-copy-base {
+  color: #27313b;
+  text-shadow: 0 1px 0 #fff, 0 -1px 0 rgba(255, 255, 255, 0.55);
+}
+
+.storage-meter-copy-contrast {
+  width: var(--meter-width, 100%);
+  max-width: none;
+  color: #ffffff;
+  text-shadow: 0 1px 0 #6d3c00, 0 0 3px rgba(75, 38, 0, 0.9);
+}
+
+.storage-meter-marquee {
+  position: absolute;
+  left: 50%;
+  display: inline-flex;
+  gap: 3rem;
+  width: max-content;
+  min-width: max-content;
+  transform: translateX(-50%);
+  will-change: transform;
+}
+
+.storage-meter-marquee > [aria-hidden="true"] {
+  display: none;
+}
+
+.storage-meter.is-overflowing .storage-meter-marquee {
+  left: 15px;
+  animation: storage-meter-marquee 14s linear infinite;
+}
+
+.storage-meter.is-overflowing .storage-meter-marquee > [aria-hidden="true"] {
+  display: inline;
+}
+
+@keyframes storage-meter-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(calc(-50% - 1.5rem)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .storage-meter.is-overflowing .storage-meter-marquee {
+    animation: none;
+  }
+}
+
+.storage-meter input[type="range"] {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.storage-meter input[type="range"]:disabled {
+  cursor: default;
+}
+
+.storage-meter:focus-within .storage-meter-rail {
+  outline: 3px solid rgba(23, 109, 190, 0.3);
+  outline-offset: 2px;
+}
+
+.storage-meter:has(input:disabled) {
+  opacity: 0.72;
 }

@@ -13,6 +13,7 @@ ESP32 Notifier v0.1.27
 - Added centralized effect arbitration: compatible WAV cues duck/overlay, while exclusive notification/update/low-battery effects fade out, preserve local track position, play, then resume and fade in; alarms and shutdown flows remain exclusive by design.
 - Remembered the last File Manager target and directory across reloads/reboots, with automatic parent/root fallback when a saved folder disappears.
 - Cached FLAC duration once per track to avoid decoder-state polling clicks, and reconstructed/focused the live playing file after reload so its progress bar continues from firmware status.
+- Redesigned the File Manager player with smooth 3D track and volume meters, contrast-aware embedded labels, overflow marquees, and a reliable global Play/Stop toggle.
 - Retained v0.1.26 dynamic CPU scaling, live per-core load and clock monitoring, persistent real-time EQ, serialized boot audio, optimized embedded SVG assets, folder playback controls, and exact OTA variant selection.
 
 Hardware validation:

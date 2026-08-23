@@ -31,6 +31,8 @@ export function createStorageTab({
   toggleStorageSelection,
   selectAllStorageEntries,
   updateStoragePreviewPlaybackControls,
+  updateStorageMeter,
+  updateStorageVolumeMeter,
   advanceStoragePreviewTrack,
   stopStoragePreviewPlayback,
   setVolume,
@@ -308,12 +310,13 @@ export function createStorageTab({
       updateStoragePreviewPlaybackControls();
     });
     elements.storageInlinePlayButton?.addEventListener("click", () => {
-      const entry = selectedStoragePlaybackEntry() || currentStoragePlayingEntry() || state.storagePreviewItem;
+      const playingEntry = currentStoragePlayingEntry();
+      const entry = playingEntry || selectedStoragePlaybackEntry() || state.storagePreviewItem;
       if (!entry) {
         setStorageStatus("Select a song from this folder first.", true);
         return;
       }
-      (storageEntryIsPlaying(entry)
+      (playingEntry
         ? stopStoragePreviewPlayback()
         : queueStoragePlayback(entry, state.activeStorageTarget)).catch(handleError);
     });
@@ -345,9 +348,11 @@ export function createStorageTab({
       updateStoragePreviewPlaybackControls();
     });
     elements.storageInlineVolumeSlider?.addEventListener("input", (event) => {
-      if (elements.storageInlineVolumeValue) elements.storageInlineVolumeValue.textContent = `${event.target.value}%`;
+      elements.storageInlineVolumeMeter?.classList.add("is-dragging");
+      updateStorageVolumeMeter(event.target.value);
     });
     elements.storageInlineVolumeSlider?.addEventListener("change", (event) => {
+      elements.storageInlineVolumeMeter?.classList.remove("is-dragging");
       setVolume(Number(event.target.value)).catch(handleError);
     });
     const bindSeekSlider = (slider, label) => {
@@ -355,7 +360,13 @@ export function createStorageTab({
         state.storagePreviewPlaybackMode.seeking = true;
         const position = Math.max(0, Number(event.target.value || 0));
         const duration = Math.max(0, Number(event.target.max || 0));
-        if (label) label.textContent = `${formatPlaybackClock(position)} / ${formatPlaybackClock(duration)}`;
+        if (slider === elements.storageInlineSeekSlider) {
+          elements.storageInlineTrackMeter?.classList.add("is-dragging");
+          const trackName = currentStoragePlayingEntry()?.name || selectedStoragePlaybackEntry()?.name || state.storagePreviewItem?.name || "Select a song";
+          updateStorageMeter(elements.storageInlineTrackMeter, "[data-storage-track-text]", `${trackName} · ${formatPlaybackClock(position)} / ${formatPlaybackClock(duration)}`, duration > 0 ? (position / duration) * 100 : 0);
+        } else if (label) {
+          label.textContent = `${formatPlaybackClock(position)} / ${formatPlaybackClock(duration)}`;
+        }
       });
       slider?.addEventListener("change", async (event) => {
         try {
@@ -364,10 +375,11 @@ export function createStorageTab({
           setStorageStatus(`Moved to ${formatPlaybackClock(positionSeconds)}`);
         } finally {
           state.storagePreviewPlaybackMode.seeking = false;
+          if (slider === elements.storageInlineSeekSlider) elements.storageInlineTrackMeter?.classList.remove("is-dragging");
         }
       });
     };
-    bindSeekSlider(elements.storageInlineSeekSlider, elements.storageInlineSeekLabel);
+    bindSeekSlider(elements.storageInlineSeekSlider, null);
     bindSeekSlider(elements.storagePreviewSeekSlider, elements.storagePreviewProgressLabel);
     elements.storagePreviewCloseButton?.addEventListener("click", () => {
       closeStoragePreview();

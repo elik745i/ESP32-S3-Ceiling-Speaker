@@ -1117,13 +1117,6 @@
             </div>
             <input id="storageFileInput" name="storageFileInput" type="file" accept=".mp3,.wav,.aac,.m4a,.ogg,.opus,.flac,audio/*" aria-labelledby="storageUploadButton" multiple hidden>
             <section class="storage-playback-strip" aria-label="Folder playback controls">
-              <div class="storage-playback-strip-head">
-                <div>
-                  <span class="storage-playback-eyebrow">Folder player</span>
-                  <strong id="storageInlineTrackLabel">Select a song from this folder</strong>
-                </div>
-                <span id="storageInlinePlaybackState" class="scan-status">Stopped</span>
-              </div>
               <div class="storage-playback-strip-body">
                 <div class="storage-inline-actions">
                   <button id="storageInlinePrevButton" type="button" class="secondary icon-only-button" title="Previous song" aria-label="Previous song">&#9664;</button>
@@ -1133,14 +1126,22 @@
                   <button id="storageInlineRepeatButton" type="button" class="secondary storage-mode-button" aria-pressed="false">Repeat</button>
                   <button id="storageInlineAutoplayButton" type="button" class="secondary storage-mode-button" aria-pressed="true">Autoplay</button>
                 </div>
-                <label class="storage-inline-volume" for="storageInlineVolumeSlider">
-                  <span>Volume <output id="storageInlineVolumeValue">0%</output></span>
+                <label id="storageInlineVolumeMeter" class="storage-meter storage-inline-volume" for="storageInlineVolumeSlider">
+                  <span class="storage-meter-rail" aria-hidden="true">
+                    <span class="storage-meter-fill"></span>
+                    <span class="storage-meter-copy storage-meter-copy-base"><span class="storage-meter-marquee"><span data-storage-volume-text data-meter-primary>Volume 0%</span><span data-storage-volume-text aria-hidden="true">Volume 0%</span></span></span>
+                    <span class="storage-meter-contrast-clip"><span class="storage-meter-copy storage-meter-copy-contrast"><span class="storage-meter-marquee"><span data-storage-volume-text>Volume 0%</span><span data-storage-volume-text aria-hidden="true">Volume 0%</span></span></span></span>
+                  </span>
                   <input id="storageInlineVolumeSlider" type="range" min="0" max="100" step="1">
                 </label>
               </div>
-              <label class="storage-inline-seek" for="storageInlineSeekSlider">
+              <label id="storageInlineTrackMeter" class="storage-meter storage-inline-seek" for="storageInlineSeekSlider">
+                <span class="storage-meter-rail" aria-hidden="true">
+                  <span class="storage-meter-fill"></span>
+                  <span class="storage-meter-copy storage-meter-copy-base"><span class="storage-meter-marquee"><span data-storage-track-text data-meter-primary>Select a song · 00:00 / 00:00</span><span data-storage-track-text aria-hidden="true">Select a song · 00:00 / 00:00</span></span></span>
+                  <span class="storage-meter-contrast-clip"><span class="storage-meter-copy storage-meter-copy-contrast"><span class="storage-meter-marquee"><span data-storage-track-text>Select a song · 00:00 / 00:00</span><span data-storage-track-text aria-hidden="true">Select a song · 00:00 / 00:00</span></span></span></span>
+                </span>
                 <input id="storageInlineSeekSlider" type="range" min="0" max="0" step="1" value="0" disabled>
-                <span id="storageInlineSeekLabel">00:00 / 00:00</span>
               </label>
             </section>
             <div id="storageProgressWrap" class="progress-wrap storage-progress-wrap" hidden>

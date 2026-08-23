@@ -47,6 +47,7 @@ export function createStatusRenderModule({
   syncStoragePlaybackFromStatus,
   populateButtonActionSelects,
   renderOledPreview,
+  updateStorageVolumeMeter,
 }) {
   function estimateBatteryPercent(voltage) {
     const numericVoltage = Number(voltage || 0);
@@ -259,9 +260,7 @@ export function createStatusRenderModule({
     if (document.activeElement !== elements.storageInlineVolumeSlider && elements.storageInlineVolumeSlider) {
       elements.storageInlineVolumeSlider.value = savedVolumePercent;
     }
-    if (elements.storageInlineVolumeValue) {
-      elements.storageInlineVolumeValue.textContent = `${document.activeElement === elements.storageInlineVolumeSlider ? elements.storageInlineVolumeSlider.value : savedVolumePercent}%`;
-    }
+    updateStorageVolumeMeter(document.activeElement === elements.storageInlineVolumeSlider ? elements.storageInlineVolumeSlider.value : savedVolumePercent);
     const audioMuted = Boolean(elements.audioMutedToggle?.checked);
 
     updatePlaybackActionButton();
