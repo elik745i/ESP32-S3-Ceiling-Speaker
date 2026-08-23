@@ -20,6 +20,11 @@ This version is intended to be published as a standard GitHub release using the 
 
 ### v0.1.27 highlights
 
+- Fixed manual GitHub-release installation after refreshing the Firmware list: selecting an installed, older, or alternate compatible asset now proceeds into download/flashing instead of remaining stuck at `Resolving release` with OTA marked busy.
+- Reduced genuinely idle ESP32-S3 load from roughly 25-31% aggregate (about 50% on Core 1) to typically 0-2% by rate-limiting unchanged Wi-Fi state publication, servicing runtime state at 50 Hz, bypassing disabled audio/battery paths, and yielding longer only while playback and OTA are inactive.
+- Verified the idle optimization on the ceiling-speaker hardware at 80 MHz: internal die temperature fell from 71 C to approximately 42 C while Wi-Fi remained connected.
+- Improved setup-network handoff: the AP page reports the new station IP, waits for the client to rejoin the home network, and then opens the device automatically; Wi-Fi edits are applied only by the explicit Connect action.
+- Restored reliable asynchronous Wi-Fi scanning during failed station handshakes without erasing saved credentials or repeatedly tearing down the fallback AP.
 - Dynamic ESP32 CPU policy: 80 MHz while idle, 160 MHz during stable playback, and 240 MHz while buffering, changing EQ filters, updating firmware, or serving access-point mode.
 - Hardware Monitor now reports the live clock rate, aggregate CPU load, and per-core CPU load instead of allowing the old adaptive estimate to drift toward a false 0%.
 - The Audio tab now includes a persistent three-band equalizer with mouse-controllable gains plus Flat, Clear, Rock, Bass, Classical, Voice, Jazz, Podcast, and Night presets applied directly to the I2S DSP.

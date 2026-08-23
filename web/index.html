@@ -397,7 +397,7 @@
             <label class="static-ip-group">DNS 2
               <input name="wifi.dns2" type="text">
             </label>
-            <p class="note">Leave Access Point SSID blank to keep the firmware-generated name. Access Point passwords shorter than 8 characters fall back to the default firmware password.</p>
+            <p class="note">Leave Access Point SSID blank to keep the firmware-generated name. Access Point passwords shorter than 8 characters fall back to the default firmware password. Wi-Fi changes are applied only when you press Connect, so passwords are never saved halfway through typing.</p>
           </form>
         </div>
 
@@ -1300,6 +1300,21 @@
       </div>
       <div id="rebootOverlayTitle" class="reboot-overlay-title">Rebooting device...</div>
       <div id="rebootOverlayStatus" class="reboot-overlay-status">Waiting for device to come back online.</div>
+    </div>
+  </div>
+
+  <div id="wifiHandoffOverlay" class="wifi-handoff-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="wifiHandoffTitle">
+    <div class="wifi-handoff-card">
+      <div class="wifi-handoff-signal" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
+      <div id="wifiHandoffTitle" class="wifi-handoff-title">Connected to home Wi-Fi</div>
+      <p class="wifi-handoff-copy">The speaker received this address:</p>
+      <a id="wifiHandoffLink" class="wifi-handoff-address" href="#">Waiting for address...</a>
+      <div id="wifiHandoffStatus" class="wifi-handoff-status" aria-live="polite">
+        Preparing the network handoff...
+      </div>
+      <a id="wifiHandoffOpen" class="wifi-handoff-open" href="#">Open speaker</a>
     </div>
   </div>
 

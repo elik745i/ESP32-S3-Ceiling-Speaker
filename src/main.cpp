@@ -31,12 +31,20 @@ constexpr unsigned long kApStatusLedBlinkIntervalMs = 1000UL;
 
 #if APP_STATUS_LED_IS_NEOPIXEL
 Adafruit_NeoPixel statusLedPixel(1, DefaultConfig::STATUS_LED_PIN, NEO_GRB + NEO_KHZ800);
+bool statusLedColorKnown = false;
+uint8_t lastStatusLedRed = 0;
+uint8_t lastStatusLedGreen = 0;
+uint8_t lastStatusLedBlue = 0;
 
 void initializeStatusLed() {
     statusLedPixel.setPin(activeStatusLedPin);
     statusLedPixel.begin();
     statusLedPixel.clear();
     statusLedPixel.show();
+    statusLedColorKnown = true;
+    lastStatusLedRed = 0;
+    lastStatusLedGreen = 0;
+    lastStatusLedBlue = 0;
     statusLedInitialized = true;
 }
 
@@ -44,8 +52,15 @@ void writeStatusLedColor(uint8_t red, uint8_t green, uint8_t blue) {
     if (!statusLedInitialized) {
         return;
     }
+    if (statusLedColorKnown && red == lastStatusLedRed && green == lastStatusLedGreen && blue == lastStatusLedBlue) {
+        return;
+    }
     statusLedPixel.setPixelColor(0, statusLedPixel.Color(red, green, blue));
     statusLedPixel.show();
+    statusLedColorKnown = true;
+    lastStatusLedRed = red;
+    lastStatusLedGreen = green;
+    lastStatusLedBlue = blue;
 }
 
 void writeStatusLed(bool on) {
@@ -403,10 +418,14 @@ String lastRollbackReason;
 uint32_t lastProcessedMotorStateVersion = 0;
 uint32_t lastPublishedMotorStateVersion = 0;
 uint32_t activeCpuFrequencyMhz = 0;
-uint32_t pendingCpuFrequencyMhz = 0;
-unsigned long pendingCpuFrequencySince = 0;
+uint8_t cpuGovernorHighSamples = 0;
+uint8_t cpuGovernorLowSamples = 0;
+unsigned long lastCpuGovernorSampleAt = 0;
+unsigned long lastCpuFrequencyChangeAt = 0;
 unsigned long lastCpuFrequencyFailureAt = 0;
-unsigned long equalizerBoostUntil = 0;
+AppStateSnapshot runtimeStateSnapshot;
+bool runtimeStateSnapshotInitialized = false;
+unsigned long lastRuntimeStateServiceAt = 0;
 
 constexpr float kBatteryPercentEmptyVoltage = 3.2f;
 constexpr float kBatteryPercentFullVoltage = 4.2f;
@@ -434,10 +453,22 @@ constexpr unsigned long kEffectPreviewRetryDelayMs = 150UL;
 constexpr unsigned long kPowerCycleCounterClearDelayMs = 10000UL;
 constexpr uint8_t kPowerCycleFactoryResetThreshold = 7;
 constexpr uint32_t kCpuFrequencyIdleMhz = 80;
-constexpr uint32_t kCpuFrequencyPlaybackMhz = 160;
+constexpr uint32_t kCpuFrequencyMediumMhz = 160;
 constexpr uint32_t kCpuFrequencyBurstMhz = 240;
-constexpr unsigned long kCpuFrequencyDownshiftDelayMs = 5000UL;
+constexpr unsigned long kCpuGovernorSampleIntervalMs = 500UL;
+constexpr unsigned long kCpuFrequencyMinimumHoldMs = 2000UL;
 constexpr unsigned long kCpuFrequencyRetryDelayMs = 5000UL;
+constexpr uint8_t kCpuEmergencyLoadPercent = 92;
+constexpr uint8_t kCpuIdleUpshiftLoadPercent = 70;
+constexpr uint8_t kCpuPlaybackUpshiftLoadPercent = 75;
+constexpr uint8_t kCpuPlaybackDownshiftLoadPercent = 30;
+constexpr uint8_t kCpuBurstDownshiftLoadPercent = 45;
+constexpr uint8_t kCpuUpshiftSamples = 2;
+constexpr uint8_t kCpuPlaybackDownshiftSamples = 10;
+constexpr uint8_t kCpuBurstDownshiftSamples = 8;
+constexpr unsigned long kRuntimeStateServiceIntervalMs = 20UL;
+constexpr uint32_t kActiveLoopDelayMs = 1;
+constexpr uint32_t kIdleLoopDelayMs = 5;
 
 constexpr char kOtaRollbackNamespace[] = "ota_state";
 constexpr char kOtaPendingVersionKey[] = "pend_ver";
@@ -450,7 +481,7 @@ constexpr char kPowerCycleCountKey[] = "pc_count";
 bool playRequest(const String& url, const String& label, const String& type, const String& source, String& error, bool addToHistory);
 void flushPendingSettingsNow();
 void restoreAmbientVolumeIfNeeded();
-void applyCpuFrequencyPolicy(const AppStateSnapshot& snapshot);
+void applyCpuFrequencyPolicy();
 bool queuePreviewResume(const AppStateSnapshot& snapshot, const String& previewSource);
 void clearPreviewResumeState();
 
@@ -634,62 +665,67 @@ bool parseStorageFileReference(const String& raw, StorageTarget& target, String&
     return true;
 }
 
-void applyCpuFrequencyPolicy(const AppStateSnapshot& snapshot) {
+void applyCpuFrequencyPolicy() {
     const unsigned long now = millis();
     const uint32_t measuredFrequencyMhz = ESP.getCpuFreqMHz();
     if (measuredFrequencyMhz != 0 && measuredFrequencyMhz != activeCpuFrequencyMhz) {
         activeCpuFrequencyMhz = measuredFrequencyMhz;
     }
 
-    uint32_t targetFrequencyMhz = kCpuFrequencyIdleMhz;
-    const char* policyReason = "idle";
-    const String playbackState = snapshot.playback.state;
-    const bool playbackBuffering = playbackState == "buffering";
-    const bool playbackActive = playbackState == "playing";
-    const bool accessPointActive = wifiManager != nullptr && wifiManager->isApMode();
-
-    // OTA writes, AP service, and audio buffering get the full clock. Stable
-    // playback uses 160 MHz, which leaves ample decode headroom without
-    // pinning a continuously playing ceiling speaker at 240 MHz. Fully idle
-    // operation runs at 80 MHz.
-    const bool equalizerUpdateActive = static_cast<long>(equalizerBoostUntil - now) > 0;
-    if (snapshot.ota.busy) {
-        targetFrequencyMhz = kCpuFrequencyBurstMhz;
-        policyReason = "ota";
-    } else if (equalizerUpdateActive) {
-        targetFrequencyMhz = kCpuFrequencyBurstMhz;
-        policyReason = "equalizer-update";
-    } else if (accessPointActive) {
-        targetFrequencyMhz = kCpuFrequencyBurstMhz;
-        policyReason = "access-point";
-    } else if (playbackBuffering) {
-        targetFrequencyMhz = kCpuFrequencyBurstMhz;
-        policyReason = "audio-buffering";
-    } else if (playbackActive) {
-        targetFrequencyMhz = kCpuFrequencyPlaybackMhz;
-        policyReason = "audio-playback";
-    }
-
-    if (targetFrequencyMhz == activeCpuFrequencyMhz) {
-        pendingCpuFrequencyMhz = 0;
-        pendingCpuFrequencySince = 0;
+    const SystemMetricsSnapshot metrics = getSystemMetricsSnapshot();
+    if (!metrics.cpuLoadAvailable || metrics.cpuLoadCoreCount == 0) {
         return;
     }
 
-    // Upshift immediately so OTA and audio startup never wait for headroom.
-    // Delay downshifts to avoid clock thrashing across short state changes.
-    if (targetFrequencyMhz < activeCpuFrequencyMhz) {
-        if (pendingCpuFrequencyMhz != targetFrequencyMhz) {
-            pendingCpuFrequencyMhz = targetFrequencyMhz;
-            pendingCpuFrequencySince = now;
-            return;
+    // A saturated task on one core must not be hidden by averaging it with an
+    // idle core, so decisions use the busiest core. The monitor still reports
+    // the aggregate and individual core loads.
+    uint8_t peakLoadPercent = metrics.cpuLoadPercent;
+    for (uint8_t coreIndex = 0; coreIndex < metrics.cpuLoadCoreCount; ++coreIndex) {
+        peakLoadPercent = max<uint8_t>(peakLoadPercent, metrics.cpuLoadCorePercent[coreIndex]);
+    }
+
+    uint32_t targetFrequencyMhz = activeCpuFrequencyMhz;
+    const char* policyReason = nullptr;
+    const bool emergencyLoad = peakLoadPercent >= kCpuEmergencyLoadPercent;
+    const bool minimumHoldElapsed = now - lastCpuFrequencyChangeAt >= kCpuFrequencyMinimumHoldMs;
+
+    if (activeCpuFrequencyMhz <= kCpuFrequencyIdleMhz) {
+        cpuGovernorLowSamples = 0;
+        cpuGovernorHighSamples = peakLoadPercent >= kCpuIdleUpshiftLoadPercent
+            ? min<uint8_t>(static_cast<uint8_t>(cpuGovernorHighSamples + 1), kCpuUpshiftSamples)
+            : 0;
+        if (emergencyLoad || (minimumHoldElapsed && cpuGovernorHighSamples >= kCpuUpshiftSamples)) {
+            targetFrequencyMhz = kCpuFrequencyMediumMhz;
+            policyReason = emergencyLoad ? "load-emergency" : "load-high";
         }
-        if (now - pendingCpuFrequencySince < kCpuFrequencyDownshiftDelayMs) {
-            return;
+    } else if (activeCpuFrequencyMhz <= kCpuFrequencyMediumMhz) {
+        cpuGovernorHighSamples = peakLoadPercent >= kCpuPlaybackUpshiftLoadPercent
+            ? min<uint8_t>(static_cast<uint8_t>(cpuGovernorHighSamples + 1), kCpuUpshiftSamples)
+            : 0;
+        cpuGovernorLowSamples = peakLoadPercent <= kCpuPlaybackDownshiftLoadPercent
+            ? min<uint8_t>(static_cast<uint8_t>(cpuGovernorLowSamples + 1), kCpuPlaybackDownshiftSamples)
+            : 0;
+        if (emergencyLoad || (minimumHoldElapsed && cpuGovernorHighSamples >= kCpuUpshiftSamples)) {
+            targetFrequencyMhz = kCpuFrequencyBurstMhz;
+            policyReason = emergencyLoad ? "load-emergency" : "load-high";
+        } else if (minimumHoldElapsed && cpuGovernorLowSamples >= kCpuPlaybackDownshiftSamples) {
+            targetFrequencyMhz = kCpuFrequencyIdleMhz;
+            policyReason = "load-low";
         }
     } else {
-        pendingCpuFrequencyMhz = 0;
-        pendingCpuFrequencySince = 0;
+        cpuGovernorHighSamples = 0;
+        cpuGovernorLowSamples = peakLoadPercent <= kCpuBurstDownshiftLoadPercent
+            ? min<uint8_t>(static_cast<uint8_t>(cpuGovernorLowSamples + 1), kCpuBurstDownshiftSamples)
+            : 0;
+        if (minimumHoldElapsed && cpuGovernorLowSamples >= kCpuBurstDownshiftSamples) {
+            targetFrequencyMhz = kCpuFrequencyMediumMhz;
+            policyReason = "load-low";
+        }
+    }
+
+    if (targetFrequencyMhz == activeCpuFrequencyMhz || policyReason == nullptr) {
+        return;
     }
 
     if (lastCpuFrequencyFailureAt != 0 && now - lastCpuFrequencyFailureAt < kCpuFrequencyRetryDelayMs) {
@@ -698,12 +734,16 @@ void applyCpuFrequencyPolicy(const AppStateSnapshot& snapshot) {
 
     if (setCpuFrequencyMhz(targetFrequencyMhz)) {
         activeCpuFrequencyMhz = ESP.getCpuFreqMHz();
-        pendingCpuFrequencyMhz = 0;
-        pendingCpuFrequencySince = 0;
+        cpuGovernorHighSamples = 0;
+        cpuGovernorLowSamples = 0;
+        lastCpuFrequencyChangeAt = now;
         lastCpuFrequencyFailureAt = 0;
-        Serial.printf("[power] cpu frequency set to %lu MHz reason=%s\n",
+        Serial.printf("[power] cpu frequency set to %lu MHz reason=%s load=%u%% cores=%u/%u%%\n",
                       static_cast<unsigned long>(activeCpuFrequencyMhz),
-                      policyReason);
+                      policyReason,
+                      static_cast<unsigned>(peakLoadPercent),
+                      static_cast<unsigned>(metrics.cpuLoadCorePercent[0]),
+                      static_cast<unsigned>(metrics.cpuLoadCoreCount > 1 ? metrics.cpuLoadCorePercent[1] : 0));
     } else {
         lastCpuFrequencyFailureAt = now;
         Serial.printf("[power] cpu frequency change to %lu MHz failed reason=%s\n",
@@ -1153,7 +1193,12 @@ void serviceStatusLedOverrides(unsigned long now) {
     if (touchStatusLedOverrideActive) {
         touchStatusLedOverrideActive = false;
         updateStatusLedForNetwork(wifiManager != nullptr && wifiManager->isConnected(), wifiManager != nullptr && wifiManager->isApMode(), now);
+        return;
     }
+    // Refresh continuously so the AP/disconnected blink phases are real. The
+    // NeoPixel writer suppresses identical colors, avoiding unnecessary bus
+    // activity during audio playback.
+    updateStatusLedForNetwork(wifiManager != nullptr && wifiManager->isConnected(), wifiManager != nullptr && wifiManager->isApMode(), now);
 }
 
 void triggerTouchHoldFactoryReset(PhysicalButtonState& button) {
@@ -3425,7 +3470,6 @@ void setup() {
             deferredActions->pendingEqualizerPresenceDb = presenceDb;
             deferredActions->pendingEqualizerHighDb = highDb;
             deferredActions->equalizerPending = true;
-            equalizerBoostUntil = millis() + 1500UL;
         },
         [](uint32_t positionSeconds) {
             if (audioPlayer == nullptr || appState == nullptr || appState->snapshot().playback.source != "file-manager") {
@@ -3863,7 +3907,9 @@ void loop() {
     publishMotorStateIfNeeded();
     wifiManager->loop();
     serviceAudioDiagnosticTest();
-    audioPlayer->loop();
+    if (activeAudioOutputEnabled) {
+        audioPlayer->loop();
+    }
     static unsigned long lastPlaybackProgressAt = 0;
     if (now - lastPlaybackProgressAt >= 500UL) {
         lastPlaybackProgressAt = now;
@@ -3874,19 +3920,27 @@ void loop() {
         }
     }
     pollStorageBackends();
-    const bool batteryUpdated = batteryMonitor->loop(isBatterySamplingAllowed());
+    const bool batteryUpdated = batteryMonitor->enabled() && batteryMonitor->loop(isBatterySamplingAllowed());
     otaManager->loop();
     mqttManager->loop();
 
-    const AppStateSnapshot snapshot = appState->snapshot();
-    applyCpuFrequencyPolicy(snapshot);
-    processSoundEffectTransitions(snapshot);
-    serviceRuntimeAudioAutomation(snapshot);
-    displayManager->loop(snapshot);
-    handleLowBatterySleepPolicy(snapshot);
-    confirmOtaHealthIfReady();
+    if (now - lastCpuGovernorSampleAt >= kCpuGovernorSampleIntervalMs) {
+        lastCpuGovernorSampleAt = now;
+        sampleCpuLoadMetrics();
+        applyCpuFrequencyPolicy();
+    }
 
-    publishOtaStateIfNeeded(snapshot);
+    if (!runtimeStateSnapshotInitialized || now - lastRuntimeStateServiceAt >= kRuntimeStateServiceIntervalMs) {
+        lastRuntimeStateServiceAt = now;
+        runtimeStateSnapshot = appState->snapshot();
+        runtimeStateSnapshotInitialized = true;
+        processSoundEffectTransitions(runtimeStateSnapshot);
+        serviceRuntimeAudioAutomation(runtimeStateSnapshot);
+        displayManager->loop(runtimeStateSnapshot);
+        handleLowBatterySleepPolicy(runtimeStateSnapshot);
+        confirmOtaHealthIfReady();
+        publishOtaStateIfNeeded(runtimeStateSnapshot);
+    }
     maybeClearPowerCycleCounterAfterStableBoot();
 
     if (millis() - lastHeapUpdateAt > 2000UL) {
@@ -3936,7 +3990,10 @@ void loop() {
         ESP.restart();
     }
 
-    delay(1);
+    const bool latencySensitive = runtimeStateSnapshotInitialized &&
+        (runtimeStateSnapshot.playback.state == "playing" || runtimeStateSnapshot.playback.state == "buffering" ||
+         runtimeStateSnapshot.ota.busy);
+    delay(latencySensitive ? kActiveLoopDelayMs : kIdleLoopDelayMs);
 }
 
 #endif

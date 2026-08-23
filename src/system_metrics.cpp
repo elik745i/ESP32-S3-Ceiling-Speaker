@@ -140,7 +140,6 @@ void sampleSystemMetrics() {
     // CPU frequency is governed at runtime, so unlike the other hardware
     // fields it must be refreshed instead of remaining at its boot value.
     next.hardware.cpuFreqMHz = ESP.getCpuFreqMHz();
-    sampleCpuLoad(next);
 #if defined(ARDUINO_ARCH_ESP32)
     next.chipTemperatureC = temperatureRead();
     next.chipTemperatureAvailable = isfinite(next.chipTemperatureC);
@@ -165,6 +164,17 @@ void sampleSystemMetrics() {
     next.psram.usedBytes = clampUsedBytes(next.psram.totalBytes, next.psram.freeBytes);
 
     populateStorageMetrics(next);
+    metricsSnapshot = next;
+}
+
+void sampleCpuLoadMetrics() {
+    if (!metricsInitialized) {
+        beginSystemMetrics();
+    }
+
+    SystemMetricsSnapshot next = metricsSnapshot;
+    next.hardware.cpuFreqMHz = ESP.getCpuFreqMHz();
+    sampleCpuLoad(next);
     metricsSnapshot = next;
 }
 

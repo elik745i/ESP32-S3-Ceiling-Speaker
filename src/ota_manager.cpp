@@ -1013,14 +1013,6 @@ void OtaManager::runVersionTask(const String& version, const String& assetName, 
             return;
         }
     }
-    for (const ReleaseInfo& release : releaseCache_) {
-        if (release.isInstalled) {
-            selectedVersion_ = release.tag;
-            selectedAssetName_ = release.assetName;
-            return;
-        }
-    }
-
     latestVersion_ = releaseCache_.empty() ? version : latestVersion_;
     updateAvailable_ = compareVersions(normalizeVersion(APP_VERSION), version) < 0;
 

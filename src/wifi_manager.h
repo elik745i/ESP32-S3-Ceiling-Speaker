@@ -32,10 +32,11 @@ class WiFiManager {
     String currentSsid() const;
     String apSsid() const;
     int32_t rssi() const;
-    ScanSnapshot getScanSnapshot() const;
+    ScanSnapshot getScanSnapshot();
     bool startScan();
     void appendScanResultsJson(JsonArray networks);
     bool shouldRedirectCaptivePortal(const String& hostHeader) const;
+    bool prepareStationHandoff(IPAddress& stationIp, uint32_t& shutdownDelayMs);
 
   private:
     struct PreferredAccessPoint {
@@ -48,7 +49,10 @@ class WiFiManager {
     static constexpr uint16_t DNS_PORT = 53;
     static constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 20000;
     static constexpr uint32_t WIFI_RETRY_INTERVAL_MS = 15000;
-    static constexpr uint32_t WIFI_AP_SHUTDOWN_GRACE_MS = 12000;
+    static constexpr uint32_t WIFI_AP_HANDOFF_TIMEOUT_MS = 60000;
+    static constexpr uint32_t WIFI_AP_HANDOFF_SHUTDOWN_DELAY_MS = 2500;
+    static constexpr uint32_t WIFI_USER_SCAN_TIMEOUT_MS = 20000;
+    static constexpr uint32_t WIFI_STATE_PUBLISH_INTERVAL_MS = 1000;
     static constexpr uint8_t WIFI_MAX_CONSECUTIVE_FAILURES = 10;
 
     SettingsBundle settings_;
@@ -58,6 +62,8 @@ class WiFiManager {
     bool dnsStarted_ = false;
     bool apMode_ = false;
     bool stationAttemptActive_ = false;
+    bool userScanActive_ = false;
+    bool resumeStationAfterScan_ = false;
     bool apShutdownPending_ = false;
     bool hadConnection_ = false;
     bool recoveryRebootRecommended_ = false;
@@ -69,6 +75,7 @@ class WiFiManager {
     unsigned long lastConnectAttemptAt_ = 0;
     unsigned long lastScanStartedAt_ = 0;
     unsigned long apShutdownAt_ = 0;
+    unsigned long lastStatePublishAt_ = 0;
     wifi_event_id_t disconnectEventId_ = 0;
     wifi_err_reason_t lastDisconnectReason_ = WIFI_REASON_UNSPECIFIED;
     String apSsid_;
@@ -76,7 +83,7 @@ class WiFiManager {
     void startStation();
     void startAccessPoint();
     void stopAccessPoint();
-    void updateAppState();
+    void updateAppState(bool rateLimited = false);
     bool hasStaCredentials() const;
     bool isConfiguredNetworkVisible();
     bool isCredentialFailureReason(wifi_err_reason_t reason) const;
@@ -85,6 +92,7 @@ class WiFiManager {
     void setFrontendError(const String& message);
     void handleDisconnectEvent(arduino_event_info_t info);
     void registerFailedAttempt(const char* reason);
+    void finishUserScan();
     PreferredAccessPoint findPreferredAccessPoint();
     void updateRadioModeAndSleep();
 };

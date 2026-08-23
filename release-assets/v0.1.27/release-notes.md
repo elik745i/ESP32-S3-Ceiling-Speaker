@@ -1,5 +1,10 @@
 ESP32 Notifier v0.1.27
 
+- Fixed selected GitHub firmware installs getting stuck at `Resolving release` after the release list had been refreshed; compatible current, older, and alternate build assets can now be deliberately reinstalled.
+- Optimized the idle service loop by rate-limiting unchanged Wi-Fi state publication, reducing full runtime snapshots to 50 Hz, bypassing disabled audio/battery work, and using a playback-aware idle yield.
+- Hardware validation reduced idle load from about 25-31% aggregate / 48-53% Core 1 to typically 0-2%, with the ESP32-S3 die reading falling from 71 C to about 42 C at 80 MHz.
+- Added a Tasmota-style AP-to-STA browser handoff that displays the assigned station IP and reconnects the setup client to the device after the fallback AP closes.
+- Fixed Wi-Fi scans during station retry activity and prevented partial credential edits from being saved before the explicit Connect action.
 - Added a prominent persistent Firmware-tab alert for failed OTA updates and bootloader rollbacks.
 - The alert shows the attempted firmware, the restored working version, and the stored rollback or health-check failure cause after reboot.
 - Added a separate pending-verification state while newly installed firmware is completing its post-update health check.

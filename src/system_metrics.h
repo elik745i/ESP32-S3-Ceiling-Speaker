@@ -41,6 +41,7 @@ struct SystemMetricsSnapshot {
 };
 
 void beginSystemMetrics();
+void sampleCpuLoadMetrics();
 void sampleSystemMetrics();
 SystemMetricsSnapshot getSystemMetricsSnapshot();
 void appendSystemMetricsJson(JsonObject root);

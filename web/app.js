@@ -73,6 +73,7 @@ const state = {
   rebootOverlayStartedAt: 0,
   rebootOverlayReconnectAllowedAt: 0,
   rebootOverlaySawDisconnect: false,
+  stationRedirectProbeTimer: null,
   effectFileOptions: [],
   effectFilesLoading: false,
   effectFileOptionsLoaded: false,
@@ -1032,6 +1033,10 @@ const elements = {
   rebootOverlayCountdown: document.getElementById("rebootOverlayCountdown"),
   rebootOverlayTitle: document.getElementById("rebootOverlayTitle"),
   rebootOverlayStatus: document.getElementById("rebootOverlayStatus"),
+  wifiHandoffOverlay: document.getElementById("wifiHandoffOverlay"),
+  wifiHandoffLink: document.getElementById("wifiHandoffLink"),
+  wifiHandoffStatus: document.getElementById("wifiHandoffStatus"),
+  wifiHandoffOpen: document.getElementById("wifiHandoffOpen"),
   updateAvailableDialog: document.getElementById("updateAvailableDialog"),
   updateAvailableBody: document.getElementById("updateAvailableBody"),
   updateAvailableCloseButton: document.getElementById("updateAvailableCloseButton"),
@@ -5201,6 +5206,105 @@ function usableStationIp(status) {
   return stationIp;
 }
 
+function showWifiHandoff(stationIp, redirectUrl, message) {
+  if (elements.wifiHandoffLink) {
+    elements.wifiHandoffLink.textContent = redirectUrl;
+    elements.wifiHandoffLink.href = redirectUrl;
+  }
+  if (elements.wifiHandoffOpen) {
+    elements.wifiHandoffOpen.href = redirectUrl;
+  }
+  if (elements.wifiHandoffStatus) {
+    elements.wifiHandoffStatus.textContent = message;
+  }
+  if (elements.wifiHandoffOverlay) {
+    elements.wifiHandoffOverlay.hidden = false;
+  }
+  setMessage(`Wi-Fi connected. New device address: ${stationIp}`);
+}
+
+function probeStationAddress(stationIp, redirectUrl, initialDelayMs = 0) {
+  const startedAt = Date.now();
+  const probeDeadlineMs = 90000;
+
+  const scheduleProbe = (delayMs) => {
+    if (state.stationRedirectProbeTimer) {
+      window.clearTimeout(state.stationRedirectProbeTimer);
+    }
+    state.stationRedirectProbeTimer = window.setTimeout(runProbe, Math.max(0, delayMs));
+  };
+
+  const runProbe = () => {
+    state.stationRedirectProbeTimer = null;
+    if (Date.now() - startedAt >= probeDeadlineMs) {
+      if (elements.wifiHandoffStatus) {
+        elements.wifiHandoffStatus.textContent =
+          "Reconnect this device to your home Wi-Fi if it did not reconnect automatically, then tap Open speaker.";
+      }
+      return;
+    }
+
+    const probe = new Image();
+    let settled = false;
+    const timeout = window.setTimeout(() => finish(false), 2500);
+    const finish = (reachable) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.clearTimeout(timeout);
+      probe.onload = null;
+      probe.onerror = null;
+      if (reachable) {
+        if (elements.wifiHandoffStatus) {
+          elements.wifiHandoffStatus.textContent = "Speaker found on the home network. Opening it now...";
+        }
+        window.setTimeout(() => window.location.replace(redirectUrl), 250);
+        return;
+      }
+      scheduleProbe(1200);
+    };
+    probe.onload = () => finish(true);
+    probe.onerror = () => finish(false);
+    probe.src = `http://${stationIp}/wifi-handoff.svg?t=${Date.now()}`;
+  };
+
+  scheduleProbe(initialDelayMs);
+}
+
+async function beginStationHandoff(stationIp) {
+  const fallbackUrl = `http://${stationIp}/`;
+  showWifiHandoff(
+    stationIp,
+    fallbackUrl,
+    "The setup network will close. Waiting for this device to rejoin your home Wi-Fi...",
+  );
+
+  try {
+    const handoff = await request("/api/wifi/handoff", { method: "POST", body: "{}" });
+    const confirmedIp = String(handoff?.stationIp || stationIp).trim();
+    const redirectUrl = String(handoff?.redirectUrl || `http://${confirmedIp}/`);
+    const shutdownDelayMs = Math.max(0, Number(handoff?.shutdownDelayMs || 0));
+    showWifiHandoff(
+      confirmedIp,
+      redirectUrl,
+      handoff?.accessPointWillStop
+        ? "Address received. The setup network is closing; waiting for this device to rejoin your home Wi-Fi..."
+        : "Address received. Looking for the speaker on your home network...",
+    );
+    probeStationAddress(confirmedIp, redirectUrl, shutdownDelayMs + 500);
+  } catch (error) {
+    if (elements.wifiHandoffStatus) {
+      elements.wifiHandoffStatus.textContent =
+        "The speaker is still completing its connection. Retrying the handoff...";
+    }
+    window.setTimeout(() => {
+      state.stationRedirectInProgress = false;
+      maybeRedirectToStationIp(state.status || {}, { force: true });
+    }, 1500);
+  }
+}
+
 function maybeRedirectToStationIp(status, { force = false } = {}) {
   if (state.stationRedirectInProgress) {
     return;
@@ -5212,10 +5316,14 @@ function maybeRedirectToStationIp(status, { force = false } = {}) {
   }
 
   state.stationRedirectInProgress = true;
-  setMessage(`Wi-Fi connected. Redirecting to ${stationIp}...`);
-  window.setTimeout(() => {
-    window.location.href = `http://${stationIp}/`;
-  }, 1200);
+  const setupAccessPointContext = isApHost() || (force && Boolean(status?.network?.apMode));
+  if (setupAccessPointContext) {
+    void beginStationHandoff(stationIp);
+    return;
+  }
+
+  setMessage(`Wi-Fi connected. Opening ${stationIp}...`);
+  window.setTimeout(() => window.location.replace(`http://${stationIp}/`), 500);
 }
 
 function isNumericLikeField(field) {
@@ -9043,7 +9151,11 @@ for (const field of elements.settingsForm.elements) {
 
   if (field.type === "checkbox" || field.tagName === "SELECT") {
     field.addEventListener("change", () => {
-      queueSettingsSave(150);
+      if (field.name.startsWith("wifi.")) {
+        state.settingsDirty = true;
+      } else {
+        queueSettingsSave(150);
+      }
       if (field.name === "wifi.ssid" || field.name === "wifi.password") {
         updateWifiActionButton();
       }
@@ -9088,12 +9200,18 @@ for (const field of elements.settingsForm.elements) {
     if (event.target.name?.startsWith("mqtt.")) {
       setMqttConnectStatus("");
     }
-    queueSettingsSave();
+    if (event.target.name.startsWith("wifi.")) {
+      // Network changes can disconnect the page. Keep them local until the
+      // explicit Connect action submits the complete credential/IP fields.
+      state.settingsDirty = true;
+    } else {
+      queueSettingsSave();
+    }
   });
 
   field.addEventListener("blur", (event) => {
     normalizeDecimalField(event.target);
-    if (state.settingsDirty) {
+    if (state.settingsDirty && !event.target.name.startsWith("wifi.")) {
       saveSettings({ silent: true }).catch(handleError);
     }
   });

@@ -1055,6 +1055,29 @@ void WebServerManager::registerApiRoutes() {
         sendJson(request, doc);
     });
 
+    server_.on("/api/wifi/handoff", HTTP_POST, [this](AsyncWebServerRequest* request) {
+        if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+            return;
+        }
+
+        IPAddress stationIp;
+        uint32_t shutdownDelayMs = 0;
+        JsonDocument doc;
+        if (!wifiManager_->prepareStationHandoff(stationIp, shutdownDelayMs)) {
+            doc["error"] = "Station Wi-Fi is not connected yet.";
+            sendJson(request, doc, 409);
+            return;
+        }
+
+        const String stationIpText = stationIp.toString();
+        doc["ok"] = true;
+        doc["stationIp"] = stationIpText;
+        doc["redirectUrl"] = String("http://") + stationIpText + "/";
+        doc["shutdownDelayMs"] = shutdownDelayMs;
+        doc["accessPointWillStop"] = shutdownDelayMs > 0;
+        sendJson(request, doc);
+    });
+
     server_.on(
         "/api/settings",
         HTTP_POST,
@@ -1861,6 +1884,19 @@ void WebServerManager::registerApiRoutes() {
 }
 
 void WebServerManager::registerWebRoutes() {
+    // This intentionally bypasses web authentication and captive-portal redirects.
+    // The setup page loads it from the newly assigned station address to determine
+    // when the browser has rejoined the home network. It exposes no device data.
+    server_.on("/wifi-handoff.svg", HTTP_GET, [](AsyncWebServerRequest* request) {
+        static const char kHandoffProbeSvg[] =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\" viewBox=\"0 0 1 1\">"
+            "<path fill=\"#f59e0b\" d=\"M0 0h1v1H0z\"/></svg>";
+        AsyncWebServerResponse* response = request->beginResponse(200, "image/svg+xml", kHandoffProbeSvg);
+        response->addHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+        response->addHeader("Access-Control-Allow-Origin", "*");
+        request->send(response);
+    });
+
     auto serveAsset = [this](AsyncWebServerRequest* request, const String& path) {
         if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
             return;

@@ -80,7 +80,11 @@ void WiFiManager::applySettings(const SettingsBundle& settings) {
 
 void WiFiManager::startStation() {
     updateRadioModeAndSleep();
-    WiFi.disconnect(true, true);
+    // Disconnect only the STA interface. Powering the radio down here also
+    // destroys the fallback AP and drops every browser using the setup page.
+    // Credentials are owned by SettingsManager, so there is no reason to erase
+    // the Wi-Fi driver's copy on every retry either.
+    WiFi.disconnect(false, false);
     delay(100);
     if (!hasStaCredentials()) {
         stationAttemptActive_ = false;
@@ -184,9 +188,9 @@ void WiFiManager::loop() {
             Serial.printf("[wifi] station connected ssid='%s' ip=%s\n", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
             if (apMode_) {
                 apShutdownPending_ = true;
-                apShutdownAt_ = millis() + WIFI_AP_SHUTDOWN_GRACE_MS;
-                Serial.printf("[wifi] station connected, keeping AP alive for %lu ms to allow browser redirect\n",
-                              static_cast<unsigned long>(WIFI_AP_SHUTDOWN_GRACE_MS));
+                apShutdownAt_ = millis() + WIFI_AP_HANDOFF_TIMEOUT_MS;
+                Serial.printf("[wifi] station connected, keeping AP alive for up to %lu ms for browser IP handoff\n",
+                              static_cast<unsigned long>(WIFI_AP_HANDOFF_TIMEOUT_MS));
             }
         }
 
@@ -201,7 +205,7 @@ void WiFiManager::loop() {
         recoveryRebootRecommended_ = false;
         lastDisconnectReasonValid_ = false;
         clearFrontendError();
-        updateAppState();
+        updateAppState(true);
         return;
     }
 
@@ -215,8 +219,36 @@ void WiFiManager::loop() {
     }
 
     const unsigned long now = millis();
+    if (userScanActive_) {
+        const int scanState = WiFi.scanComplete();
+        const bool scanTimedOut = lastScanStartedAt_ != 0 && now - lastScanStartedAt_ > WIFI_USER_SCAN_TIMEOUT_MS;
+        if (scanState == WIFI_SCAN_RUNNING && !scanTimedOut) {
+            updateAppState(true);
+            return;
+        }
+        if (scanState >= 0) {
+            // Keep the result buffer intact until the web request consumes it.
+            updateAppState(true);
+            return;
+        }
+        if (scanState == WIFI_SCAN_FAILED && !scanTimedOut &&
+            lastScanStartedAt_ != 0 && now - lastScanStartedAt_ < 3000UL) {
+            // Give the browser a chance to receive the failed state before a
+            // station retry starts another driver scan.
+            updateAppState(true);
+            return;
+        }
+        if (scanTimedOut) {
+            WiFi.scanDelete();
+        }
+        finishUserScan();
+    }
+
     if (stationAttemptActive_ && now - connectAttemptStartedAt_ > WIFI_CONNECT_TIMEOUT_MS) {
         stationAttemptActive_ = false;
+        // The retry interval begins after a failed attempt, not when it began.
+        // This gives AP clients a stable quiet window between STA handshakes.
+        lastConnectAttemptAt_ = now;
         registerFailedAttempt("timeout");
         startAccessPoint();
     }
@@ -225,11 +257,33 @@ void WiFiManager::loop() {
         startStation();
     }
 
-    updateAppState();
+    updateAppState(true);
 }
 
 bool WiFiManager::shouldRebootForRecovery() const {
     return recoveryRebootRecommended_;
+}
+
+bool WiFiManager::prepareStationHandoff(IPAddress& stationIp, uint32_t& shutdownDelayMs) {
+    stationIp = IPAddress();
+    shutdownDelayMs = 0;
+    if (!isConnected()) {
+        return false;
+    }
+
+    stationIp = WiFi.localIP();
+    if (stationIp == IPAddress() || stationIp == WiFi.softAPIP()) {
+        return false;
+    }
+
+    if (apMode_) {
+        shutdownDelayMs = WIFI_AP_HANDOFF_SHUTDOWN_DELAY_MS;
+        apShutdownPending_ = true;
+        apShutdownAt_ = millis() + shutdownDelayMs;
+        Serial.printf("[wifi] browser acknowledged station IP %s; stopping AP in %lu ms\n",
+                      stationIp.toString().c_str(), static_cast<unsigned long>(shutdownDelayMs));
+    }
+    return true;
 }
 
 uint8_t WiFiManager::consecutiveFailureCount() const {
@@ -238,6 +292,16 @@ uint8_t WiFiManager::consecutiveFailureCount() const {
 
 bool WiFiManager::hasStaCredentials() const {
     return !settings_.wifi.ssid.isEmpty();
+}
+
+void WiFiManager::finishUserScan() {
+    userScanActive_ = false;
+    if (resumeStationAfterScan_ && hasStaCredentials()) {
+        // Make the normal retry path eligible on the next loop pass, after the
+        // scan result has already been delivered to the browser.
+        lastConnectAttemptAt_ = millis() - WIFI_RETRY_INTERVAL_MS - 1UL;
+    }
+    resumeStationAfterScan_ = false;
 }
 
 void WiFiManager::registerFailedAttempt(const char* reason) {
@@ -392,10 +456,15 @@ void WiFiManager::handleDisconnectEvent(arduino_event_info_t info) {
                   static_cast<int>(lastDisconnectReason_));
 }
 
-void WiFiManager::updateAppState() {
+void WiFiManager::updateAppState(bool rateLimited) {
     if (appState_ == nullptr) {
         return;
     }
+    const unsigned long now = millis();
+    if (rateLimited && lastStatePublishAt_ != 0 && now - lastStatePublishAt_ < WIFI_STATE_PUBLISH_INTERVAL_MS) {
+        return;
+    }
+    lastStatePublishAt_ = now;
     const bool connected = isConnected();
     appState_->setWiFiStatus(
         connected,
@@ -434,13 +503,16 @@ int32_t WiFiManager::rssi() const {
     return isConnected() ? WiFi.RSSI() : 0;
 }
 
-WiFiManager::ScanSnapshot WiFiManager::getScanSnapshot() const {
+WiFiManager::ScanSnapshot WiFiManager::getScanSnapshot() {
     const int scanState = WiFi.scanComplete();
     ScanSnapshot snapshot;
     snapshot.active = scanState == WIFI_SCAN_RUNNING;
     snapshot.complete = scanState >= 0 || (lastScanCompleted_ && lastScanStartedAt_ != 0);
     snapshot.failed = lastScanStartedAt_ != 0 && !lastScanCompleted_ && scanState == WIFI_SCAN_FAILED;
     snapshot.ageMs = lastScanStartedAt_ == 0 ? 0 : millis() - lastScanStartedAt_;
+    if (snapshot.failed && userScanActive_) {
+        finishUserScan();
+    }
     return snapshot;
 }
 
@@ -452,17 +524,32 @@ bool WiFiManager::startScan() {
     if (scanState >= 0 || scanState == WIFI_SCAN_FAILED) {
         WiFi.scanDelete();
     }
+
+    resumeStationAfterScan_ = stationAttemptActive_ && !isConnected();
+    if (resumeStationAfterScan_) {
+        // Async scans are rejected while the STA driver is in an association
+        // handshake. Pause that retry without erasing credentials; AP service
+        // remains active throughout the user-requested scan.
+        WiFi.disconnect(false, false);
+        stationAttemptActive_ = false;
+        lastConnectAttemptAt_ = millis();
+        delay(100);
+    }
+
     lastScanCompleted_ = false;
     WiFi.enableSTA(true);
     const int scanResult = WiFi.scanNetworks(true, true);
     if (scanResult == WIFI_SCAN_FAILED) {
-        delay(50);
+        WiFi.scanDelete();
+        delay(100);
         const int retryResult = WiFi.scanNetworks(true, true);
         if (retryResult == WIFI_SCAN_FAILED) {
             lastScanStartedAt_ = 0;
+            finishUserScan();
             return false;
         }
     }
+    userScanActive_ = true;
     lastScanStartedAt_ = millis();
     return true;
 }
@@ -470,9 +557,9 @@ bool WiFiManager::startScan() {
 void WiFiManager::appendScanResultsJson(JsonArray networks) {
     const int networkCount = WiFi.scanComplete();
     if (networkCount <= 0) {
-        if (networkCount == WIFI_SCAN_FAILED) {
-            WiFi.scanDelete();
-        }
+        lastScanCompleted_ = networkCount == 0;
+        WiFi.scanDelete();
+        finishUserScan();
         return;
     }
 
@@ -491,6 +578,7 @@ void WiFiManager::appendScanResultsJson(JsonArray networks) {
     }
 
     WiFi.scanDelete();
+    finishUserScan();
 }
 
 bool WiFiManager::shouldRedirectCaptivePortal(const String& hostHeader) const {
