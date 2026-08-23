@@ -35,6 +35,36 @@ export function createFirmwareTab({ state, elements, request, loadStatus, setMes
     updateFirmwareSelectionLabel();
   }
 
+  function renderRollbackStatus(info, currentVersion) {
+    if (!elements.firmwareRollbackAlert) {
+      return;
+    }
+
+    const pendingVerify = Boolean(info.rollbackPendingVerify);
+    const pendingVersion = String(info.rollbackPendingVersion || "").trim();
+    const rolledBackVersion = String(info.rolledBackVersion || "").trim();
+    const reason = String(info.rollbackReason || "").trim();
+    const hasRollback = Boolean(rolledBackVersion || reason);
+
+    elements.firmwareRollbackAlert.hidden = !pendingVerify && !hasRollback;
+    elements.firmwareRollbackAlert.classList.toggle("pending", pendingVerify && !hasRollback);
+    elements.firmwareRollbackAlert.classList.toggle("failed", hasRollback);
+    if (!pendingVerify && !hasRollback) {
+      return;
+    }
+
+    if (hasRollback) {
+      elements.firmwareRollbackTitle.textContent = "Firmware update failed — rollback completed";
+      elements.firmwareRollbackSummary.textContent = `Attempted ${rolledBackVersion || "unknown firmware"}; restored ${currentVersion || "the previous firmware"}.`;
+      elements.firmwareRollbackReason.textContent = reason || "The new firmware did not pass its post-update health confirmation.";
+      return;
+    }
+
+    elements.firmwareRollbackTitle.textContent = "Firmware health confirmation pending";
+    elements.firmwareRollbackSummary.textContent = `${pendingVersion || currentVersion || "The new firmware"} is running its post-update health check.`;
+    elements.firmwareRollbackReason.textContent = "If health confirmation fails, the bootloader will restore the previous working image and show the cause here.";
+  }
+
   function firmwareReleaseNote(release) {
     const variant = String(release?.variantLabel || "").toLowerCase();
 
@@ -161,6 +191,7 @@ export function createFirmwareTab({ state, elements, request, loadStatus, setMes
       elements.latestVersion.textContent = latestVersion;
       elements.otaStatusLabel.textContent = info.updateStatus || "Idle";
       elements.otaStatus.textContent = JSON.stringify(info, null, 2);
+      renderRollbackStatus(info, currentVersion);
 
       const progress = Number(info.updateProgress || 0);
       const bytes = Number(info.updateBytes || 0);

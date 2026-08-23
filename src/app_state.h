@@ -23,6 +23,11 @@ struct PlaybackSnapshot {
     String url;
     String source = "none";
     uint8_t volumePercent = 0;
+    uint32_t completionSequence = 0;
+    String completedUrl;
+    String completedSource;
+    uint32_t positionSeconds = 0;
+    uint32_t durationSeconds = 0;
 };
 
 struct BatterySnapshot {
@@ -94,6 +99,8 @@ class AppState {
     void setWiFiStatus(bool connected, bool apMode, const String& ssid, const IPAddress& ip, int32_t rssi, const String& apSsid);
     void setMqttConnected(bool connected);
     void setPlayback(const String& state, const String& type, const String& title, const String& url, const String& source, uint8_t volumePercent);
+    void markPlaybackCompleted(const String& url, const String& source);
+    void setPlaybackProgress(uint32_t positionSeconds, uint32_t durationSeconds);
     void setBattery(float voltage, float rawAdcVoltage, uint16_t rawAdc, bool charging);
     void setOta(bool busy, bool updateAvailable, const String& latestVersion, const String& lastResult, const String& lastError,
                 const String& phase = "", uint8_t progressPercent = 0);

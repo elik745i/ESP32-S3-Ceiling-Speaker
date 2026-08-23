@@ -102,6 +102,8 @@ class AudioPlayer::Impl {
     bool stopRequested = false;
     bool playbackCompletionPending = false;
     String completedPlaybackSource;
+    uint32_t cachedDurationSeconds = 0;
+    bool durationProbePending = false;
     OverlayState overlay;
 
     void publish() {
@@ -335,6 +337,9 @@ void audio_eof_stream(const char* info) {
     // MP3 is still being initialized. Local files have their own MP3 EOF
     // callback, so never let this transient tear down or retry SD playback.
     if (g_impl != nullptr && !g_impl->storageLeaseActive) {
+        if (g_impl->appState != nullptr) {
+            g_impl->appState->markPlaybackCompleted(g_impl->url, g_impl->source);
+        }
         g_impl->completedPlaybackSource = g_impl->source;
         g_impl->playbackCompletionPending = true;
         g_impl->state = "idle";
@@ -395,6 +400,9 @@ void audio_commercial(const char* info) {
 
 void audio_eof_mp3(const char* info) {
     if (g_impl != nullptr && g_impl->storageLeaseActive) {
+        if (g_impl->appState != nullptr) {
+            g_impl->appState->markPlaybackCompleted(g_impl->url, g_impl->source);
+        }
         g_impl->completedPlaybackSource = g_impl->source;
         g_impl->playbackCompletionPending = true;
         releaseStorageLease(g_impl);
@@ -458,6 +466,10 @@ void AudioPlayer::loop() {
         return;
     }
     impl_->audio.loop();
+    if (impl_->durationProbePending && impl_->storageLeaseActive && impl_->audio.getAudioCurrentTime() > 0) {
+        impl_->cachedDurationSeconds = impl_->audio.getAudioFileDuration();
+        impl_->durationProbePending = false;
+    }
     if (impl_->retryPending && millis() >= impl_->retryAt) {
         impl_->retryPending = false;
         impl_->audio.stopSong();
@@ -491,6 +503,8 @@ bool AudioPlayer::play(const String& url, const String& title, const String& med
     impl_->type = mediaType;
     impl_->source = source;
     impl_->state = "buffering";
+    impl_->cachedDurationSeconds = 0;
+    impl_->durationProbePending = false;
     impl_->publish();
     impl_->applyHardwareVolumePercent(0);
 
@@ -554,6 +568,8 @@ bool AudioPlayer::playStorageFile(StorageTarget target, const String& path, cons
     impl_->type = mediaType;
     impl_->source = source;
     impl_->state = "buffering";
+    impl_->cachedDurationSeconds = 0;
+    impl_->durationProbePending = true;
     impl_->publish();
     impl_->applyHardwareVolumePercent(0);
 
@@ -789,6 +805,43 @@ String AudioPlayer::currentUrl() const {
 
 String AudioPlayer::currentState() const {
     return impl_ == nullptr ? String("idle") : impl_->state;
+}
+
+uint32_t AudioPlayer::currentPositionSeconds() const {
+    return impl_ != nullptr && impl_->storageLeaseActive ? impl_->audio.getAudioCurrentTime() : 0;
+}
+
+uint32_t AudioPlayer::durationSeconds() const {
+    return impl_ != nullptr && impl_->storageLeaseActive ? impl_->cachedDurationSeconds : 0;
+}
+
+bool AudioPlayer::seekStorageFile(uint32_t positionSeconds) {
+    if (impl_ == nullptr || !impl_->storageLeaseActive ||
+        !(impl_->state == "playing" || impl_->state == "buffering")) {
+        return false;
+    }
+    const uint32_t duration = impl_->cachedDurationSeconds;
+    if (duration == 0) {
+        return false;
+    }
+    const uint32_t clamped = min<uint32_t>(min<uint32_t>(positionSeconds, duration), 65535U);
+    String lowercaseUrl = impl_->url;
+    lowercaseUrl.toLowerCase();
+    bool sought = false;
+    if (lowercaseUrl.endsWith(".flac") && duration > 0) {
+        const uint32_t dataStart = impl_->audio.getAudioDataStartPos();
+        const uint32_t fileSize = impl_->audio.getFileSize();
+        const uint32_t audioBytes = fileSize > dataStart ? fileSize - dataStart : 0;
+        const uint32_t targetByte = dataStart + static_cast<uint32_t>(
+            (static_cast<uint64_t>(audioBytes) * clamped) / duration);
+        sought = audioBytes > 0 && impl_->audio.setFilePos(targetByte);
+    } else {
+        sought = impl_->audio.setAudioPlayPosition(static_cast<uint16_t>(clamped));
+    }
+    if (sought && impl_->appState != nullptr) {
+        impl_->appState->setPlaybackProgress(clamped, duration);
+    }
+    return sought;
 }
 
 bool AudioPlayer::overlayActive() const {

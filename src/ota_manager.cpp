@@ -403,7 +403,16 @@ void OtaManager::loop() {
     }
     if (pendingReleaseRefresh_ && !busy_ && !releaseRefreshInProgress_ &&
         static_cast<long>(millis() - releaseRefreshNextAttemptAtMs_) >= 0) {
-        runReleaseRefreshTask();
+        releaseRefreshInProgress_ = true;
+        const BaseType_t created = xTaskCreatePinnedToCore(
+            releaseRefreshTaskEntry, "ota-release-check", 12288, this, 1, &releaseRefreshTaskHandle_, 0);
+        if (created != pdPASS) {
+            releaseRefreshInProgress_ = false;
+            pendingReleaseRefresh_ = false;
+            releaseRefreshError_ = "Unable to start background release check.";
+            lastMessage_ = releaseRefreshError_;
+            syncAppState("release refresh failed", releaseRefreshError_);
+        }
         return;
     }
     if (!pendingInstallVersion_.isEmpty() && !busy_) {
@@ -420,8 +429,33 @@ void OtaManager::loop() {
         const bool applyAfterCheck = pendingApply_;
         pendingCheck_ = false;
         pendingApply_ = false;
-        runTask(applyAfterCheck);
+        if (applyAfterCheck) {
+            runTask(true);
+            return;
+        }
+        busy_ = true;
+        const BaseType_t created = xTaskCreatePinnedToCore(
+            checkTaskEntry, "ota-version-check", 12288, this, 1, &checkTaskHandle_, 0);
+        if (created != pdPASS) {
+            busy_ = false;
+            lastMessage_ = "Unable to start background firmware check.";
+            syncAppState("error", lastMessage_);
+        }
     }
+}
+
+void OtaManager::releaseRefreshTaskEntry(void* context) {
+    OtaManager* manager = static_cast<OtaManager*>(context);
+    manager->runReleaseRefreshTask();
+    manager->releaseRefreshTaskHandle_ = nullptr;
+    vTaskDelete(nullptr);
+}
+
+void OtaManager::checkTaskEntry(void* context) {
+    OtaManager* manager = static_cast<OtaManager*>(context);
+    manager->runTask(false);
+    manager->checkTaskHandle_ = nullptr;
+    vTaskDelete(nullptr);
 }
 
 bool OtaManager::triggerCheck(bool applyAfterCheck) {
@@ -452,7 +486,7 @@ bool OtaManager::beginLocalUpload(const String& filename, size_t totalSize, Stri
         return false;
     }
 
-    selectedVersion_ = "local";
+    selectedVersion_ = filename.isEmpty() ? String("local upload") : String("local upload (") + filename + ")";
     lastMessage_ = "Flashing local firmware...";
     updatePhase_ = "Flashing";
     progressBytes_ = 0;
@@ -946,6 +980,10 @@ void OtaManager::runTask(bool applyAfterCheck) {
     busy_ = false;
     syncAppState("installed");
     scheduleReboot(1500);
+}
+
+String OtaManager::pendingInstallVersion() const {
+    return selectedVersion_;
 }
 
 void OtaManager::runVersionTask(const String& version, const String& assetName, const String& assetUrl) {

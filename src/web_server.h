@@ -23,6 +23,7 @@ class WebServerManager {
     using StopHandler = std::function<void(void)>;
     using VolumeHandler = std::function<void(uint8_t)>;
     using EqualizerHandler = std::function<void(const String&, int8_t, int8_t, int8_t)>;
+    using SeekHandler = std::function<bool(uint32_t)>;
     using SimpleHandler = std::function<void(void)>;
     using OtaHandler = std::function<bool(bool)>;
     using MqttHandler = std::function<bool(const String&, String&)>;
@@ -42,6 +43,7 @@ class WebServerManager {
         StopHandler stopHandler,
         VolumeHandler volumeHandler,
         EqualizerHandler equalizerHandler,
+        SeekHandler seekHandler,
         OtaHandler otaHandler,
         MqttHandler mqttHandler,
         MotorRunHandler motorRunHandler,
@@ -67,6 +69,7 @@ class WebServerManager {
     StopHandler stopHandler_;
     VolumeHandler volumeHandler_;
     EqualizerHandler equalizerHandler_;
+    SeekHandler seekHandler_;
     OtaHandler otaHandler_;
     MqttHandler mqttHandler_;
     MotorRunHandler motorRunHandler_;

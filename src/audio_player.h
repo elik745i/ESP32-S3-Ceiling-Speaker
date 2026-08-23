@@ -38,6 +38,9 @@ class AudioPlayer {
     String currentTitle() const;
     String currentUrl() const;
     String currentState() const;
+    uint32_t currentPositionSeconds() const;
+    uint32_t durationSeconds() const;
+    bool seekStorageFile(uint32_t positionSeconds);
     DiagnosticsSnapshot diagnostics() const;
 
     void onStationName(const char* text);

@@ -57,8 +57,11 @@ const state = {
     loop: false,
     shuffle: false,
     autoplay: true,
+    lastCompletionSequence: 0,
+    seeking: false,
   },
   storageClickTimer: null,
+  storagePlaybackFocusUrl: "",
   storageInitialLoadRequested: false,
   effectReindexInProgress: false,
   storageReindexInProgressByTarget: { flash: false, sd: false },
@@ -164,6 +167,7 @@ const SETTINGS_AUTOSAVE_DELAY_MS = 900;
 const ACTIVE_TAB_STORAGE_KEY = "notifierActiveTab";
 const RADIO_SELECTION_STORAGE_KEY = "notifierRadioSelection";
 const EFFECT_FILES_CACHE_STORAGE_KEY = "notifierEffectFilesCache";
+const STORAGE_LOCATION_STORAGE_KEY = "notifierStorageLocation";
 const GPIO_BOARD_SELECTION_STORAGE_KEY = "notifierGpioBoardSelection";
 const GPIO_BOARD_AUTODETECT_STORAGE_KEY = "notifierGpioBoardAutodetect";
 const PERIPHERAL_DIAGRAM_POSITIONS_STORAGE_KEY = "notifierPeripheralDiagramPositions";
@@ -1014,6 +1018,10 @@ const elements = {
   otaProgressLabel: document.getElementById("otaProgressLabel"),
   firmwareList: document.getElementById("firmwareList"),
   firmwareSelectionLabel: document.getElementById("firmwareSelectionLabel"),
+  firmwareRollbackAlert: document.getElementById("firmwareRollbackAlert"),
+  firmwareRollbackTitle: document.getElementById("firmwareRollbackTitle"),
+  firmwareRollbackSummary: document.getElementById("firmwareRollbackSummary"),
+  firmwareRollbackReason: document.getElementById("firmwareRollbackReason"),
   effectsReindexButton: document.getElementById("effectsReindexButton"),
   headerActionsButton: document.getElementById("headerActionsButton"),
   headerActionsMenu: document.getElementById("headerActionsMenu"),
@@ -1161,6 +1169,8 @@ const elements = {
   storageInlineAutoplayButton: document.getElementById("storageInlineAutoplayButton"),
   storageInlineVolumeSlider: document.getElementById("storageInlineVolumeSlider"),
   storageInlineVolumeValue: document.getElementById("storageInlineVolumeValue"),
+  storageInlineSeekSlider: document.getElementById("storageInlineSeekSlider"),
+  storageInlineSeekLabel: document.getElementById("storageInlineSeekLabel"),
   storageFileList: document.getElementById("storageFileList"),
   storagePreviewModal: document.getElementById("storagePreviewModal"),
   storagePreviewCloseButton: document.getElementById("storagePreviewCloseButton"),
@@ -1171,7 +1181,7 @@ const elements = {
   storagePreviewArtwork: document.getElementById("storagePreviewArtwork"),
   storagePreviewArtworkFallback: document.getElementById("storagePreviewArtworkFallback"),
   storagePreviewArtworkStatus: document.getElementById("storagePreviewArtworkStatus"),
-  storagePreviewProgressFill: document.getElementById("storagePreviewProgressFill"),
+  storagePreviewSeekSlider: document.getElementById("storagePreviewSeekSlider"),
   storagePreviewProgressLabel: document.getElementById("storagePreviewProgressLabel"),
   storagePreviewVolumeSlider: document.getElementById("storagePreviewVolumeSlider"),
   storagePreviewVolumeValue: document.getElementById("storagePreviewVolumeValue"),
@@ -1631,6 +1641,8 @@ storageTab = createStorageTab({
   stopStoragePreviewPlayback,
   setVolume,
   normalizeStorageDirectoryPath,
+  request,
+  formatPlaybackClock,
 });
 
 wifiTab = createWifiTab({
@@ -1712,6 +1724,7 @@ statusRenderModule = createStatusRenderModule({
   updateMqttActionButton,
   updateStoragePreviewPlaybackControls,
   updateStorageFolderPlaybackStatus,
+  syncStoragePlaybackFromStatus,
   populateButtonActionSelects,
   renderOledPreview,
 });
@@ -5654,6 +5667,29 @@ function updateStoragePreviewPlaybackControls() {
   updateStoragePreviewProgressUi();
 }
 
+function restoreStorageLocation() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(STORAGE_LOCATION_STORAGE_KEY) || "{}");
+    const target = saved?.target === "flash" ? "flash" : "sd";
+    const directory = normalizeStorageDirectoryPath(saved?.directory || "/");
+    state.activeStorageTarget = target;
+    state.currentStoragePathByTarget[target] = directory;
+  } catch {
+    state.activeStorageTarget = "sd";
+    state.currentStoragePathByTarget.sd = "/";
+  }
+}
+
+function saveStorageLocation(target, directory) {
+  try {
+    window.localStorage.setItem(STORAGE_LOCATION_STORAGE_KEY, JSON.stringify({
+      target: resolveStorageTarget(target),
+      directory: normalizeStorageDirectoryPath(directory),
+    }));
+  } catch {
+  }
+}
+
 function updateStorageFolderPlaybackStatus(status = state.status) {
   const playingPath = storagePlaybackPathFromStatus(status);
   const entriesByPath = new Map(activeStorageEntries().map((entry) => [entry.path, entry]));
@@ -5694,15 +5730,21 @@ function updateStoragePreviewProgressUi() {
   const deviceActive = Boolean(state.storagePreviewPlaybackMode.deviceActive);
   const hasPreviewItem = Boolean(state.storagePreviewItem);
   const buffering = deviceActive && playbackState === "buffering";
-  const percent = deviceActive ? (buffering ? 42 : 100) : 0;
-
-  if (elements.storagePreviewProgressFill) {
-    elements.storagePreviewProgressFill.style.width = `${percent}%`;
+  const fileManagerActive = deviceActive && String(state.status?.playback?.source || "") === "file-manager";
+  const duration = fileManagerActive ? Math.max(0, Number(state.status?.playback?.durationSeconds || 0)) : 0;
+  const position = fileManagerActive ? Math.min(duration, Math.max(0, Number(state.status?.playback?.positionSeconds || 0))) : 0;
+  const label = `${formatPlaybackClock(position)} / ${formatPlaybackClock(duration)}`;
+  for (const slider of [elements.storageInlineSeekSlider, elements.storagePreviewSeekSlider]) {
+    if (!slider) continue;
+    slider.max = String(duration);
+    if (!state.storagePreviewPlaybackMode.seeking) slider.value = String(position);
+    slider.disabled = !fileManagerActive || duration <= 0;
   }
+  if (elements.storageInlineSeekLabel) elements.storageInlineSeekLabel.textContent = label;
   if (elements.storagePreviewProgressLabel) {
-    elements.storagePreviewProgressLabel.textContent = deviceActive
-      ? (buffering ? "Buffering on device..." : "Playing on device")
-      : (hasPreviewItem ? "Ready on device" : "00:00 / 00:00");
+    elements.storagePreviewProgressLabel.textContent = buffering && duration <= 0
+      ? "Reading track duration..."
+      : (fileManagerActive ? label : (hasPreviewItem ? "Ready on device" : label));
   }
 }
 
@@ -6087,6 +6129,43 @@ function storagePlaybackRef(path, target = state.activeStorageTarget) {
   return `${resolveStorageTarget(target)}:${normalizeStorageDirectoryPath(path)}`;
 }
 
+function syncStoragePlaybackFromStatus(status = state.status) {
+  const playback = status?.playback || {};
+  const source = String(playback.source || "");
+  const url = String(playback.url || "").replaceAll("\\", "/");
+  const match = /^(sd|flash):(\/.*)$/i.exec(url);
+  if (!source.startsWith("file-manager") || !match || !isPlaybackActive(status)) {
+    if (!isPlaybackActive(status)) state.storagePlaybackFocusUrl = "";
+    return;
+  }
+
+  const target = resolveStorageTarget(match[1].toLowerCase());
+  const path = normalizeStorageDirectoryPath(match[2]);
+  const entry = activeStorageAudioEntries(target).find((candidate) => normalizeStorageDirectoryPath(candidate.path) === path) || {
+    path,
+    name: storageBaseName(path),
+    isDirectory: false,
+    sizeBytes: 0,
+  };
+  state.activeStorageTarget = target;
+  state.storagePreviewTarget = target;
+  state.storagePreviewItem = entry;
+  setStorageSelection([path], target);
+
+  if (activeTabName() !== "storage-external" || target !== "sd") {
+    return;
+  }
+  const parent = storageParentPath(path) || "/";
+  if (state.storagePlaybackFocusUrl === url && normalizeStorageDirectoryPath(state.currentStoragePathByTarget[target] || "/") === parent) {
+    scrollStorageTrackIntoView(path);
+    return;
+  }
+  state.storagePlaybackFocusUrl = url;
+  storageTab?.openStorageManager(target, parent)
+    .then(() => scrollStorageTrackIntoView(path))
+    .catch(handleError);
+}
+
 function storagePlaybackPathFromStatus(status = state.status, target = state.activeStorageTarget) {
   const resolvedTarget = resolveStorageTarget(target);
   const playbackUrl = String(status?.playback?.url || "").replaceAll("\\", "/");
@@ -6286,7 +6365,7 @@ async function queueStoragePlayback(entry, target = state.activeStorageTarget) {
   const payload = {
     url: storagePlaybackRef(entry.path, resolvedTarget),
     label: normalizePlaybackTitle(entry.name || entry.path, entry.path),
-    type: "media",
+    type: "file-manager",
   };
 
   await request("/api/play", { method: "POST", body: JSON.stringify(payload) });
@@ -6607,6 +6686,7 @@ function renderStorageManager(payload) {
   state.storageInfoByTarget[target] = storage;
   state.currentStorageEntriesByTarget[target] = entries;
   state.currentStoragePathByTarget[target] = currentPath;
+  saveStorageLocation(target, currentPath);
   setStorageMeta(meta, target);
 
   if (elements.storageTitle) {
@@ -8921,6 +9001,7 @@ function handleError(error) {
 }
 
 resetTransientOverlays();
+restoreStorageLocation();
 state.peripheralDiagramPositions = loadPeripheralDiagramPositions();
 restorePeripheralProfileSelections();
 setupTabs();

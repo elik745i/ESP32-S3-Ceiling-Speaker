@@ -86,6 +86,31 @@ void AppState::setPlayback(const String& state, const String& type, const String
     state_.playback.url = url;
     state_.playback.source = source;
     state_.playback.volumePercent = volumePercent;
+    if (url.isEmpty()) {
+        state_.playback.positionSeconds = 0;
+        state_.playback.durationSeconds = 0;
+    }
+    unlockAppState(mutex_);
+}
+
+void AppState::markPlaybackCompleted(const String& url, const String& source) {
+    if (!ensureMutex()) {
+        return;
+    }
+    lockAppState(mutex_);
+    state_.playback.completionSequence++;
+    state_.playback.completedUrl = url;
+    state_.playback.completedSource = source;
+    unlockAppState(mutex_);
+}
+
+void AppState::setPlaybackProgress(uint32_t positionSeconds, uint32_t durationSeconds) {
+    if (!ensureMutex()) {
+        return;
+    }
+    lockAppState(mutex_);
+    state_.playback.positionSeconds = positionSeconds;
+    state_.playback.durationSeconds = durationSeconds;
     unlockAppState(mutex_);
 }
 
@@ -185,6 +210,11 @@ void AppState::toJson(JsonObject root) const {
     playback["url"] = copy.playback.url;
     playback["source"] = copy.playback.source;
     playback["volumePercent"] = copy.playback.volumePercent;
+    playback["completionSequence"] = copy.playback.completionSequence;
+    playback["completedUrl"] = copy.playback.completedUrl;
+    playback["completedSource"] = copy.playback.completedSource;
+    playback["positionSeconds"] = copy.playback.positionSeconds;
+    playback["durationSeconds"] = copy.playback.durationSeconds;
 
     JsonObject battery = root["battery"].to<JsonObject>();
     battery["voltage"] = copy.battery.voltage;

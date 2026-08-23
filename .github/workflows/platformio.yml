@@ -29,6 +29,8 @@ jobs:
         run: npm ci
       - name: Install PlatformIO
         run: pip install platformio
+      - name: Validate project version
+        run: python scripts/project_version.py
       - name: Build default environment
         run: pio run
 
@@ -64,6 +66,8 @@ jobs:
         run: npm ci
       - name: Install PlatformIO
         run: pip install platformio
+      - name: Validate release tag and firmware version
+        run: python scripts/project_version.py --tag "${{ github.event.release.tag_name }}"
       - name: Build release firmware
         run: pio run -e ${{ matrix.env }}
       - name: Stage OTA asset

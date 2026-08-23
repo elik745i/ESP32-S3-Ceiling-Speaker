@@ -22,6 +22,7 @@ void WebServerManager::begin(
     StopHandler,
     VolumeHandler,
     EqualizerHandler,
+    SeekHandler,
     OtaHandler,
     MqttHandler,
     MotorRunHandler,
@@ -903,6 +904,7 @@ void WebServerManager::begin(
     StopHandler stopHandler,
     VolumeHandler volumeHandler,
     EqualizerHandler equalizerHandler,
+    SeekHandler seekHandler,
     OtaHandler otaHandler,
     MqttHandler mqttHandler,
     MotorRunHandler motorRunHandler,
@@ -922,6 +924,7 @@ void WebServerManager::begin(
     stopHandler_ = stopHandler;
     volumeHandler_ = volumeHandler;
     equalizerHandler_ = equalizerHandler;
+    seekHandler_ = seekHandler;
     otaHandler_ = otaHandler;
     mqttHandler_ = mqttHandler;
     motorRunHandler_ = motorRunHandler;
@@ -1255,6 +1258,22 @@ void WebServerManager::registerApiRoutes() {
         });
     equalizerHandler->setMethod(HTTP_POST);
     server_.addHandler(equalizerHandler);
+
+    auto* seekHandler = new AsyncCallbackJsonWebHandler(
+        "/api/playback/seek",
+        [this](AsyncWebServerRequest* request, JsonVariant& json) {
+            if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+                return;
+            }
+            const uint32_t positionSeconds = json["positionSeconds"] | 0U;
+            if (json.isNull() || !seekHandler_ || !seekHandler_(positionSeconds)) {
+                request->send(400, "application/json", "{\"error\":\"Seeking is available only for a File Manager track that is currently playing.\"}");
+                return;
+            }
+            request->send(200, "application/json", "{\"ok\":true}");
+        });
+    seekHandler->setMethod(HTTP_POST);
+    server_.addHandler(seekHandler);
 
     server_.on("/api/stop", HTTP_POST, [this](AsyncWebServerRequest* request) {
         if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {

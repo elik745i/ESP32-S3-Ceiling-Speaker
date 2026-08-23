@@ -1138,6 +1138,10 @@
                   <input id="storageInlineVolumeSlider" type="range" min="0" max="100" step="1">
                 </label>
               </div>
+              <label class="storage-inline-seek" for="storageInlineSeekSlider">
+                <input id="storageInlineSeekSlider" type="range" min="0" max="0" step="1" value="0" disabled>
+                <span id="storageInlineSeekLabel">00:00 / 00:00</span>
+              </label>
             </section>
             <div id="storageProgressWrap" class="progress-wrap storage-progress-wrap" hidden>
               <div class="progress-bar"><div id="storageProgressFill" class="progress-fill"></div></div>
@@ -1168,7 +1172,7 @@
                 <div id="storagePreviewAlbum" class="storage-preview-album">Album art unavailable</div>
                 <div id="storagePreviewArtworkStatus" class="scan-status">Waiting for artwork lookup.</div>
                 <div class="progress-wrap storage-preview-progress-wrap">
-                  <div class="progress-bar"><div id="storagePreviewProgressFill" class="progress-fill"></div></div>
+                  <input id="storagePreviewSeekSlider" type="range" min="0" max="0" step="1" value="0" disabled aria-label="Track position">
                   <div id="storagePreviewProgressLabel" class="progress-label">00:00 / 00:00</div>
                 </div>
                 <div class="volume-card storage-preview-volume-card">
@@ -1237,6 +1241,11 @@
               <strong id="latestVersion">-</strong>
             </div>
           </div>
+          <section id="firmwareRollbackAlert" class="firmware-rollback-alert" role="status" hidden>
+            <strong id="firmwareRollbackTitle">Firmware update status</strong>
+            <span id="firmwareRollbackSummary"></span>
+            <p id="firmwareRollbackReason"></p>
+          </section>
           <div class="actions">
             <button id="checkOtaButton" type="button">Check Releases</button>
             <button id="applyOtaButton" type="button" class="secondary">Install Selected</button>

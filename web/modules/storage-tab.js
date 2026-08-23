@@ -35,6 +35,8 @@ export function createStorageTab({
   stopStoragePreviewPlayback,
   setVolume,
   normalizeStorageDirectoryPath,
+  request,
+  formatPlaybackClock,
 }) {
   async function refreshExternalStorageTab(directoryPath = state.currentStoragePathByTarget.sd || "/", options = {}) {
     const normalizedDirectoryPath = normalizeStorageDirectoryPath(directoryPath);
@@ -133,7 +135,19 @@ export function createStorageTab({
       return;
     }
     activateTabByName("storage-external");
-    await refreshExternalStorageTab(directoryPath);
+    let candidatePath = normalizeStorageDirectoryPath(directoryPath);
+    while (true) {
+      try {
+        await refreshExternalStorageTab(candidatePath);
+        return;
+      } catch (error) {
+        if (candidatePath === "/") {
+          throw error;
+        }
+        candidatePath = storageParentPath(candidatePath) || "/";
+        state.currentStoragePathByTarget.sd = candidatePath;
+      }
+    }
   }
 
   function bindEvents() {
@@ -336,6 +350,25 @@ export function createStorageTab({
     elements.storageInlineVolumeSlider?.addEventListener("change", (event) => {
       setVolume(Number(event.target.value)).catch(handleError);
     });
+    const bindSeekSlider = (slider, label) => {
+      slider?.addEventListener("input", (event) => {
+        state.storagePreviewPlaybackMode.seeking = true;
+        const position = Math.max(0, Number(event.target.value || 0));
+        const duration = Math.max(0, Number(event.target.max || 0));
+        if (label) label.textContent = `${formatPlaybackClock(position)} / ${formatPlaybackClock(duration)}`;
+      });
+      slider?.addEventListener("change", async (event) => {
+        try {
+          const positionSeconds = Math.max(0, Math.round(Number(event.target.value || 0)));
+          await request("/api/playback/seek", { method: "POST", body: JSON.stringify({ positionSeconds }) });
+          setStorageStatus(`Moved to ${formatPlaybackClock(positionSeconds)}`);
+        } finally {
+          state.storagePreviewPlaybackMode.seeking = false;
+        }
+      });
+    };
+    bindSeekSlider(elements.storageInlineSeekSlider, elements.storageInlineSeekLabel);
+    bindSeekSlider(elements.storagePreviewSeekSlider, elements.storagePreviewProgressLabel);
     elements.storagePreviewCloseButton?.addEventListener("click", () => {
       closeStoragePreview();
     });

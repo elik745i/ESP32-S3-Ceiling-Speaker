@@ -44,6 +44,7 @@ export function createStatusRenderModule({
   updateMqttActionButton,
   updateStoragePreviewPlaybackControls,
   updateStorageFolderPlaybackStatus,
+  syncStoragePlaybackFromStatus,
   populateButtonActionSelects,
   renderOledPreview,
 }) {
@@ -181,6 +182,7 @@ export function createStatusRenderModule({
   function renderStatus(status) {
     const previousStatus = state.status;
     state.status = status;
+    syncStoragePlaybackFromStatus(status);
     const previewRef = state.storagePreviewItem ? storagePlaybackRef(state.storagePreviewItem.path, state.storagePreviewTarget) : "";
     const currentPlaybackUrl = String(status?.playback?.url || "");
     const wasDeviceActive = Boolean(previewRef &&
@@ -189,8 +191,13 @@ export function createStatusRenderModule({
     const isDeviceActive = Boolean(previewRef && currentPlaybackUrl === previewRef && isPlaybackActive(status));
     state.storagePreviewPlaybackMode.previousDeviceActive = wasDeviceActive;
     state.storagePreviewPlaybackMode.deviceActive = isDeviceActive;
-    const deviceBecameIdle = !isPlaybackActive(status) && !currentPlaybackUrl;
-    if (wasDeviceActive && deviceBecameIdle && previewRef && !state.storagePreviewPlaybackMode.suppressAutoAdvance && state.storagePreviewPlaybackMode.autoplay) {
+    const completionSequence = Number(status?.playback?.completionSequence || 0);
+    const previousCompletionSequence = Number(state.storagePreviewPlaybackMode.lastCompletionSequence || 0);
+    const fileManagerTrackCompleted = completionSequence > previousCompletionSequence &&
+      String(status?.playback?.completedSource || "") === "file-manager" &&
+      String(status?.playback?.completedUrl || "") === previewRef;
+    state.storagePreviewPlaybackMode.lastCompletionSequence = Math.max(previousCompletionSequence, completionSequence);
+    if (fileManagerTrackCompleted && !state.storagePreviewPlaybackMode.suppressAutoAdvance && state.storagePreviewPlaybackMode.autoplay) {
       advanceStoragePreviewTrack(1, { autoplayDevice: true, respectModes: true }).catch(handleError);
     }
     if (!isDeviceActive && state.storagePreviewPlaybackMode.suppressAutoAdvance) {

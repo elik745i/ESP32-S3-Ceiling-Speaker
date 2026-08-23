@@ -3,6 +3,8 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <vector>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include "app_state.h"
 #include "settings_schema.h"
@@ -16,6 +18,7 @@ class OtaManager {
     void setProgressCallback(void (*callback)());
     void setRestartHandler(RestartHandler handler);
     void setRollbackState(bool pendingVerify, const String& pendingVersion, const String& rolledBackVersion, const String& rollbackReason);
+    String pendingInstallVersion() const;
     void loop();
     bool triggerCheck(bool applyAfterCheck);
     bool triggerReleaseRefresh(String& error);
@@ -69,6 +72,8 @@ class OtaManager {
     unsigned long releaseRefreshNextAttemptAtMs_ = 0;
     bool busy_ = false;
     bool releaseRefreshInProgress_ = false;
+    TaskHandle_t releaseRefreshTaskHandle_ = nullptr;
+    TaskHandle_t checkTaskHandle_ = nullptr;
     String releaseRefreshError_;
     String lastMessage_ = "idle";
     String latestVersion_;
@@ -99,6 +104,8 @@ class OtaManager {
 
     void runTask(bool applyAfterCheck);
     void runReleaseRefreshTask();
+    static void releaseRefreshTaskEntry(void* context);
+    static void checkTaskEntry(void* context);
     void runVersionTask(const String& version, const String& assetName, const String& assetUrl);
     CheckResult checkNow();
     bool fetchAvailableReleases(bool refresh, String& error);

@@ -228,6 +228,9 @@ class AudioPlayerStub {
 
     uint8_t volumePercent() const { return volume_; }
     String currentState() const { return state_; }
+    uint32_t currentPositionSeconds() const { return 0; }
+    uint32_t durationSeconds() const { return 0; }
+    bool seekStorageFile(uint32_t) { return false; }
 
     private:
     void publish() {
@@ -288,6 +291,7 @@ struct DeferredActions {
     String playLabel;
     String playType;
     String playSource;
+    uint32_t playResumePositionSeconds = 0;
 };
 
 DeferredActions* deferredActions = nullptr;
@@ -311,6 +315,7 @@ struct RuntimeAudioAutomation {
     bool resumeSavedPlaybackPending = false;
     uint8_t ambientPreviousVolume = 0;
     uint8_t previewResumeVolume = 0;
+    uint32_t previewResumePositionSeconds = 0;
     uint8_t startupEffectAttempts = 0;
     unsigned long startupEffectEligibleAt = 0;
     unsigned long resumeSavedPlaybackEligibleAt = 0;
@@ -446,6 +451,8 @@ bool playRequest(const String& url, const String& label, const String& type, con
 void flushPendingSettingsNow();
 void restoreAmbientVolumeIfNeeded();
 void applyCpuFrequencyPolicy(const AppStateSnapshot& snapshot);
+bool queuePreviewResume(const AppStateSnapshot& snapshot, const String& previewSource);
+void clearPreviewResumeState();
 
 bool isResumablePlaybackSelection(const String& url, const String& type, const String& source) {
     String normalizedUrl = url;
@@ -1321,7 +1328,9 @@ void loadRollbackState() {
         otaPendingVerification = true;
         otaBootStartedAt = millis();
         otaHealthConfirmed = false;
-        otaPendingVersion = currentVersion;
+        if (otaPendingVersion.isEmpty()) {
+            otaPendingVersion = currentVersion;
+        }
         if (pendingReason.isEmpty()) {
             pendingReason = "App booted but did not finish health confirmation.";
         }
@@ -1531,6 +1540,12 @@ bool playConfiguredEffect(const String& effectRef, const String& label, const St
         }
     }
 
+    const bool resumableExclusiveEffect = source == "effect-notification" || source == "effect-update-available" ||
+        source == "effect-low-battery";
+    if (resumableExclusiveEffect && appState != nullptr) {
+        queuePreviewResume(appState->snapshot(), source);
+    }
+
     if (source.startsWith("effect-") && source != "effect-ambient" && audioPlayer != nullptr) {
         restoreAmbientVolumeIfNeeded();
         audioPlayer->setVolumePercent(effectVolumeForSource(source));
@@ -1625,6 +1640,7 @@ void requestWebUiLockSequence() {
     runtimeAudio.webUiLockPending = true;
     runtimeAudio.pendingCommandAfterNotification = false;
     runtimeAudio.alarmActive = false;
+    clearPreviewResumeState();
     restoreAmbientVolumeIfNeeded();
 
     if (audioPlayer != nullptr) {
@@ -1645,6 +1661,7 @@ void requestRestartSequence(const String& reason, bool factoryResetAfterRestart)
     runtimeAudio.restartForceAt = millis() + kRestartEffectForceDelayMs;
     runtimeAudio.pendingCommandAfterNotification = false;
     runtimeAudio.alarmActive = false;
+    clearPreviewResumeState();
     restoreAmbientVolumeIfNeeded();
 
     if (audioPlayer != nullptr) {
@@ -1661,6 +1678,16 @@ void requestRestartSequence(const String& reason, bool factoryResetAfterRestart)
 }
 
 void handleOtaRestartRequest(const String& reason) {
+    if (reason == "ota" && otaManager != nullptr) {
+        String attemptedVersion = otaManager->pendingInstallVersion();
+        attemptedVersion.trim();
+        if (attemptedVersion.isEmpty()) {
+            attemptedVersion = "unknown firmware";
+        }
+        storeRollbackPendingInfo(
+            attemptedVersion,
+            "Firmware did not complete post-update health confirmation; the bootloader restored the previous image.");
+    }
     requestRestartSequence(reason, false);
 }
 
@@ -2017,6 +2044,7 @@ bool replayPlaybackEntry(const PlaybackHistoryEntry& entry, bool addToHistory) {
 void clearPreviewResumeState() {
     runtimeAudio.previewResumePending = false;
     runtimeAudio.previewResumeVolume = 0;
+    runtimeAudio.previewResumePositionSeconds = 0;
     runtimeAudio.previewResumeUrl = "";
     runtimeAudio.previewResumeLabel = "";
     runtimeAudio.previewResumeType = "";
@@ -2035,6 +2063,7 @@ bool queuePreviewResume(const AppStateSnapshot& snapshot, const String& previewS
 
     runtimeAudio.previewResumePending = true;
     runtimeAudio.previewResumeVolume = snapshot.playback.volumePercent;
+    runtimeAudio.previewResumePositionSeconds = snapshot.playback.positionSeconds;
     runtimeAudio.previewResumeUrl = snapshot.playback.url;
     runtimeAudio.previewResumeLabel = snapshot.playback.title;
     runtimeAudio.previewResumeType = snapshot.playback.type;
@@ -2057,6 +2086,7 @@ bool resumeQueuedPreviewPlayback() {
     const String resumeLabel = runtimeAudio.previewResumeLabel;
     const String resumeType = runtimeAudio.previewResumeType;
     const String resumeSource = runtimeAudio.previewResumeSource;
+    const uint32_t resumePositionSeconds = runtimeAudio.previewResumePositionSeconds;
 
     // Keep ambient auto-start from winning the same-loop race before the
     // queued stream/media resume is processed in the next deferred-actions pass.
@@ -2064,6 +2094,9 @@ bool resumeQueuedPreviewPlayback() {
 
     String error;
     const bool queued = playRequest(resumeUrl, resumeLabel, resumeType, resumeSource, error, false);
+    if (queued && deferredActions != nullptr) {
+        deferredActions->playResumePositionSeconds = resumePositionSeconds;
+    }
     if (!queued && !error.isEmpty()) {
         Serial.printf("[audio] preview resume skipped: %s\n", error.c_str());
     }
@@ -2750,6 +2783,7 @@ void stopAlarmPlayback() {
 
 void startAlarmPlayback() {
     runtimeAudio.alarmActive = true;
+    clearPreviewResumeState();
     restoreAmbientVolumeIfNeeded();
     if (audioPlayer != nullptr) {
         audioPlayer->stop();
@@ -3220,6 +3254,10 @@ void processDeferredActions() {
                 deferredActions->playSource);
         }
         if (started) {
+            if (deferredActions->playFromStorage && deferredActions->playResumePositionSeconds > 0) {
+                audioPlayer->seekStorageFile(deferredActions->playResumePositionSeconds);
+            }
+            deferredActions->playResumePositionSeconds = 0;
             persistResumablePlaybackSelection(
                 deferredActions->playUrl,
                 deferredActions->playLabel,
@@ -3230,6 +3268,7 @@ void processDeferredActions() {
                 appState->setLastError("");
             }
         } else if (appState != nullptr) {
+            deferredActions->playResumePositionSeconds = 0;
             if (runtimeAudio.previewResumePending && deferredActions->playSource == runtimeAudio.previewActiveSource) {
                 restoreEffectVolumeIfNeeded();
                 resumeQueuedPreviewPlayback();
@@ -3360,9 +3399,10 @@ void setup() {
         saveSettingsFromJson,
         [](const String& url, const String& label, const String& type, String& error) {
             const bool effectSelection = type.startsWith("effect-");
+            const bool fileManagerSelection = type == "file-manager";
             const bool addToHistory = !effectSelection;
-            const String source = effectSelection ? type : String("");
-            const String normalizedType = effectSelection ? String("effect") : type;
+            const String source = effectSelection ? type : (fileManagerSelection ? String("file-manager") : String(""));
+            const String normalizedType = effectSelection ? String("effect") : (fileManagerSelection ? String("media") : type);
             if (effectSelection && appState != nullptr) {
                 const AppStateSnapshot snapshot = appState->snapshot();
                 queuePreviewResume(snapshot, source);
@@ -3386,6 +3426,12 @@ void setup() {
             deferredActions->pendingEqualizerHighDb = highDb;
             deferredActions->equalizerPending = true;
             equalizerBoostUntil = millis() + 1500UL;
+        },
+        [](uint32_t positionSeconds) {
+            if (audioPlayer == nullptr || appState == nullptr || appState->snapshot().playback.source != "file-manager") {
+                return false;
+            }
+            return audioPlayer->seekStorageFile(positionSeconds);
         },
         [](bool apply) { return otaManager->triggerCheck(apply); },
         [](const String& action, String& error) {
@@ -3546,17 +3592,19 @@ void processSoundEffectTransitions(const AppStateSnapshot& snapshot) {
             setSavedPlaybackResumeAfterBoot(false);
         }
         restoreEffectVolumeIfNeeded();
-        if (runtimeAudio.previewResumePending && previousPlaybackSource == runtimeAudio.previewActiveSource) {
-            resumeQueuedPreviewPlayback();
-        } else if (runtimeAudio.pendingCommandAfterNotification) {
+        if (runtimeAudio.pendingCommandAfterNotification) {
             runtimeAudio.pendingCommandAfterNotification = false;
+            clearPreviewResumeState();
             executePlaybackCommand(runtimeAudio.pendingCommand);
         } else if (runtimeAudio.pendingAutoUpdateInstall) {
             runtimeAudio.pendingAutoUpdateInstall = false;
+            clearPreviewResumeState();
             String error;
             if (otaManager != nullptr && !snapshot.ota.latestVersion.isEmpty()) {
                 otaManager->triggerInstallVersion(snapshot.ota.latestVersion, error);
             }
+        } else if (runtimeAudio.previewResumePending && previousPlaybackSource == runtimeAudio.previewActiveSource) {
+            resumeQueuedPreviewPlayback();
         } else if (runtimeAudio.restartPending) {
             if (previousPlaybackSource == "effect-update-success") {
                 if (!playConfiguredEffectSource("effect-shutdown", "Restarting")) {
@@ -3726,7 +3774,8 @@ void serviceRuntimeAudioAutomation(const AppStateSnapshot& snapshot) {
     const uint8_t batteryPercent = estimateBatteryPercent(snapshot.battery.voltage);
     if (batteryPercent > settings->device.lowBatterySleepThresholdPercent) {
         runtimeAudio.lowBatteryCueActive = false;
-    } else if (!runtimeAudio.lowBatteryCueActive && !settings->effects.lowBatteryFile.isEmpty() && !runtimeAudio.alarmActive && !runtimeAudio.restartPending) {
+    } else if (!runtimeAudio.lowBatteryCueActive && !settings->effects.lowBatteryFile.isEmpty() && !runtimeAudio.alarmActive &&
+        !runtimeAudio.restartPending && !runtimeAudio.startupEffectPending && !runtimeAudio.startupEffectActive) {
         runtimeAudio.lowBatteryCueActive =
             tryOverlayConfiguredEffect(settings->effects.lowBatteryFile, 40, effectVolumeForSource("effect-low-battery")) ||
             playConfiguredEffectSource("effect-low-battery", "Low Battery");
@@ -3815,6 +3864,15 @@ void loop() {
     wifiManager->loop();
     serviceAudioDiagnosticTest();
     audioPlayer->loop();
+    static unsigned long lastPlaybackProgressAt = 0;
+    if (now - lastPlaybackProgressAt >= 500UL) {
+        lastPlaybackProgressAt = now;
+        const AppStateSnapshot progressSnapshot = appState->snapshot();
+        if (progressSnapshot.playback.source == "file-manager" &&
+            (progressSnapshot.playback.state == "playing" || progressSnapshot.playback.state == "buffering")) {
+            appState->setPlaybackProgress(audioPlayer->currentPositionSeconds(), audioPlayer->durationSeconds());
+        }
+    }
     pollStorageBackends();
     const bool batteryUpdated = batteryMonitor->loop(isBatterySamplingAllowed());
     otaManager->loop();

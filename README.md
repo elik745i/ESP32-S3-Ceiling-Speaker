@@ -11,14 +11,14 @@ Project story and current device write-up:
 
 ## Current Release
 
-- Firmware version: `v0.1.26`
+- Firmware version: `v0.1.27`
 - Primary release repository: `elma-iot/ELMA-IoT`
 - GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.26.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.27.bin`
 
 This version is intended to be published as a standard GitHub release using the normal OTA asset names without a prerelease suffix.
 
-### v0.1.26 highlights
+### v0.1.27 highlights
 
 - Dynamic ESP32 CPU policy: 80 MHz while idle, 160 MHz during stable playback, and 240 MHz while buffering, changing EQ filters, updating firmware, or serving access-point mode.
 - Hardware Monitor now reports the live clock rate, aggregate CPU load, and per-core CPU load instead of allowing the old adaptive estimate to drift toward a false 0%.
@@ -28,12 +28,13 @@ This version is intended to be published as a standard GitHub release using the 
 - The External Storage tab now has an inline folder player with synchronized volume, current-track highlighting, selected-track-aware Play/Stop, previous/next, shuffle, repeat, and autoplay controls.
 - Storage playback advances within the open folder and scrolls shuffled or advanced tracks into view; the upload progress bar is hidden while no transfer is running.
 - Boot audio is serialized using real decoder completion events: startup effects cannot be interrupted by remembered media or update cues, and ambient playback resumes after the configured quiet interval.
+- The Firmware tab displays persistent OTA health-check and rollback results, including the attempted firmware and the stored failure cause after the bootloader restores the previous image.
 - CPU sampling uses cache-safe IRAM FreeRTOS tick hooks, including during NVS and OTA flash operations.
 - The redundant embedded ICO favicon was removed while retaining the visually equivalent SVG favicon; all embedded SVG illustrations continue through multipass SVGO and maximum gzip compression.
 - Legacy OTA settings for `ESP32-S3-Ceiling-Speaker` migrate to `elma-iot/ELMA-IoT` even when the owner had already been updated separately.
 - OTA checks now substitute the target release version into the asset filename and default to the installed build variant, preventing version-mismatched 404s and accidental HACS-to-HACS-Slim selection.
 
-The ESP32-S3 HACS release candidate was validated on the ceiling-speaker hardware over USB and Wi-Fi: saved settings survived, Wi-Fi and MQTT reconnected, playback resumed, the playback clock settled at 160 MHz, EQ changes temporarily raised it to 240 MHz before a delayed downshift, CPU load reported per core, custom EQ gains persisted in NVS, and Stop returned to Play when only ambient audio remained.
+The ESP32-S3 HACS release candidate was validated on the ceiling-speaker hardware over USB and Wi-Fi: saved settings survived, Wi-Fi and MQTT reconnected, playback resumed, the playback clock settled at 160 MHz, EQ changes temporarily raised it to 240 MHz before a delayed downshift, CPU load reported per core, custom EQ gains persisted in NVS, Stop returned to Play when only ambient audio remained, and the Firmware tab consumed the persistent rollback fields without reporting a false failure on a healthy boot.
 
 Latest release highlights:
 
@@ -511,14 +512,14 @@ Current OTA and rollback behavior:
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.26`:
+Release asset names for `v0.1.27`:
 
-- `esp32-notifier-v0.1.26.bin`
-- `esp32-notifier-hacs-v0.1.26.bin`
-- `esp32-notifier-hacs-slim-v0.1.26.bin`
-- `esp32s3-notifier-v0.1.26.bin`
-- `esp32s3-notifier-hacs-v0.1.26.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.26.bin`
+- `esp32-notifier-v0.1.27.bin`
+- `esp32-notifier-hacs-v0.1.27.bin`
+- `esp32-notifier-hacs-slim-v0.1.27.bin`
+- `esp32s3-notifier-v0.1.27.bin`
+- `esp32s3-notifier-hacs-v0.1.27.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.27.bin`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard release variants and upload the matching OTA assets back to that release.
 
@@ -599,4 +600,11 @@ Key files and directories:
 
 Current release notes live here:
 
-- [release-assets/v0.1.26/release-notes.md](release-assets/v0.1.26/release-notes.md)
+- [release-assets/v0.1.27/release-notes.md](release-assets/v0.1.27/release-notes.md)
+- File Manager autoplay now advances from an explicit firmware completion event, so next, shuffle, and repeat remain reliable even when status polling misses the brief idle transition. Queue advancement is restricted to File Manager playback and never applies to radio, ambient audio, effects, notifications, or direct URLs.
+- File Manager playback now reports decoder position and duration and provides synchronized inline and preview seek controls that reset correctly between tracks.
+- GitHub release checks now run on a background FreeRTOS task so TLS and JSON work cannot starve the audio loop; the decoder uses a 1.25 MiB PSRAM queue with only a small SRAM fallback.
+- Startup audio now owns the decoder until natural completion; low-battery cues, update notifications, ambient resume, and saved playback wait behind it.
+- Exclusive notification/update/low-battery effects now fade out the active source, preserve local-file position, play once, and resume with a fade-in; WAV cues still use the lighter overlay/ducking path. Alarm, shutdown, and reboot effects intentionally do not resume playback.
+- The File Manager remembers its last storage target and directory across page/device restarts, falling back toward the root if the saved folder no longer exists.
+- FLAC duration is cached once after decoder startup instead of being recalculated during every status sample, removing decoder interference/clicks; live File Manager status reconstructs and focuses the playing row so progress survives reloads.

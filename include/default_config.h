@@ -114,8 +114,11 @@ constexpr uint8_t DEFAULT_VOLUME_PERCENT = 5;
 #endif
 constexpr bool DEFAULT_AUDIO_MUTED = false;
 constexpr uint8_t BUTTON_VOLUME_STEP_PERCENT = 5;
-constexpr int AUDIO_BUFFER_SIZE_RAM = 64 * 1024;
-constexpr int AUDIO_BUFFER_SIZE_PSRAM = 1024 * 1024;
+// ESP32-audioI2S allocates exactly one of these buffers: PSRAM when present,
+// otherwise the smaller internal-RAM fallback. Keep the large streaming queue
+// out of SRAM on ceiling-speaker builds.
+constexpr int AUDIO_BUFFER_SIZE_RAM = 32 * 1024;
+constexpr int AUDIO_BUFFER_SIZE_PSRAM = 1280 * 1024;
 constexpr bool LOW_BATTERY_SLEEP_ENABLED = false;
 constexpr uint8_t LOW_BATTERY_SLEEP_THRESHOLD_PERCENT = 20;
 constexpr uint16_t LOW_BATTERY_WAKE_INTERVAL_MINUTES = 15;
