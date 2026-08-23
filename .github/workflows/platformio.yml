@@ -21,6 +21,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install frontend build dependencies
+        run: npm ci
       - name: Install PlatformIO
         run: pip install platformio
       - name: Build default environment
@@ -50,6 +56,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install frontend build dependencies
+        run: npm ci
       - name: Install PlatformIO
         run: pip install platformio
       - name: Build release firmware
