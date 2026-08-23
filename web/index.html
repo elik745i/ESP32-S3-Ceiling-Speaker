@@ -67,12 +67,17 @@
           <div class="stat-label">Playback</div>
           <div class="stat-value stat-value-playback" id="audioPill">
             <div class="playback-hero-widget">
-              <div id="audioPillState" class="playback-hero-state">-</div>
-              <div id="audioPillTitle" class="playback-hero-meta">No station selected</div>
+              <div id="playbackHeroMeter" class="storage-meter playback-hero-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="No playback selected">
+                <span class="storage-meter-rail" aria-hidden="true">
+                  <span class="storage-meter-fill"></span>
+                  <span class="storage-meter-copy storage-meter-copy-base"><span class="storage-meter-marquee"><span data-playback-hero-text data-meter-primary>No playback selected</span><span data-playback-hero-text aria-hidden="true">No playback selected</span></span></span>
+                  <span class="storage-meter-contrast-clip"><span class="storage-meter-copy storage-meter-copy-contrast"><span class="storage-meter-marquee"><span data-playback-hero-text>No playback selected</span><span data-playback-hero-text aria-hidden="true">No playback selected</span></span></span></span>
+                </span>
+              </div>
               <div class="playback-hero-controls" aria-label="Playback controls">
-                <button type="button" id="playbackPrevButton" class="playback-hero-button secondary" aria-label="Previous station">&#9664;</button>
-                <button type="button" id="playbackHeroToggleButton" class="playback-hero-button" aria-label="Play">&#9654;</button>
-                <button type="button" id="playbackNextButton" class="playback-hero-button secondary" aria-label="Next station">&#9654;</button>
+                <button type="button" id="playbackPrevButton" class="playback-hero-button secondary" aria-label="Previous"><svg class="media-control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.5 4 3.5 12l9 8z"></path><path d="M20.5 4 11.5 12l9 8z"></path></svg></button>
+                <button type="button" id="playbackHeroToggleButton" class="playback-hero-button" aria-label="Play"><svg class="media-control-icon media-control-play" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 14 8-14 8z"></path></svg></button>
+                <button type="button" id="playbackNextButton" class="playback-hero-button secondary" aria-label="Next"><svg class="media-control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m11.5 4 9 8-9 8z"></path><path d="m3.5 4 9 8-9 8z"></path></svg></button>
               </div>
             </div>
           </div>
@@ -1119,9 +1124,9 @@
             <section class="storage-playback-strip" aria-label="Folder playback controls">
               <div class="storage-playback-strip-body">
                 <div class="storage-inline-actions">
-                  <button id="storageInlinePrevButton" type="button" class="secondary icon-only-button" title="Previous song" aria-label="Previous song">&#9664;</button>
-                  <button id="storageInlinePlayButton" type="button" class="icon-only-button" title="Play selected song" aria-label="Play selected song">&#9654;</button>
-                  <button id="storageInlineNextButton" type="button" class="secondary icon-only-button" title="Next song" aria-label="Next song">&#9654;</button>
+                  <button id="storageInlinePrevButton" type="button" class="secondary icon-only-button" title="Previous song; hold to rewind" aria-label="Previous song; hold to rewind"><svg class="media-control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.5 4 3.5 12l9 8z"></path><path d="M20.5 4 11.5 12l9 8z"></path></svg></button>
+                  <button id="storageInlinePlayButton" type="button" class="icon-only-button" title="Play selected song" aria-label="Play selected song"><svg class="media-control-icon media-control-play" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 14 8-14 8z"></path></svg></button>
+                  <button id="storageInlineNextButton" type="button" class="secondary icon-only-button" title="Next song; hold to fast-forward" aria-label="Next song; hold to fast-forward"><svg class="media-control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m11.5 4 9 8-9 8z"></path><path d="m3.5 4 9 8-9 8z"></path></svg></button>
                   <button id="storageInlineShuffleButton" type="button" class="secondary storage-mode-button" aria-pressed="false">Shuffle</button>
                   <button id="storageInlineRepeatButton" type="button" class="secondary storage-mode-button" aria-pressed="false">Repeat</button>
                   <button id="storageInlineAutoplayButton" type="button" class="secondary storage-mode-button" aria-pressed="true">Autoplay</button>

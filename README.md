@@ -26,7 +26,9 @@ This version is intended to be published as a standard GitHub release using the 
 - Equalizer changes use an independent real-time path, avoiding the storage remount and full settings reapply that previously interrupted or jittered active playback.
 - Play/Stop now treats the looping ambient effect as background audio, so stopping a radio station reliably changes the control back to Play.
 - The External Storage tab now has an inline folder player with synchronized volume, current-track highlighting, selected-track-aware Play/Stop, previous/next, shuffle, repeat, and autoplay controls.
-- Storage playback advances within the open folder and scrolls shuffled or advanced tracks into view; the upload progress bar is hidden while no transfer is running.
+- Folder and dashboard transport controls use aligned 3D buttons with larger Play/Stop icons and double-triangle Previous/Next icons; clicks change tracks or radio stations according to the active source, while holding seeks through local files.
+- The dashboard player embeds the track/station name in a progress meter that shows local-track position or radio buffering without redundant Playing/Stopped text.
+- Storage playback advances within the open folder and moves each newly started track to the top of the list once; current-track highlighting remains live while manual page, folder, and list scrolling is preserved until the next track starts.
 - Boot audio is serialized using real decoder completion events: startup effects cannot be interrupted by remembered media or update cues, and ambient playback resumes after the configured quiet interval.
 - The Firmware tab displays persistent OTA health-check and rollback results, including the attempted firmware and the stored failure cause after the bootloader restores the previous image.
 - CPU sampling uses cache-safe IRAM FreeRTOS tick hooks, including during NVS and OTA flash operations.
@@ -608,3 +610,5 @@ Current release notes live here:
 - Exclusive notification/update/low-battery effects now fade out the active source, preserve local-file position, play once, and resume with a fade-in; WAV cues still use the lighter overlay/ducking path. Alarm, shutdown, and reboot effects intentionally do not resume playback.
 - The File Manager remembers its last storage target and directory across page/device restarts, falling back toward the root if the saved folder no longer exists.
 - FLAC duration is cached once after decoder startup instead of being recalculated during every status sample, removing decoder interference/clicks; live File Manager status reconstructs and focuses the playing row so progress survives reloads.
+- Dashboard and File Manager transport controls now share the 3D meter styling, larger centered icons, source-aware Previous/Next behavior, and hold-to-seek for local tracks.
+- The dashboard title now lives inside its progress meter, while the playing file remains highlighted and is moved to the top only once per track change so status polling cannot fight manual scrolling.

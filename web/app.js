@@ -995,8 +995,7 @@ const elements = {
   motorHeroMeta: document.getElementById("motorHeroMeta"),
   motorHeroControls: document.getElementById("motorHeroControls"),
   audioPill: document.getElementById("audioPill"),
-  audioPillState: document.getElementById("audioPillState"),
-  audioPillTitle: document.getElementById("audioPillTitle"),
+  playbackHeroMeter: document.getElementById("playbackHeroMeter"),
   playbackPrevButton: document.getElementById("playbackPrevButton"),
   playbackHeroToggleButton: document.getElementById("playbackHeroToggleButton"),
   playbackNextButton: document.getElementById("playbackNextButton"),
@@ -1676,6 +1675,8 @@ playbackStatusModule = createPlaybackStatusModule({
   isPlaybackActive: isForegroundPlaybackActive,
   toast,
   applySelectedRadioStation: (options = {}) => radioBrowserModule?.applySelectedRadioStation(options),
+  isFileManagerPlayback: () => isFileManagerPlayback(),
+  canStepFileManagerPlayback: () => activeStorageAudioEntries().length > 1 && Boolean(currentStoragePlayingEntry() || state.storagePreviewItem),
 });
 
 statusRenderModule = createStatusRenderModule({
@@ -1728,6 +1729,8 @@ statusRenderModule = createStatusRenderModule({
   populateButtonActionSelects,
   renderOledPreview,
   updateStorageVolumeMeter,
+  updateStorageMeter,
+  formatPlaybackClock,
 });
 
 deviceTab.bindEvents();
@@ -5645,7 +5648,14 @@ function updateStoragePreviewPlaybackControls() {
   const activeEntryPlaying = Boolean(playingEntry && isPlaybackActive(state.status));
   const canStep = audioEntries.length > 1 && Boolean(playingEntry || state.storagePreviewItem);
   if (elements.storageInlinePlayButton) {
-    elements.storageInlinePlayButton.textContent = activeEntryPlaying ? "■" : "▶";
+    const iconState = activeEntryPlaying ? "stop" : "play";
+    if (elements.storageInlinePlayButton.dataset.iconState !== iconState) {
+      elements.storageInlinePlayButton.dataset.iconState = iconState;
+      elements.storageInlinePlayButton.innerHTML = activeEntryPlaying
+        ? '<svg class="media-control-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"></rect></svg>'
+        : '<svg class="media-control-icon media-control-play" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 14 8-14 8z"></path></svg>';
+    }
+    elements.storageInlinePlayButton.classList.toggle("playing", activeEntryPlaying);
     elements.storageInlinePlayButton.disabled = !actionableEntry;
     elements.storageInlinePlayButton.title = activeEntryPlaying ? "Stop this song" : "Play selected song";
     elements.storageInlinePlayButton.setAttribute("aria-label", elements.storageInlinePlayButton.title);
@@ -6171,8 +6181,7 @@ function syncStoragePlaybackFromStatus(status = state.status) {
     return;
   }
   const parent = storageParentPath(path) || "/";
-  if (state.storagePlaybackFocusUrl === url && normalizeStorageDirectoryPath(state.currentStoragePathByTarget[target] || "/") === parent) {
-    scrollStorageTrackIntoView(path);
+  if (state.storagePlaybackFocusUrl === url) {
     return;
   }
   state.storagePlaybackFocusUrl = url;
@@ -6204,13 +6213,100 @@ function storageEntryIsPlaying(entry, target = state.activeStorageTarget, status
   return storagePlaybackRef(entry.path, target) === String(status?.playback?.url || "");
 }
 
+function isFileManagerPlayback(status = state.status) {
+  return isForegroundPlaybackActive(status) && String(status?.playback?.source || "") === "file-manager";
+}
+
+function prepareFolderPlaybackQueue() {
+  const playingEntry = currentStoragePlayingEntry();
+  if (playingEntry) {
+    state.storagePreviewItem = playingEntry;
+    state.storagePreviewTarget = state.activeStorageTarget;
+  }
+}
+
+async function stepFolderPlayback(delta) {
+  prepareFolderPlaybackQueue();
+  await advanceStoragePreviewTrack(delta, {
+    autoplayDevice: true,
+    respectModes: true,
+    showPreview: false,
+  });
+}
+
+async function stepContextPlayback(delta) {
+  if (isFileManagerPlayback()) {
+    await stepFolderPlayback(delta);
+    return;
+  }
+  await stepRadioStationSelection(delta);
+}
+
+async function seekFileManagerPlayback(deltaSeconds) {
+  if (!isFileManagerPlayback() || state.storagePreviewPlaybackMode.seeking) return;
+  const playback = state.status?.playback || {};
+  const duration = Math.max(0, Number(playback.durationSeconds || 0));
+  if (duration <= 0) return;
+  const positionSeconds = Math.min(duration, Math.max(0, Math.round(Number(playback.positionSeconds || 0) + deltaSeconds)));
+  state.storagePreviewPlaybackMode.seeking = true;
+  try {
+    await request("/api/playback/seek", { method: "POST", body: JSON.stringify({ positionSeconds }) });
+    playback.positionSeconds = positionSeconds;
+    updateStoragePreviewProgressUi();
+  } finally {
+    state.storagePreviewPlaybackMode.seeking = false;
+  }
+}
+
+function bindPlaybackStepButton(button, delta, clickAction) {
+  if (!button) return;
+  let holdTimer = 0;
+  let repeatTimer = 0;
+  let suppressNextClick = false;
+
+  const stopHolding = () => {
+    window.clearTimeout(holdTimer);
+    window.clearInterval(repeatTimer);
+    holdTimer = 0;
+    repeatTimer = 0;
+    button.classList.remove("holding");
+  };
+
+  button.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || button.disabled || !isFileManagerPlayback()) return;
+    holdTimer = window.setTimeout(() => {
+      suppressNextClick = true;
+      button.classList.add("holding");
+      seekFileManagerPlayback(delta * 10).catch(handleError);
+      repeatTimer = window.setInterval(() => seekFileManagerPlayback(delta * 10).catch(handleError), 320);
+    }, 440);
+  });
+  button.addEventListener("pointerup", stopHolding);
+  button.addEventListener("pointercancel", stopHolding);
+  button.addEventListener("pointerleave", (event) => {
+    if (event.buttons) stopHolding();
+  });
+  button.addEventListener("click", (event) => {
+    if (suppressNextClick) {
+      suppressNextClick = false;
+      event.preventDefault();
+      return;
+    }
+    clickAction().catch(handleError);
+  });
+}
+
 function scrollStorageTrackIntoView(path, behavior = "smooth") {
   if (!path || !elements.storageFileList) {
     return;
   }
   const row = [...elements.storageFileList.querySelectorAll(".storage-file-row")]
     .find((candidate) => candidate.dataset.storagePath === path);
-  row?.scrollIntoView({ block: "nearest", behavior });
+  if (!row) return;
+  const listRect = elements.storageFileList.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  const targetTop = elements.storageFileList.scrollTop + rowRect.top - listRect.top - 4;
+  elements.storageFileList.scrollTo({ top: Math.max(0, targetTop), behavior });
 }
 
 function renderStorageBreadcrumbs(currentPath) {
@@ -6406,8 +6502,6 @@ async function queueStoragePlayback(entry, target = state.activeStorageTarget) {
   }
 
   updateStorageFolderPlaybackStatus();
-  scrollStorageTrackIntoView(entry.path);
-
   return started;
 }
 
@@ -6612,7 +6706,6 @@ async function advanceStoragePreviewTrack(delta, options = {}) {
   const currentIndex = currentStoragePreviewQueueIndex();
   if (currentIndex < 0) {
     await activateStoragePreviewEntry(entries[0], { autoplayDevice, showPreview });
-    scrollStorageTrackIntoView(entries[0].path);
     return;
   }
 
@@ -6643,7 +6736,6 @@ async function advanceStoragePreviewTrack(delta, options = {}) {
   }
 
   await activateStoragePreviewEntry(entries[nextIndex], { autoplayDevice, showPreview });
-  scrollStorageTrackIntoView(entries[nextIndex].path);
 }
 
 async function openStoragePreview(entry) {
@@ -8677,6 +8769,11 @@ async function handlePlaybackAction() {
     return;
   }
 
+  if (String(state.status?.playback?.source || "") === "file-manager" && state.storagePreviewItem) {
+    await queueStoragePlayback(state.storagePreviewItem, state.storagePreviewTarget);
+    return;
+  }
+
   if (!elements.playForm.reportValidity()) {
     return;
   }
@@ -8777,9 +8874,11 @@ async function triggerDisplay() {
   await displayTab?.triggerDisplay();
 }
 
-elements.playbackPrevButton?.addEventListener("click", () => stepRadioStationSelection(-1).catch(handleError));
+bindPlaybackStepButton(elements.playbackPrevButton, -1, () => stepContextPlayback(-1));
 elements.playbackHeroToggleButton?.addEventListener("click", () => handlePlaybackAction().catch(handleError));
-elements.playbackNextButton?.addEventListener("click", () => stepRadioStationSelection(1).catch(handleError));
+bindPlaybackStepButton(elements.playbackNextButton, 1, () => stepContextPlayback(1));
+bindPlaybackStepButton(elements.storageInlinePrevButton, -1, () => stepFolderPlayback(-1));
+bindPlaybackStepButton(elements.storageInlineNextButton, 1, () => stepFolderPlayback(1));
 elements.playbackActionButton?.addEventListener("click", () => handlePlaybackAction().catch(handleError));
 document.getElementById("copyUrlButton").addEventListener("click", () => copyCurrentUrl().catch(handleError));
 document.getElementById("checkOtaButton").addEventListener("click", () => checkOta().catch(handleError));

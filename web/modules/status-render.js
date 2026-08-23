@@ -48,6 +48,8 @@ export function createStatusRenderModule({
   populateButtonActionSelects,
   renderOledPreview,
   updateStorageVolumeMeter,
+  updateStorageMeter,
+  formatPlaybackClock,
 }) {
   function estimateBatteryPercent(voltage) {
     const numericVoltage = Number(voltage || 0);
@@ -165,18 +167,31 @@ export function createStatusRenderModule({
   }
 
   function renderPlaybackHero(status, audioMuted) {
-    if (!elements.audioPill || !elements.audioPillState || !elements.audioPillTitle) {
+    if (!elements.audioPill || !elements.playbackHeroMeter) {
       return;
     }
 
-    const playbackState = audioMuted ? "Muted" : String(status?.playback?.state || "idle");
-    const tone = audioMuted ? "warn" : (isPlaybackActive(status) ? "ok" : "warn");
+    const playback = status?.playback || {};
+    const playbackState = String(playback.state || "idle").toLowerCase();
+    const active = !audioMuted && isPlaybackActive(status);
+    const fileManagerActive = active && String(playback.source || "") === "file-manager";
+    const duration = fileManagerActive ? Math.max(0, Number(playback.durationSeconds || 0)) : 0;
+    const position = fileManagerActive ? Math.min(duration, Math.max(0, Number(playback.positionSeconds || 0))) : 0;
+    const title = audioMuted ? "Muted" : currentPlaybackHeroTitle(status);
+    const label = fileManagerActive
+      ? `${title} · ${formatPlaybackClock(position)} / ${formatPlaybackClock(duration)}`
+      : title;
+    const buffering = !audioMuted && playbackState === "buffering";
+    const progress = fileManagerActive && duration > 0
+      ? (position / duration) * 100
+      : (buffering ? 38 : (active ? 100 : 0));
 
     elements.audioPill.className = "stat-value stat-value-playback";
-    elements.audioPillState.textContent = playbackState;
-    elements.audioPillState.className = `playback-hero-state ${tone}`;
-    elements.audioPillTitle.textContent = currentPlaybackHeroTitle(status);
-    elements.audioPillTitle.title = elements.audioPillTitle.textContent;
+    elements.playbackHeroMeter.classList.toggle("is-buffering", buffering);
+    elements.playbackHeroMeter.setAttribute("aria-valuenow", String(Math.round(progress)));
+    elements.playbackHeroMeter.setAttribute("aria-label", label);
+    elements.playbackHeroMeter.title = label;
+    updateStorageMeter(elements.playbackHeroMeter, "[data-playback-hero-text]", label, progress);
     updatePlaybackHeroControls();
   }
 

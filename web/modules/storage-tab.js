@@ -320,21 +320,6 @@ export function createStorageTab({
         ? stopStoragePreviewPlayback()
         : queueStoragePlayback(entry, state.activeStorageTarget)).catch(handleError);
     });
-    const prepareInlineQueue = () => {
-      const playingEntry = currentStoragePlayingEntry();
-      if (playingEntry) {
-        state.storagePreviewItem = playingEntry;
-        state.storagePreviewTarget = state.activeStorageTarget;
-      }
-    };
-    elements.storageInlinePrevButton?.addEventListener("click", () => {
-      prepareInlineQueue();
-      advanceStoragePreviewTrack(-1, { autoplayDevice: true, respectModes: true, showPreview: false }).catch(handleError);
-    });
-    elements.storageInlineNextButton?.addEventListener("click", () => {
-      prepareInlineQueue();
-      advanceStoragePreviewTrack(1, { autoplayDevice: true, respectModes: true, showPreview: false }).catch(handleError);
-    });
     elements.storageInlineShuffleButton?.addEventListener("click", () => {
       state.storagePreviewPlaybackMode.shuffle = !state.storagePreviewPlaybackMode.shuffle;
       updateStoragePreviewPlaybackControls();

@@ -14,6 +14,10 @@ ESP32 Notifier v0.1.27
 - Remembered the last File Manager target and directory across reloads/reboots, with automatic parent/root fallback when a saved folder disappears.
 - Cached FLAC duration once per track to avoid decoder-state polling clicks, and reconstructed/focused the live playing file after reload so its progress bar continues from firmware status.
 - Redesigned the File Manager player with smooth 3D track and volume meters, contrast-aware embedded labels, overflow marquees, and a reliable global Play/Stop toggle.
+- Restyled the folder and dashboard transport controls as aligned 3D buttons with larger centered Play/Stop icons and double-triangle Previous/Next icons.
+- Previous/Next now follow the active source: folder playback advances within its folder, radio playback changes stations, and holding the controls seeks through local tracks in ten-second steps.
+- Replaced the dashboard playback status text with a compact title-in-progress meter that reports track position or radio buffering without redundant Playing/Stopped labels.
+- Kept the active File Manager row highlighted while moving it to the top only when the track changes; manual page, folder, and list scrolling is no longer overridden by repeated status polling.
 - Retained v0.1.26 dynamic CPU scaling, live per-core load and clock monitoring, persistent real-time EQ, serialized boot audio, optimized embedded SVG assets, folder playback controls, and exact OTA variant selection.
 
 Hardware validation:

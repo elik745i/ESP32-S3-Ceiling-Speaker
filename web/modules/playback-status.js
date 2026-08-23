@@ -5,7 +5,12 @@ export function createPlaybackStatusModule({
   isPlaybackActive,
   toast,
   applySelectedRadioStation,
+  isFileManagerPlayback,
+  canStepFileManagerPlayback,
 }) {
+  const playIcon = '<svg class="media-control-icon media-control-play" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 14 8-14 8z"></path></svg>';
+  const stopIcon = '<svg class="media-control-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"></rect></svg>';
+
   function selectedRadioStation() {
     const selectedIndex = Number(elements.radioStationSelect?.value ?? -1);
     if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= state.radioStations.length) {
@@ -37,17 +42,27 @@ export function createPlaybackStatusModule({
     const audioEnabled = Boolean(state.status?.firmware?.audioEnabled);
     const playbackActive = isPlaybackActive();
     const busy = Boolean(state.playbackActionInProgress);
+    const fileManagerActive = Boolean(isFileManagerPlayback?.());
     const stationStepReady = audioEnabled && state.radioStations.length > 0 && !elements.radioStationSelect?.disabled && !busy;
-    const hasSelection = playbackActive || Boolean(String(elements.playUrl?.value || "").trim());
+    const fileStepReady = audioEnabled && Boolean(canStepFileManagerPlayback?.()) && !busy;
+    const stepReady = fileManagerActive ? fileStepReady : stationStepReady;
+    const lastSourceWasFileManager = String(state.status?.playback?.source || "") === "file-manager";
+    const hasSelection = playbackActive || lastSourceWasFileManager || Boolean(String(elements.playUrl?.value || "").trim());
 
     if (elements.playbackPrevButton) {
-      elements.playbackPrevButton.disabled = !stationStepReady;
-      elements.playbackPrevButton.title = stationStepReady ? "Previous station" : "Load a station list first";
+      elements.playbackPrevButton.disabled = !stepReady;
+      elements.playbackPrevButton.title = fileManagerActive
+        ? (stepReady ? "Previous song; hold to rewind" : "No previous song available")
+        : (stepReady ? "Previous station" : "Load a station list first");
+      elements.playbackPrevButton.setAttribute("aria-label", elements.playbackPrevButton.title);
     }
 
     if (elements.playbackNextButton) {
-      elements.playbackNextButton.disabled = !stationStepReady;
-      elements.playbackNextButton.title = stationStepReady ? "Next station" : "Load a station list first";
+      elements.playbackNextButton.disabled = !stepReady;
+      elements.playbackNextButton.title = fileManagerActive
+        ? (stepReady ? "Next song; hold to fast-forward" : "No next song available")
+        : (stepReady ? "Next station" : "Load a station list first");
+      elements.playbackNextButton.setAttribute("aria-label", elements.playbackNextButton.title);
     }
 
     if (!elements.playbackHeroToggleButton) {
@@ -58,7 +73,7 @@ export function createPlaybackStatusModule({
     button.classList.toggle("playing", playbackActive && !busy);
 
     if (state.playbackActionInProgress === "play") {
-      button.textContent = "...";
+      button.textContent = "…";
       button.disabled = true;
       button.title = "Starting playback";
       button.setAttribute("aria-label", "Starting playback");
@@ -66,17 +81,18 @@ export function createPlaybackStatusModule({
     }
 
     if (state.playbackActionInProgress === "stop") {
-      button.textContent = "...";
+      button.textContent = "…";
       button.disabled = true;
       button.title = "Stopping playback";
       button.setAttribute("aria-label", "Stopping playback");
       return;
     }
 
-    button.textContent = playbackActive ? "■" : "▶";
+    button.innerHTML = playbackActive ? stopIcon : playIcon;
     button.disabled = !audioEnabled || (!playbackActive && !hasSelection);
-    button.title = playbackActive ? "Stop playback" : "Play selected station";
-    button.setAttribute("aria-label", playbackActive ? "Stop playback" : "Play selected station");
+    const playTitle = lastSourceWasFileManager ? "Play selected song" : "Play selected station";
+    button.title = playbackActive ? "Stop playback" : playTitle;
+    button.setAttribute("aria-label", playbackActive ? "Stop playback" : playTitle);
   }
 
   async function stepRadioStationSelection(delta) {
