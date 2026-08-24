@@ -272,7 +272,9 @@ export function createDisplayTab({
       state.peripheralDisplayProfiles = normalizedPeripheralDisplayProfiles();
       state.peripheralDisplayProfiles[0] = String(elements.peripheralDisplayProfile?.value || "none");
       renderPeripheralDisplayControls();
-      syncPeripheralBindingGroups();
+      // The profile select still owns focus during this event. Force the GPIO
+      // binding refresh so I2C OLED fields appear immediately.
+      syncPeripheralBindingGroups({ force: true });
       renderPeripheralDiagram();
       syncGpioMappingControls();
       savePeripheralProfileSelections();

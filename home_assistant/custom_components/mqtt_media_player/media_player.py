@@ -51,6 +51,9 @@ class MQTTMediaPlayer(MediaPlayerEntity):
         """Handle incoming configuration from MQTT."""
         if not message.payload or message.payload.strip() == "":
             _LOGGER.info("Received empty config payload - device removed")
+            self._available = False
+            self._state = None
+            self.async_write_ha_state()
             return
 
         try:

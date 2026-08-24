@@ -1923,7 +1923,6 @@ function updateConfiguredFeatureVisibility() {
     batteryStat.hidden = !batteryConfigured;
   }
 
-  restoreSavedActiveTabIfVisible();
 }
 
 function normalizedPeripheralSensorProfiles() {
@@ -1974,6 +1973,15 @@ function normalizedPeripheralInputProfiles() {
     .map((value) => String(value || "none").trim() || "none")
     .slice(0, MAX_PERIPHERAL_INPUTS);
   return sanitizedProfiles.length ? sanitizedProfiles : ["none"];
+}
+
+function isTouchPeripheralInputProfile(profileValue) {
+  const profile = String(profileValue || "none").trim().toLowerCase();
+  return profile === "ttp223-touch-button" || profile === "esp32-native-touch-pad";
+}
+
+function factoryResetTouchInputIndex() {
+  return normalizedPeripheralInputProfiles().findIndex(isTouchPeripheralInputProfile);
 }
 
 function normalizedPeripheralStorageProfiles() {
@@ -2180,6 +2188,9 @@ function peripheralHelperBindingValue(groupKey, index, signalLabel) {
 
 function helperBindingDisplayLabel(groupKey, signalLabel) {
   const normalizedSignal = String(signalLabel || "").trim().toUpperCase();
+  if (groupKey === "input" && normalizedSignal === "SIG") {
+    return "GPIO";
+  }
   if (groupKey === "power") {
     if (normalizedSignal === "INPUT_VOLTAGE") {
       return "Input Voltage";
@@ -2451,9 +2462,10 @@ function motorUnsafePins(boardProfile = activeGpioBoardProfile()) {
 }
 
 function helperBindingSignalOptionsFor(groupKey, index, signalLabel) {
+  const normalizedSignal = String(signalLabel || "").trim().toUpperCase();
+  const profileValue = peripheralHelperProfileValue(groupKey, index, state.settings || {});
+
   if (groupKey === "power") {
-    const normalizedSignal = String(signalLabel || "").trim().toUpperCase();
-    const profileValue = peripheralHelperProfileValue(groupKey, index, state.settings || {});
     if (normalizedSignal === "INPUT_VOLTAGE") {
       return powerVoltageOptions(profileValue, normalizedSignal);
     }
@@ -2463,7 +2475,14 @@ function helperBindingSignalOptionsFor(groupKey, index, signalLabel) {
     }
   }
 
-  if (groupKey === "input" && String(signalLabel || "").trim().toUpperCase() === "MAIN_CONTROL") {
+  if (groupKey === "sensor" && normalizedSignal === "GPIO" && String(profileValue).trim().toLowerCase() === BATTERY_DIVIDER_SENSOR_PROFILE) {
+    populateBatteryAdcPinOptions(state.settings);
+    return [...(elements.batteryAdcPin?.options || [])]
+      .filter((option) => Number(option.value) > 0)
+      .map((option) => ({ value: String(option.value), label: String(option.textContent || `GPIO${option.value}`) }));
+  }
+
+  if (groupKey === "input" && normalizedSignal === "MAIN_CONTROL") {
     return [
       { value: "", label: "None" },
       { value: "1", label: "Use as main control" },
@@ -2486,7 +2505,6 @@ function helperBindingSignalOptionsFor(groupKey, index, signalLabel) {
 
   const options = [];
   const roleMap = gpioRoleMap(state.settings, state.status);
-  const profileValue = peripheralHelperProfileValue(groupKey, index, state.settings || {});
   const touchSignal = groupKey === "input"
     && String(signalLabel || "").trim().toUpperCase() === "TOUCH"
     && String(profileValue || "none").trim().toLowerCase().includes("esp32-native-touch-pad");
@@ -2528,7 +2546,7 @@ function helperSignalLabels(groupKey, profileValue) {
   }
 
   if (groupKey === "input" && profile.includes("ttp223-touch-button")) {
-    return ["MAIN_CONTROL"];
+    return ["SIG", "MAIN_CONTROL"];
   }
 
   if (groupKey === "input" && profile.includes("limit-switch")) {
@@ -2912,13 +2930,29 @@ function buildPeripheralProfileComposite(groupKey, selectedValue, index, select,
     peripheralDynamicFieldId(groupKey, index, "profile"),
     peripheralDynamicFieldName(groupKey, index, "profile"),
   );
-  if (rowLabel) {
-    const label = document.createElement("div");
-    label.className = "peripheral-profile-index-label";
-    label.id = `${select.id}-label`;
-    label.textContent = rowLabel;
-    stack.appendChild(label);
-    select.setAttribute("aria-labelledby", label.id);
+  const marksFactoryResetTouch = groupKey === "input"
+    && isTouchPeripheralInputProfile(selectedValue)
+    && index === factoryResetTouchInputIndex();
+  if (rowLabel || marksFactoryResetTouch) {
+    const heading = document.createElement("div");
+    heading.className = "peripheral-profile-heading";
+    if (rowLabel) {
+      const label = document.createElement("div");
+      label.className = "peripheral-profile-index-label";
+      label.id = `${select.id}-label`;
+      label.textContent = rowLabel;
+      heading.appendChild(label);
+      select.setAttribute("aria-labelledby", label.id);
+    }
+    if (marksFactoryResetTouch) {
+      const marker = document.createElement("span");
+      marker.className = "peripheral-factory-reset-marker";
+      marker.textContent = "10s factory reset";
+      marker.title = "This is the factory-reset touch input. Touch and hold it for 10 seconds to factory reset the device.";
+      marker.setAttribute("aria-label", marker.title);
+      heading.appendChild(marker);
+    }
+    stack.appendChild(heading);
   }
 
   const composite = document.createElement("div");
@@ -3025,8 +3059,9 @@ function renderPeripheralBindingGroup(container, groupKey) {
   }
 }
 
-function syncPeripheralBindingGroups() {
-  if (isPeripheralUiInteracting()) {
+function syncPeripheralBindingGroups(options = {}) {
+  const force = Boolean(options.force);
+  if (!force && isPeripheralUiInteracting()) {
     return;
   }
   state.peripheralAudioProfiles = normalizedPeripheralAudioProfiles();
@@ -4299,7 +4334,19 @@ function defaultButtonActionForField(fieldName) {
   return fieldName === "device.button1Action" ? "previous" : "next";
 }
 
+function primaryAudioOutputUsesI2s() {
+  const profile = String(
+    elements.peripheralAudioProfile?.value
+    || normalizedPeripheralAudioProfiles()[0]
+    || "none",
+  ).trim().toLowerCase();
+  return profile.includes("i2s") || profile.includes("audio-codec");
+}
+
 function currentI2sPins() {
+  if (!primaryAudioOutputUsesI2s()) {
+    return [];
+  }
   return [
     Number(elements.audioWsPin?.value || state.settings?.audio?.wsPin || 0),
     Number(elements.audioBclkPin?.value || state.settings?.audio?.bclkPin || 0),

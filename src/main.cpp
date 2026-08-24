@@ -361,6 +361,7 @@ struct PhysicalButtonState {
     bool nativeTouch = false;
     bool touchSupported = false;
     bool mainControlEnabled = false;
+    bool factoryResetTouch = false;
     uint8_t sensitivityPercent = 55;
     uint16_t touchRawValue = 0;
     uint16_t touchBaselineValue = 0;
@@ -1223,7 +1224,7 @@ void triggerTouchHoldFactoryReset(PhysicalButtonState& button) {
 
 void serviceTouchHoldFactoryReset(PhysicalButtonState& button, unsigned long now) {
     if (settings == nullptr || !settings->device.touchHoldFactoryResetEnabled ||
-        !button.mainControlEnabled ||
+        !button.factoryResetTouch ||
         !isTouchButtonProfileValue(button.profileValue) || !button.stablePressed || button.pressedSinceAt == 0 ||
         rebootRequested || factoryResetRequested || button.holdResetTriggered) {
         return;
@@ -1784,6 +1785,15 @@ int resolveMainControlInputIndex() {
     return -1;
 }
 
+int resolveFirstTouchInputIndex() {
+    for (size_t index = 0; index < kMaxPeripheralInputProfiles; ++index) {
+        if (isTouchButtonProfileValue(peripheralInputProfileFromUi(index))) {
+            return static_cast<int>(index);
+        }
+    }
+    return -1;
+}
+
 int resolveSecondaryInputIndex(int excludedIndex, int fallbackIndex) {
     for (size_t index = 0; index < kMaxPeripheralInputProfiles; ++index) {
         if (static_cast<int>(index) == excludedIndex) {
@@ -1975,10 +1985,15 @@ void initializeButtons() {
     button1.controlSlot = 0;
     button2.controlSlot = 1;
     const int mainControlIndex = resolveMainControlInputIndex();
+    const int factoryResetTouchIndex = resolveFirstTouchInputIndex();
     const int primaryIndex = mainControlIndex >= 0 ? mainControlIndex : 0;
-    const int secondaryIndex = resolveSecondaryInputIndex(primaryIndex, 1);
+    const int secondaryIndex = factoryResetTouchIndex >= 0 && factoryResetTouchIndex != primaryIndex
+        ? factoryResetTouchIndex
+        : resolveSecondaryInputIndex(primaryIndex, 1);
     applyButtonProfileConfig(button1, static_cast<size_t>(primaryIndex), defaultButton1Pin);
     applyButtonProfileConfig(button2, static_cast<size_t>(secondaryIndex), defaultButton2Pin);
+    button1.factoryResetTouch = button1.configuredIndex == factoryResetTouchIndex;
+    button2.factoryResetTouch = button2.configuredIndex == factoryResetTouchIndex;
 
     if (isPhysicalButtonEnabled(button1)) {
         if (button1.touchSupported) {

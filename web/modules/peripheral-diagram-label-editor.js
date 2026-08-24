@@ -637,6 +637,16 @@ export function createPeripheralDiagramLabelEditorModule({
     removeButton.disabled = false;
   }
 
+  function syncActiveLabelSelection() {
+    elements.peripheralDiagramLabelEditorLabels
+      ?.querySelectorAll(".peripheral-diagram-editor-label[data-editor-label]")
+      .forEach((labelElement) => {
+        const selected = String(labelElement.dataset.editorLabel || "") === activeLabelId;
+        labelElement.classList.toggle("is-active-edit", selected);
+        labelElement.setAttribute("aria-pressed", String(selected));
+      });
+  }
+
   function renderEditorLabels() {
     const stage = elements.peripheralDiagramLabelEditorStage;
     const layer = elements.peripheralDiagramLabelEditorLabels;
@@ -673,6 +683,7 @@ export function createPeripheralDiagramLabelEditorModule({
           data-editor-label="${label.id}"
           style="left:${center.x}px; top:${center.y}px; transform:${transform}; background:${palette.badge}; color:${palette.text};"
           aria-label="${safeLabel} label"
+          aria-pressed="${activeLabelId === label.id}"
           title="Drag to reposition ${safeLabel}"
         >
           <span class="peripheral-diagram-editor-label-text">${safeLabel}</span>
@@ -857,6 +868,7 @@ export function createPeripheralDiagramLabelEditorModule({
     const labelRect = labelElement.getBoundingClientRect();
     dragState.labelId = String(labelElement.dataset.editorLabel || "");
     activeLabelId = dragState.labelId;
+    syncActiveLabelSelection();
     dragState.pointerId = event.pointerId;
     dragState.offsetX = event.clientX - (labelRect.left + (labelRect.width / 2));
     dragState.offsetY = event.clientY - (labelRect.top + (labelRect.height / 2));
@@ -933,6 +945,7 @@ export function createPeripheralDiagramLabelEditorModule({
     const labelElement = labelElementFromEventTarget(event.target);
     if (labelElement) {
       activeLabelId = String(labelElement.dataset.editorLabel || "");
+      syncActiveLabelSelection();
       renderInspector();
     }
   }

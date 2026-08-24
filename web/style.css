@@ -1932,6 +1932,31 @@ body {
     color: var(--muted);
   }
 
+  .peripheral-profile-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 20px;
+  }
+
+  .peripheral-factory-reset-marker {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    padding: 3px 7px;
+    border: 1px solid #f59e0b;
+    border-radius: 999px;
+    background: #fffbeb;
+    color: #92400e;
+    font-size: 0.64rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    line-height: 1;
+    text-transform: uppercase;
+    cursor: help;
+  }
+
   .peripheral-profile-action {
     display: inline-flex;
     align-items: center;
@@ -4059,6 +4084,7 @@ body {
     touch-action: none;
     white-space: nowrap;
     z-index: 4;
+    transition: opacity 140ms ease, filter 140ms ease, box-shadow 140ms ease, outline-color 140ms ease;
   }
 
   .peripheral-diagram-editor-label.is-dragging {
@@ -4067,8 +4093,11 @@ body {
   }
 
   .peripheral-diagram-editor-label.is-active-edit {
-    box-shadow: 0 18px 34px rgba(15, 23, 42, 0.28);
-    outline: 2px solid rgba(255, 255, 255, 0.65);
+    opacity: 0.52;
+    filter: grayscale(0.55) saturate(0.5);
+    box-shadow: 0 18px 34px rgba(15, 23, 42, 0.34);
+    outline: 3px solid rgba(15, 23, 42, 0.7);
+    outline-offset: 2px;
   }
 
   .peripheral-diagram-editor-label-text {

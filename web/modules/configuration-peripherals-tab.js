@@ -415,7 +415,9 @@ export function createConfigurationPeripheralsTab({
           state.peripheralAudioInProfiles[0] = String(elements.peripheralAudioInProfile?.value || "none");
           renderPeripheralAudioInControls();
         }
-        syncPeripheralBindingGroups();
+        // This change fires while the profile select still owns focus. Force the
+        // binding refresh so an I2S profile immediately exposes WS/BCLK/DOUT.
+        syncPeripheralBindingGroups({ force: true });
         renderPeripheralDiagram();
         syncGpioMappingControls();
         savePeripheralProfileSelections();
@@ -969,6 +971,8 @@ export function createConfigurationPeripheralsTab({
         }
         definition.element.value = String(target.value || definition.element.value || "");
         syncGpioMappingControls();
+        syncPeripheralBindingGroups({ force: true });
+        renderPeripheralDiagram();
         queueSettingsSave(150);
       });
     }
