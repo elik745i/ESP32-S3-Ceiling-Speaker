@@ -11,14 +11,14 @@ Project story and current device write-up:
 
 ## Current Release
 
-- Firmware version: `v0.1.27`
+- Firmware version: `v0.1.28`
 - Primary release repository: `elma-iot/ELMA-IoT`
 - GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.27.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.28.bin`
 
-This version is intended to be published as a standard GitHub release using the normal OTA asset names without a prerelease suffix.
+This is the active development version for the next standard GitHub release.
 
-### v0.1.27 highlights
+### v0.1.28 development highlights
 
 - Fixed manual GitHub-release installation after refreshing the Firmware list: selecting an installed, older, or alternate compatible asset now proceeds into download/flashing instead of remaining stuck at `Resolving release` with OTA marked busy. Release refresh and install TLS operations are serialized, and Install Selected stays disabled while the list is refreshing.
 - Reduced genuinely idle ESP32-S3 load from roughly 25-31% aggregate (about 50% on Core 1) to typically 0-2% by rate-limiting unchanged Wi-Fi state publication, servicing runtime state at 50 Hz, bypassing disabled audio/battery paths, and yielding longer only while playback and OTA are inactive.
@@ -519,14 +519,14 @@ Current OTA and rollback behavior:
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.27`:
+Release asset names for `v0.1.28`:
 
-- `esp32-notifier-v0.1.27.bin`
-- `esp32-notifier-hacs-v0.1.27.bin`
-- `esp32-notifier-hacs-slim-v0.1.27.bin`
-- `esp32s3-notifier-v0.1.27.bin`
-- `esp32s3-notifier-hacs-v0.1.27.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.27.bin`
+- `esp32-notifier-v0.1.28.bin`
+- `esp32-notifier-hacs-v0.1.28.bin`
+- `esp32-notifier-hacs-slim-v0.1.28.bin`
+- `esp32s3-notifier-v0.1.28.bin`
+- `esp32s3-notifier-hacs-v0.1.28.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.28.bin`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard release variants and upload the matching OTA assets back to that release.
 
@@ -607,7 +607,7 @@ Key files and directories:
 
 Current release notes live here:
 
-- [release-assets/v0.1.27/release-notes.md](release-assets/v0.1.27/release-notes.md)
+- [release-assets/v0.1.28/release-notes.md](release-assets/v0.1.28/release-notes.md)
 - File Manager autoplay now advances from an explicit firmware completion event, so next, shuffle, and repeat remain reliable even when status polling misses the brief idle transition. Queue advancement is restricted to File Manager playback and never applies to radio, ambient audio, effects, notifications, or direct URLs.
 - File Manager playback now reports decoder position and duration and provides synchronized inline and preview seek controls that reset correctly between tracks.
 - GitHub release checks now run on a background FreeRTOS task so TLS and JSON work cannot starve the audio loop; the decoder uses a 1.25 MiB PSRAM queue with only a small SRAM fallback.
