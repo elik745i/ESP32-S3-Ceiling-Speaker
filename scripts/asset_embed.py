@@ -26,6 +26,10 @@ SKIPPED_WEB_ASSETS = {
     "ttp223-touch-icon.svg",
 }
 
+if os.environ.get("ELMA_PORTABLE_BUILDER") == "1" and HEADER.is_file() and SOURCE.is_file():
+    print("[web-assets] portable builder is using the prebundled ELMA web configurator")
+    Return()
+
 
 def is_gzip_payload(data: bytes) -> bool:
     return len(data) >= 2 and data[0] == 0x1F and data[1] == 0x8B

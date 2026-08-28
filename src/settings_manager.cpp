@@ -58,6 +58,10 @@ bool approximatelyEqual(float left, float right, float tolerance = 0.05f) {
     return fabsf(left - right) <= tolerance;
 }
 
+bool isValidC3ExposedPin(uint8_t pin) {
+    return pin <= 10 || pin == 20 || pin == 21;
+}
+
 bool isValidBatteryAdcPin(uint8_t pin) {
     if (pin == 0) {
         return true;
@@ -67,6 +71,8 @@ bool isValidBatteryAdcPin(uint8_t pin) {
         return false;
     }
     return true;
+#elif defined(CONFIG_IDF_TARGET_ESP32C3)
+    return pin <= 5;
 #else
     return true;
 #endif
@@ -75,6 +81,8 @@ bool isValidBatteryAdcPin(uint8_t pin) {
 bool isValidStatusLedPin(uint8_t pin) {
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
     return pin <= 48;
+#elif defined(CONFIG_IDF_TARGET_ESP32C3)
+    return isValidC3ExposedPin(pin);
 #else
     return pin <= 39;
 #endif
@@ -86,6 +94,8 @@ bool isValidWapeTriggerPin(uint8_t pin) {
     }
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
     return pin <= 48;
+#elif defined(CONFIG_IDF_TARGET_ESP32C3)
+    return isValidC3ExposedPin(pin);
 #else
     return pin <= 39;
 #endif
@@ -94,6 +104,8 @@ bool isValidWapeTriggerPin(uint8_t pin) {
 bool isValidSdPin(uint8_t pin) {
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
     return pin <= 48;
+#elif defined(CONFIG_IDF_TARGET_ESP32C3)
+    return isValidC3ExposedPin(pin);
 #else
     return pin <= 39;
 #endif
@@ -102,6 +114,8 @@ bool isValidSdPin(uint8_t pin) {
 bool isValidI2sPin(uint8_t pin) {
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
     return pin >= 9 && pin <= 12;
+#elif defined(CONFIG_IDF_TARGET_ESP32C3)
+    return isValidC3ExposedPin(pin);
 #else
     return pin <= 39;
 #endif
@@ -218,7 +232,7 @@ String normalizeWapeTriggerEvent(String value) {
 }
 
 String defaultDeviceBaseName() {
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3)
     return "elma-iot";
 #else
     return DefaultConfig::DEVICE_NAME;
@@ -226,7 +240,7 @@ String defaultDeviceBaseName() {
 }
 
 String defaultFriendlyBaseName() {
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3)
     return "ELMA IoT";
 #else
     return DefaultConfig::FRIENDLY_NAME;
@@ -264,6 +278,8 @@ String defaultOtaAssetTemplate() {
     #else
         return "esp32s3-notifier-${version}.bin";
     #endif
+#elif defined(CONFIG_IDF_TARGET_ESP32C3)
+    return "esp32c3-notifier-hacs-${version}.bin";
 #else
     #ifdef APP_ENABLE_HACS_MQTT
         #ifdef APP_DISABLE_WEB_UI

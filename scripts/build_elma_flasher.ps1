@@ -19,7 +19,9 @@ $requiredFirmwareFiles = @(
     '.pio\build\esp32_notifier\bootloader.bin',
     '.pio\build\esp32_notifier\partitions.bin',
     '.pio\build\esp32s3_notifier\bootloader.bin',
-    '.pio\build\esp32s3_notifier\partitions.bin'
+    '.pio\build\esp32s3_notifier\partitions.bin',
+    '.pio\build\esp32c3_designer_hacs\bootloader.bin',
+    '.pio\build\esp32c3_designer_hacs\partitions.bin'
 )
 foreach ($relativePath in $requiredFirmwareFiles) {
     $fullPath = Join-Path $projectRoot $relativePath
@@ -28,11 +30,13 @@ foreach ($relativePath in $requiredFirmwareFiles) {
     }
 }
 
-New-Item -ItemType Directory -Force -Path (Join-Path $assetRoot 'esp32'), (Join-Path $assetRoot 'esp32s3'), $releaseRoot | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $assetRoot 'esp32'), (Join-Path $assetRoot 'esp32s3'), (Join-Path $assetRoot 'esp32c3'), $releaseRoot | Out-Null
 Copy-Item -LiteralPath (Join-Path $projectRoot '.pio\build\esp32_notifier\bootloader.bin') -Destination (Join-Path $assetRoot 'esp32\bootloader.bin') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot '.pio\build\esp32_notifier\partitions.bin') -Destination (Join-Path $assetRoot 'esp32\partitions.bin') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot '.pio\build\esp32s3_notifier\bootloader.bin') -Destination (Join-Path $assetRoot 'esp32s3\bootloader.bin') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot '.pio\build\esp32s3_notifier\partitions.bin') -Destination (Join-Path $assetRoot 'esp32s3\partitions.bin') -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot '.pio\build\esp32c3_designer_hacs\bootloader.bin') -Destination (Join-Path $assetRoot 'esp32c3\bootloader.bin') -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot '.pio\build\esp32c3_designer_hacs\partitions.bin') -Destination (Join-Path $assetRoot 'esp32c3\partitions.bin') -Force
 
 if (-not (Test-Path -LiteralPath (Join-Path $venvRoot 'Scripts\python.exe'))) {
     $python310 = ''
@@ -69,6 +73,26 @@ if (-not (Test-Path -LiteralPath $iconSource)) {
 Copy-Item -LiteralPath $iconSource -Destination $iconPath -Force
 Copy-Item -LiteralPath $iconSource -Destination (Join-Path $assetRoot 'ELMA-Flasher.ico') -Force
 
+$compilerName = 'ELMA-Compiler-Core'
+& $python -m PyInstaller `
+    --noconfirm `
+    --clean `
+    --onefile `
+    --console `
+    --name $compilerName `
+    --collect-all platformio `
+    --distpath (Join-Path $buildRoot 'compiler-dist') `
+    --workpath (Join-Path $buildRoot 'compiler-work') `
+    --specpath (Join-Path $buildRoot 'compiler-spec') `
+    (Join-Path $projectRoot 'tools\elma_flasher\compiler_core.py')
+if ($LASTEXITCODE -ne 0) {
+    throw "ELMA portable compiler core build failed with exit code $LASTEXITCODE."
+}
+$compilerExe = Join-Path $buildRoot "compiler-dist\$compilerName.exe"
+if (-not (Test-Path -LiteralPath $compilerExe)) {
+    throw 'ELMA portable compiler core was not produced.'
+}
+
 & $python -m PyInstaller `
     --noconfirm `
     --clean `
@@ -77,6 +101,17 @@ Copy-Item -LiteralPath $iconSource -Destination (Join-Path $assetRoot 'ELMA-Flas
     --name $assetName `
     --icon $iconPath `
     --add-data "$assetRoot;assets" `
+    --add-data "$(Join-Path $projectRoot 'web');web" `
+    --add-data "$(Join-Path $projectRoot 'src');builder_project\src" `
+    --add-data "$(Join-Path $projectRoot 'include');builder_project\include" `
+    --add-data "$(Join-Path $projectRoot 'scripts');builder_project\scripts" `
+    --add-data "$(Join-Path $projectRoot 'partitions');builder_project\partitions" `
+    --add-data "$(Join-Path $projectRoot 'web');builder_project\web" `
+    --add-data "$(Join-Path $projectRoot 'platformio.ini');builder_project" `
+    --add-data "$(Join-Path $projectRoot 'sdkconfig.defaults');builder_project" `
+    --add-data "$(Join-Path $projectRoot 'package.json');builder_project" `
+    --add-data "$(Join-Path $projectRoot 'package-lock.json');builder_project" `
+    --add-binary "$compilerExe;." `
     --collect-all esptool `
     --hidden-import serial.tools.list_ports `
     --distpath $releaseRoot `

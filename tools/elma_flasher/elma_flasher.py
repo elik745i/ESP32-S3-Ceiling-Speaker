@@ -1,4 +1,4 @@
-"""ELMA Flasher: standalone ESP32/ESP32-S3 firmware and clone utility."""
+"""ELMA Flasher: standalone ELMA device designer, compiler and flash utility."""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ import os
 import pathlib
 import queue
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -21,7 +23,9 @@ import tkinter as tk
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 import webbrowser
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from tkinter import filedialog, messagebox, ttk
 
 import esptool
@@ -29,7 +33,7 @@ import serial
 from serial.tools import list_ports
 
 
-APP_VERSION = "0.1.29"
+APP_VERSION = "0.1.30"
 WINDOWS_APP_USER_MODEL_ID = "ELMA.IoT.Flasher"
 FLASH_BAUD = 460800
 CONSOLE_BAUD = 115200
@@ -45,7 +49,7 @@ WHITE = "#fffdf8"
 MUTED = "#6e6961"
 RED = "#b42318"
 GREEN = "#18864b"
-CHIP_FAMILIES = {"esp32": "ESP32", "esp32s3": "ESP32-S3"}
+CHIP_FAMILIES = {"esp32": "ESP32", "esp32s3": "ESP32-S3", "esp32c3": "ESP32-C3"}
 CHIP_CHOICES = {"auto": "Auto-detect (recommended)", **CHIP_FAMILIES}
 KNOWN_CHIP_MODELS = {
     "esp32s3": "ESP32-S3",
@@ -62,7 +66,12 @@ KNOWN_CHIP_MODELS = {
 
 def resource_path(relative: str) -> pathlib.Path:
     base = pathlib.Path(getattr(sys, "_MEIPASS", pathlib.Path(__file__).resolve().parent))
-    return base / relative
+    resolved = base / relative
+    if not getattr(sys, "frozen", False) and relative.replace("\\", "/").startswith("assets/"):
+        development_asset = pathlib.Path(__file__).resolve().parents[2] / ".elma-flasher-build" / relative
+        if development_asset.exists():
+            return development_asset
+    return resolved
 
 
 def configure_windows_identity() -> None:
@@ -99,6 +108,8 @@ def chip_family_from_image(data: bytes) -> str:
         return "esp32"
     if chip_id == 0x0009:
         return "esp32s3"
+    if chip_id == 0x0005:
+        return "esp32c3"
     raise ValueError(f"Unsupported Espressif image chip ID 0x{chip_id:04X}.")
 
 
@@ -247,6 +258,335 @@ class EsptoolOutput(io.TextIOBase):
         self.buffer = ""
 
 
+def default_designer_settings() -> dict:
+    """A complete-enough future-device document for the shared web configurator."""
+    return {
+        "usingSavedSettings": False,
+        "device": {
+            "deviceName": "elma-future-device", "friendlyName": "ELMA Future Device",
+            "savedVolumePercent": 35, "audioMuted": False, "statusLedPin": 8,
+            "lowBatterySleepEnabled": False, "lowBatterySleepThresholdPercent": 10,
+            "lowBatteryWakeIntervalMinutes": 30, "powerCycleFactoryResetEnabled": True,
+            "touchHoldFactoryResetEnabled": True,
+        },
+        "wifi": {
+            "ssid": "", "password": "", "apSsid": "", "apPassword": "",
+            "apFallbackEnabled": True, "useStaticIp": False, "staticIp": "",
+            "gateway": "", "subnet": "255.255.255.0", "dns1": "", "dns2": "",
+        },
+        "mqtt": {
+            "host": "", "port": 1883, "username": "", "password": "",
+            "clientId": "", "baseTopic": "", "discoveryEnabled": True,
+        },
+        "audio": {"enabled": False, "rememberLastPlayed": True, "wsPin": 5, "bclkPin": 4, "doutPin": 3},
+        "oled": {"enabled": False, "displayType": "oled", "driver": "ssd1306", "i2cAddress": 60, "width": 128, "height": 64, "rotation": 0, "dimTimeoutSeconds": 60, "sdaPin": 4, "sclPin": 5, "resetPin": -1},
+        "sd": {"enabled": False, "csPin": 10, "sckPin": 6, "mosiPin": 7, "misoPin": 2},
+        "battery": {"adcPin": 0, "calibrationMultiplier": 2.0, "measuredVoltage": 0, "movingAverageWindowSize": 8, "updateIntervalMs": 5000},
+        "ota": {"autoCheck": True, "autoUpdate": False},
+        "webAuth": {"enabled": False, "username": "admin", "password": ""},
+        "effects": {},
+        "ui": {
+            "gpioBoardAutodetect": False, "gpioBoardSelection": "esp32-c3",
+            "peripheralDiagramPositions": {}, "peripheralHelperBindings": {},
+            "peripheralProfiles": {
+                "audioProfile": "none", "audioProfiles": ["none"], "audioInProfile": "none",
+                "audioInProfiles": ["none"], "displayProfile": "none", "displayProfiles": ["none"],
+                "sensors": ["none"], "inputs": ["none"], "controls": ["none"],
+                "expansions": ["none"], "storage": ["none"], "communication": ["none"], "power": ["none"],
+            },
+        },
+    }
+
+
+class DesignerJob:
+    def __init__(self) -> None:
+        self.id = uuid.uuid4().hex
+        self.state = "queued"
+        self.progress = 0
+        self.designer_server = DesignerServer(self)
+        self.status = "Queued"
+        self.compatibility = "Resolving chip capabilities and selected peripherals."
+        self.log: list[str] = []
+        self.error = ""
+        self.ip_address = ""
+        self.cancelled = False
+        self.process: subprocess.Popen | None = None
+
+    def append(self, value: str) -> None:
+        line = str(value).strip()
+        if line:
+            self.log.append(line)
+            self.log = self.log[-600:]
+
+    def public(self) -> dict:
+        return {
+            "jobId": self.id, "state": self.state, "progress": self.progress,
+            "status": self.status, "compatibility": self.compatibility,
+            "log": self.log, "error": self.error, "ipAddress": self.ip_address,
+        }
+
+
+class DesignerServer:
+    """Loopback-only backend for the cloned web configurator and native flashing."""
+    def __init__(self, flasher: "FlasherApplication") -> None:
+        self.flasher = flasher
+        self.httpd: ThreadingHTTPServer | None = None
+        self.thread: threading.Thread | None = None
+        self.url = ""
+        self.settings = default_designer_settings()
+        self.jobs: dict[str, DesignerJob] = {}
+        self.lock = threading.Lock()
+
+    def web_root(self) -> pathlib.Path:
+        bundled = resource_path("web")
+        if bundled.is_dir():
+            return bundled
+        return pathlib.Path(__file__).resolve().parents[2] / "web"
+
+    def project_root(self) -> pathlib.Path:
+        if not getattr(sys, "frozen", False):
+            return pathlib.Path(__file__).resolve().parents[2]
+        source = resource_path("builder_project")
+        target = pathlib.Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "ELMA IoT" / "Flasher" / f"builder-{APP_VERSION}"
+        marker = target / ".elma-builder-ready"
+        if not marker.is_file():
+            target.mkdir(parents=True, exist_ok=True)
+            for name in ("src", "include", "scripts", "partitions", "web"):
+                shutil.copytree(source / name, target / name, dirs_exist_ok=True)
+            for name in ("platformio.ini", "sdkconfig.defaults", "package.json", "package-lock.json"):
+                if (source / name).is_file():
+                    shutil.copy2(source / name, target / name)
+            marker.write_text(APP_VERSION, encoding="utf-8")
+        return target
+
+    def compiler_command(self) -> list[str]:
+        bundled = resource_path("ELMA-Compiler-Core.exe")
+        if bundled.is_file():
+            return [str(bundled)]
+        found = shutil.which("pio") or shutil.which("platformio")
+        if found:
+            return [found]
+        raise RuntimeError("The portable compiler core is missing. Reinstall ELMA Flasher or use the complete release package.")
+
+    def start(self) -> str:
+        if self.httpd:
+            return self.url
+        owner = self
+
+        class Handler(SimpleHTTPRequestHandler):
+            def __init__(handler_self, *args, **kwargs):
+                super().__init__(*args, directory=str(owner.web_root()), **kwargs)
+
+            def log_message(handler_self, _format, *_args):
+                return
+
+            def json_response(handler_self, value, status=200):
+                data = json.dumps(value, separators=(",", ":")).encode()
+                handler_self.send_response(status)
+                handler_self.send_header("Content-Type", "application/json")
+                handler_self.send_header("Content-Length", str(len(data)))
+                handler_self.send_header("Cache-Control", "no-store")
+                handler_self.end_headers()
+                handler_self.wfile.write(data)
+
+            def read_json(handler_self):
+                length = int(handler_self.headers.get("Content-Length", "0") or 0)
+                if length > 2 * 1024 * 1024:
+                    raise ValueError("Request is too large")
+                return json.loads(handler_self.rfile.read(length) or b"{}")
+
+            def do_GET(handler_self):
+                path = urllib.parse.urlparse(handler_self.path).path
+                if path == "/api/builder/status":
+                    handler_self.json_response({"active": True, "version": APP_VERSION})
+                elif path == "/api/builder/ports":
+                    ports = [{"device": p.device, "description": p.description, "hwid": p.hwid} for p in list_ports.comports()]
+                    handler_self.json_response({"ports": ports})
+                elif path.startswith("/api/builder/jobs/"):
+                    job_id = path.split("/")[4]
+                    job = owner.jobs.get(job_id)
+                    handler_self.json_response(job.public() if job else {"error": "Unknown builder job"}, 200 if job else 404)
+                elif path == "/api/settings":
+                    handler_self.json_response(owner.settings)
+                elif path == "/api/status":
+                    handler_self.json_response(owner.mock_status())
+                elif path.startswith("/api/"):
+                    handler_self.json_response({"error": "This runtime action is unavailable while designing a future device."}, 409)
+                else:
+                    super().do_GET()
+
+            def do_POST(handler_self):
+                path = urllib.parse.urlparse(handler_self.path).path
+                try:
+                    body = handler_self.read_json()
+                    if path == "/api/settings":
+                        if not isinstance(body, dict):
+                            raise ValueError("Settings must be a JSON object")
+                        owner.settings = body
+                        handler_self.json_response({"ok": True})
+                    elif path == "/api/builder/jobs":
+                        job = owner.create_job(body)
+                        handler_self.json_response({"jobId": job.id}, 202)
+                    elif path.startswith("/api/builder/jobs/") and path.endswith("/cancel"):
+                        job_id = path.split("/")[4]
+                        job = owner.jobs.get(job_id)
+                        if not job:
+                            handler_self.json_response({"error": "Unknown builder job"}, 404)
+                            return
+                        job.cancelled = True
+                        if job.process and job.process.poll() is None:
+                            job.process.terminate()
+                        handler_self.json_response({"ok": True})
+                    else:
+                        handler_self.json_response({"error": "Unsupported local builder action"}, 404)
+                except (ValueError, json.JSONDecodeError) as error:
+                    handler_self.json_response({"error": str(error)}, 400)
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.httpd.server_port}/"
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        return self.url
+
+    def mock_status(self) -> dict:
+        selected = str(self.settings.get("ui", {}).get("gpioBoardSelection", "esp32-c3"))
+        chip = "esp32s3" if "s3" in selected else ("esp32c3" if "c3" in selected else "esp32")
+        return {
+            "firmware": {"version": APP_VERSION, "channel": "designer", "chipFamily": chip, "audioEnabled": True},
+            "device": {"friendlyName": self.settings.get("device", {}).get("friendlyName", "Future ELMA Device"), "deviceName": "hardware-id-assigned-after-flash", "ipAddress": "Not flashed", "connected": False},
+            "network": {"wifiConnected": False, "mqttConnected": False, "wifiRssi": 0, "ip": "", "apMode": False},
+            "battery": {"voltage": 0, "raw": 0, "charging": False},
+            "playback": {"state": "idle", "type": "idle", "title": "Not flashed", "url": "", "source": "designer", "volumePercent": 0},
+            "otaManager": {"busy": False, "message": "Local device designer", "updateAvailable": False},
+            "ota": {"busy": False, "message": "Local device designer", "updateAvailable": False, "latestVersion": ""},
+            "settings": {"usingSaved": False},
+            "hardware": {"chipModel": CHIP_FAMILIES.get(chip, chip), "flashSize": 0, "freeHeap": 0},
+            "system": {"freeHeap": 0, "cpuLoadPercent": 0, "cpuFrequencyMhz": 0, "sram": {}, "psram": {}, "spiffs": {}, "sd": {}},
+            "storage": {"flash": {"available": False}, "sd": {"available": False}},
+            "display": {"enabled": False},
+        }
+
+    def create_job(self, payload: dict) -> DesignerJob:
+        if not isinstance(payload, dict) or not str(payload.get("port", "")).strip():
+            raise ValueError("Select a connected USB device")
+        with self.lock:
+            if any(job.state in ("queued", "running") for job in self.jobs.values()):
+                raise ValueError("Another compile or flash job is already running")
+            job = DesignerJob()
+            self.jobs[job.id] = job
+        threading.Thread(target=self.run_job, args=(job, payload), daemon=True).start()
+        return job
+
+    def set_job(self, job: DesignerJob, progress: int, status: str) -> None:
+        job.progress = progress
+        job.status = status
+        job.append(status)
+
+    def resolve_profile(self, detected: str, requested: dict, settings: dict, job: DesignerJob) -> str:
+        maximum = bool(requested.get("maximum", True))
+        audio_profiles = settings.get("ui", {}).get("peripheralProfiles", {}).get("audioProfiles", []) if isinstance(settings, dict) else []
+        configured_audio = any(str(value).strip().lower() not in ("", "none") for value in audio_profiles if value is not None)
+        wants_audio = bool(requested.get("audio", False) or configured_audio)
+        wants_web = bool(requested.get("webUi", True))
+        wants_hacs = bool(requested.get("hacs", True))
+        if detected == "esp32c3":
+            exclusions = ["I2S network audio (not selected for the C3 memory profile)"]
+            if not wants_web:
+                exclusions.append("on-device web configurator (explicitly disabled)")
+            job.compatibility = "ESP32-C3 maximum-fit profile: Wi-Fi, MQTT/HACS, OTA, motor/GPIO, supported displays, sensors, controls and the compatible web configurator are retained. Excluded: " + "; ".join(exclusions) + "."
+            if maximum:
+                return "esp32c3_designer_hacs"
+            return "esp32c3_designer" + ("_hacs" if wants_hacs else "") + ("_slim" if not wants_web else "")
+        if detected == "esp32s3":
+            if maximum:
+                job.compatibility = "ESP32-S3 full profile selected: all currently supported peripherals and multimedia features are retained."
+                return "esp32s3_notifier_hacs"
+            job.compatibility = f"ESP32-S3 selected-feature profile: web UI {'included' if wants_web else 'excluded'}, HACS {'included' if wants_hacs else 'excluded'}, audio {'included' if wants_audio else 'excluded'}."
+            if wants_audio:
+                if wants_hacs:
+                    return "esp32s3_notifier_hacs" if wants_web else "esp32s3_notifier_hacs_slim"
+                return "esp32s3_notifier" if wants_web else "esp32s3_notifier_slim"
+            return "esp32s3_designer_noaudio" + ("_hacs" if wants_hacs else "") + ("_slim" if not wants_web else "")
+        if detected == "esp32":
+            if maximum:
+                job.compatibility = "ESP32 maximum compatible profile selected; the complete classic-ESP32 peripheral catalog is retained."
+                return "esp32_notifier_hacs"
+            job.compatibility = f"ESP32 selected-feature profile: web UI {'included' if wants_web else 'excluded'}, HACS {'included' if wants_hacs else 'excluded'}, audio {'included' if wants_audio else 'excluded'}."
+            if wants_audio:
+                if wants_hacs:
+                    return "esp32_notifier_hacs" if wants_web else "esp32_notifier_hacs_slim"
+                return "esp32_notifier" if wants_web else "esp32_notifier_slim"
+            return "esp32_designer_noaudio" + ("_hacs" if wants_hacs else "") + ("_slim" if not wants_web else "")
+        raise RuntimeError(f"ELMA firmware generation does not yet support {detected.upper()}.")
+
+    def run_job(self, job: DesignerJob, payload: dict) -> None:
+        try:
+            job.state = "running"
+            port = str(payload["port"])
+            self.set_job(job, 3, f"Detecting the ESP on {port}")
+            detected, flash_size = self.flasher._detect_target_chip(port)
+            requested_chip = str(payload.get("chip", "auto"))
+            if requested_chip != "auto" and requested_chip != detected:
+                raise RuntimeError(f"Manual target {requested_chip.upper()} does not match detected {detected.upper()}. Nothing was erased.")
+            job.append(f"Detected {CHIP_FAMILIES.get(detected, detected)}; flash {flash_size or 'size reported by loader'}")
+            profile = self.resolve_profile(detected, payload.get("capabilities", {}), payload.get("settings", {}), job)
+            if job.cancelled:
+                raise InterruptedError("Build cancelled")
+            project = self.project_root()
+            self.set_job(job, 12, f"Compiling {profile} with maximum compatible functionality")
+            command = self.compiler_command() + ["run", "--project-dir", str(project), "--environment", profile]
+            job.append(" ".join(command))
+            creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            compiler_environment = os.environ.copy()
+            compiler_environment["ELMA_PORTABLE_BUILDER"] = "1"
+            job.process = subprocess.Popen(command, cwd=project, env=compiler_environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", creationflags=creation_flags)
+            assert job.process.stdout is not None
+            for line in job.process.stdout:
+                job.append(line)
+                if "Compiling" in line and job.progress < 55:
+                    job.progress += 1
+                if job.cancelled:
+                    job.process.terminate()
+                    raise InterruptedError("Build cancelled")
+            code = job.process.wait()
+            job.process = None
+            if code:
+                raise RuntimeError(f"Firmware compilation failed with exit code {code}. See the build log above.")
+            build = project / ".pio" / "build" / profile
+            application = (build / "firmware.bin").read_bytes()
+            family = chip_family_from_image(application)
+            if family != detected:
+                raise RuntimeError("Compiler output chip family does not match the connected target")
+            flash_mb = int(re.search(r"(\d+)", flash_size).group(1)) if re.search(r"(\d+)", flash_size) else 4
+            if len(application) > min(MAX_APPLICATION_SIZE, flash_mb * 1024 * 1024):
+                raise RuntimeError(f"Generated application is {len(application):,} bytes and does not fit this target safely.")
+            job.append(f"Generated application: {len(application):,} bytes")
+            if job.cancelled:
+                raise InterruptedError("Build cancelled before erase")
+            boot_address = 0 if family in ("esp32s3", "esp32c3") else 0x1000
+            parts = [(boot_address, (build / "bootloader.bin").read_bytes()), (0x8000, (build / "partitions.bin").read_bytes()), (APPLICATION_ADDRESS, application)]
+            self.set_job(job, 66, "Writing and verifying firmware")
+            self.flasher._write_flash(port, family, parts, bool(payload.get("erase", True)))
+            configuration = sanitize_clone_configuration(payload.get("settings", self.settings))
+            self.settings = payload.get("settings", self.settings)
+            self.set_job(job, 93, "Provisioning Wi-Fi, MQTT, identity and peripheral configuration")
+            wifi = configuration.get("wifi", {})
+            job.ip_address = self.flasher._provision(port, configuration, bool(str(wifi.get("ssid", "")).strip()))
+            job.progress = 100
+            job.status = "Compile, flash and configuration complete"
+            job.state = "complete"
+            job.append("Target device identity and MQTT IDs were regenerated from its own hardware ID.")
+        except InterruptedError as error:
+            job.state = "cancelled"
+            job.status = str(error)
+            job.append(job.status)
+        except BaseException as error:
+            job.state = "failed"
+            job.error = friendly_error(error)
+            job.status = "Build or flash failed"
+            job.append(f"ERROR: {job.error}")
+
+
 class FlasherApplication:
     def __init__(self, root: tk.Tk, auto_detect_chip: bool = True) -> None:
         self.root = root
@@ -324,13 +664,15 @@ class FlasherApplication:
         titles = tk.Frame(header, bg=DARK)
         titles.pack(side="left", pady=14)
         tk.Label(titles, text="ELMA Flasher", bg=DARK, fg=WHITE, font=("Segoe UI", 22, "bold")).pack(anchor="w")
-        tk.Label(titles, text="Portable ESP32 / ESP32-S3 cloning and firmware utility", bg=DARK, fg="#d9d5ce", font=("Segoe UI", 10)).pack(anchor="w")
+        tk.Label(titles, text="Portable ESP32 / ESP32-S3 / ESP32-C3 designer, compiler and flasher", bg=DARK, fg="#d9d5ce", font=("Segoe UI", 10)).pack(anchor="w")
         tk.Label(header, text=f"v{APP_VERSION}", bg=ORANGE, fg=WHITE, font=("Segoe UI", 10, "bold"), padx=12, pady=6).pack(side="right", padx=24)
 
         # Reserve the primary action before the expanding body so Windows display
         # scaling can never push the Flash button below the visible client area.
         footer = tk.Frame(self.root, bg=PAPER)
         footer.pack(side="bottom", fill="x", padx=22, pady=(0, 16))
+        self.designer_button = tk.Button(footer, text="Open Device Designer — Configure, Compile & Flash", command=self.open_designer, bg=DARK, fg=WHITE, activebackground="#46433d", activeforeground=WHITE, relief="flat", font=("Segoe UI", 11, "bold"), pady=10)
+        self.designer_button.pack(fill="x", pady=(0, 8))
         self.flash_button = tk.Button(footer, text="Flash USB Device", command=self.start, bg=ORANGE, fg=WHITE, activebackground="#d97e00", activeforeground=WHITE, disabledforeground="#ddd8ce", relief="flat", font=("Segoe UI", 12, "bold"), pady=11)
         self.flash_button.pack(fill="x")
 
@@ -792,12 +1134,12 @@ class FlasherApplication:
         manifest = client.json("/api/usb-flasher/manifest")
         settings = client.json("/api/settings")
         family = str(manifest.get("chipFamily", "")).lower().replace("-", "")
-        if family not in ("esp32", "esp32s3"):
+        if family not in CHIP_FAMILIES:
             raise RuntimeError(f"Source device reported unsupported chip family {family or 'unknown'}.")
         parts: list[tuple[int, bytes]] = []
         source_parts = manifest.get("parts")
         if not isinstance(source_parts, list):
-            raise RuntimeError("Source firmware clone manifest does not contain flash parts. Install the corrected v0.1.29 firmware first.")
+            raise RuntimeError("Source firmware clone manifest does not contain flash parts. Update the source device to a clone-capable ELMA firmware first.")
         for index, part in enumerate(source_parts):
             if not isinstance(part, dict) or part.get("name") not in ("bootloader", "partitions", "application"):
                 continue
@@ -818,7 +1160,7 @@ class FlasherApplication:
         if len(application) > MAX_APPLICATION_SIZE:
             raise ValueError(f"Application image is larger than the {MAX_APPLICATION_SIZE:#x}-byte OTA slot.")
         family = chip_family_from_image(application)
-        bootloader_address = 0x0000 if family == "esp32s3" else 0x1000
+        bootloader_address = 0x0000 if family in ("esp32s3", "esp32c3") else 0x1000
         asset_base = resource_path(f"assets/{family}")
         bootloader = (asset_base / "bootloader.bin").read_bytes()
         partitions = (asset_base / "partitions.bin").read_bytes()
@@ -994,6 +1336,15 @@ class FlasherApplication:
         if self.last_ip:
             webbrowser.open(f"http://{self.last_ip}/")
 
+    def open_designer(self) -> None:
+        """Open the shared ELMA web configurator backed by this local EXE."""
+        try:
+            url = self.designer_server.start()
+            self._log(f"ELMA Device Designer: {url}")
+            webbrowser.open(url)
+        except BaseException as error:
+            messagebox.showerror("ELMA Device Designer", friendly_error(error))
+
 
 def self_test() -> int:
     required = [
@@ -1002,7 +1353,17 @@ def self_test() -> int:
         resource_path("assets/esp32/partitions.bin"),
         resource_path("assets/esp32s3/bootloader.bin"),
         resource_path("assets/esp32s3/partitions.bin"),
+        resource_path("assets/esp32c3/bootloader.bin"),
+        resource_path("assets/esp32c3/partitions.bin"),
     ]
+    if getattr(sys, "frozen", False):
+        required.extend([
+            resource_path("ELMA-Compiler-Core.exe"),
+            resource_path("web/index.html"),
+            resource_path("web/modules/local-builder.js"),
+            resource_path("builder_project/platformio.ini"),
+            resource_path("builder_project/src/generated_web_assets.cpp"),
+        ])
     missing = [str(path) for path in required if not path.is_file() or path.stat().st_size == 0]
     if missing:
         return 2
@@ -1012,7 +1373,9 @@ def self_test() -> int:
     esp32_header[0] = 0xE9
     esp32s3_header = bytearray(esp32_header)
     esp32s3_header[12] = 0x09
-    if chip_family_from_image(esp32_header) != "esp32" or chip_family_from_image(esp32s3_header) != "esp32s3":
+    esp32c3_header = bytearray(esp32_header)
+    esp32c3_header[12] = 0x05
+    if chip_family_from_image(esp32_header) != "esp32" or chip_family_from_image(esp32s3_header) != "esp32s3" or chip_family_from_image(esp32c3_header) != "esp32c3":
         return 5
     if chip_family_from_esptool_output("Chip is ESP32-S3") != "esp32s3" or chip_family_from_esptool_output("Chip is ESP32") != "esp32":
         return 5
@@ -1041,6 +1404,15 @@ def self_test() -> int:
 
 def main() -> int:
     configure_windows_identity()
+    if "--designer-only" in sys.argv:
+        server = DesignerServer(None)  # Native flash is unavailable only in this test/server mode.
+        print(server.start(), flush=True)
+        try:
+            assert server.httpd is not None
+            server.thread.join()
+        except KeyboardInterrupt:
+            server.httpd.shutdown()
+        return 0
     if "--self-test" in sys.argv:
         return self_test()
     if "--ui-smoke-test" in sys.argv:
@@ -1055,7 +1427,7 @@ def main() -> int:
         window_bottom = root.winfo_rooty() + root.winfo_height()
         icon_ok = app.window_icon_path.is_file() and app.window_icon_applied and window_has_windows_icon(root)
         app._set_selected_image_family("esp32")
-        compatibility_ok = self_test() == 0 and app.chip_menu.entrycget(1, "state") == "normal" and app.chip_menu.entrycget(2, "state") == "disabled"
+        compatibility_ok = self_test() == 0 and app.chip_menu.entrycget(1, "state") == "normal" and app.chip_menu.entrycget(2, "state") == "disabled" and app.chip_menu.entrycget(3, "state") == "disabled"
         layout_ok = app.flash_button.winfo_ismapped() and button_bottom <= window_bottom
         root.destroy()
         return 0 if layout_ok and icon_ok and compatibility_ok else 4

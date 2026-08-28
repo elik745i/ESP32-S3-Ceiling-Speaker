@@ -1050,6 +1050,8 @@ void WebServerManager::registerApiRoutes() {
         firmware["buildDate"] = APP_BUILD_DATE;
     #if defined(CONFIG_IDF_TARGET_ESP32S3)
         firmware["chipFamily"] = "esp32s3";
+    #elif defined(CONFIG_IDF_TARGET_ESP32C3)
+        firmware["chipFamily"] = "esp32c3";
     #elif defined(CONFIG_IDF_TARGET_ESP32)
         firmware["chipFamily"] = "esp32";
     #else

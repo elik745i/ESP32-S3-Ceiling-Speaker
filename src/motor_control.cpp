@@ -93,6 +93,8 @@ bool isUnsafeMotorPin(int8_t pin) {
         default:
             return false;
     }
+#elif defined(CONFIG_IDF_TARGET_ESP32C3)
+    return (pin >= 12 && pin <= 19) || pin == 2 || pin == 8 || pin == 9 || pin > 21;
 #elif defined(CONFIG_IDF_TARGET_ESP32)
     switch (pin) {
         case 0:

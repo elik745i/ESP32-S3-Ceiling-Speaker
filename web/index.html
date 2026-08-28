@@ -1233,6 +1233,48 @@
 
         <div id="tab-firmware" class="tab-panel" role="tabpanel">
           <h2>Firmware</h2>
+          <section id="localBuilderPanel" class="local-builder-panel" hidden>
+            <div class="local-builder-heading">
+              <div>
+                <h3>ELMA Device Designer</h3>
+                <p>Configure the future device in the other tabs, wire its peripherals in GPIO, then compile and flash it here.</p>
+              </div>
+              <span id="localBuilderBadge" class="badge current">Local compiler</span>
+            </div>
+            <div class="local-builder-grid">
+              <label>Target chip
+                <select id="localBuilderChip">
+                  <option value="auto">Auto-detect from USB</option>
+                  <option value="esp32s3">ESP32-S3</option>
+                  <option value="esp32">ESP32</option>
+                  <option value="esp32c3">ESP32-C3</option>
+                </select>
+              </label>
+              <label>Connected USB device
+                <select id="localBuilderPort"></select>
+              </label>
+              <button id="localBuilderRefreshPorts" type="button" class="secondary">Refresh USB devices</button>
+            </div>
+            <fieldset class="local-builder-features">
+              <legend>Firmware capability policy</legend>
+              <label class="check"><input id="localBuilderMaximum" type="checkbox" checked> Include the maximum compatible functionality that fits this chip</label>
+              <label class="check"><input id="localBuilderWebUi" type="checkbox" checked> Keep the on-device web configurator</label>
+              <label class="check"><input id="localBuilderHacs" type="checkbox" checked> Home Assistant / MQTT integration</label>
+              <label class="check"><input id="localBuilderAudio" type="checkbox"> Audio playback (enabled automatically only on capable targets)</label>
+              <label class="check"><input id="localBuilderErase" type="checkbox" checked> Clean target before flashing</label>
+            </fieldset>
+            <p id="localBuilderCompatibility" class="note">The compiler resolves selected wiring against chip GPIO limits and reports forced exclusions before flash is erased.</p>
+            <div class="progress-wrap">
+              <div class="progress-bar"><div id="localBuilderProgressFill" class="progress-fill"></div></div>
+              <div id="localBuilderProgressLabel" class="progress-label">Ready to design</div>
+            </div>
+            <pre id="localBuilderLog" class="log-box">Waiting for a build...</pre>
+            <div class="actions">
+              <button id="localBuilderCompileFlash" type="button">Compile Firmware &amp; Flash USB Device</button>
+              <button id="localBuilderCancel" type="button" class="secondary danger" hidden>Cancel Build / Flash</button>
+            </div>
+          </section>
+          <div id="runtimeFirmwarePanel">
           <div class="firmware-summary">
             <div class="firmware-card">
               <span>Current Firmware</span>
@@ -1278,6 +1320,7 @@
           <div id="firmwareList" class="firmware-list"></div>
           <pre id="otaStatus" class="log-box">Waiting for status...</pre>
           <div id="message"></div>
+          </div>
         </div>
       </section>
     </div>

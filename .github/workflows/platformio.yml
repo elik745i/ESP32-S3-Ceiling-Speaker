@@ -53,6 +53,8 @@ jobs:
             asset: esp32s3-notifier-hacs-${{ github.event.release.tag_name }}.bin
           - env: esp32s3_notifier_hacs_slim
             asset: esp32s3-notifier-hacs-slim-${{ github.event.release.tag_name }}.bin
+          - env: esp32c3_designer_hacs
+            asset: esp32c3-notifier-hacs-${{ github.event.release.tag_name }}.bin
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -98,7 +100,7 @@ jobs:
       - name: Validate release tag and application versions
         run: python scripts/project_version.py --tag "${{ github.event.release.tag_name }}"
       - name: Build embedded ESP32 support images
-        run: pio run -e esp32_notifier -e esp32s3_notifier
+        run: pio run -e esp32_notifier -e esp32s3_notifier -e esp32c3_designer_hacs
       - name: Build portable ELMA Flasher
         shell: powershell
         run: .\scripts\build_elma_flasher.ps1

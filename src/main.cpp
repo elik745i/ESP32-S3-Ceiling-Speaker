@@ -204,7 +204,7 @@ void loop() {
 #ifdef APP_DISABLE_AUDIO
 class AudioPlayerStub {
   public:
-    void begin(uint8_t, uint8_t, uint8_t, uint8_t initialVolumePercent, AppState& appState) {
+    void begin(uint8_t, uint8_t, uint8_t, uint8_t initialVolumePercent, bool, AppState& appState) {
         appState_ = &appState;
         volume_ = initialVolumePercent;
         state_ = "idle";
@@ -224,6 +224,12 @@ class AudioPlayerStub {
     bool playStorageFile(StorageTarget, const String&, const String&, const String&, const String&) {
         return false;
     }
+    bool playStorageOverlay(StorageTarget, const String&, uint8_t = 35, uint8_t = 100) { return false; }
+    bool overlayActive() const { return false; }
+    bool consumeOverlayFinished() { return false; }
+    bool consumePlaybackCompletion(String&) { return false; }
+    bool reconfigureOutputPins(uint8_t, uint8_t, uint8_t) { return false; }
+    bool disableOutput() { return true; }
 
     void stop() {
     state_ = "idle";
@@ -347,6 +353,15 @@ struct RuntimeAudioAutomation {
 };
 
 RuntimeAudioAutomation runtimeAudio;
+
+uint16_t readNativeTouch(uint8_t pin) {
+#if defined(CONFIG_IDF_TARGET_ESP32C3)
+    (void)pin;
+    return 0;
+#else
+    return touchRead(pin);
+#endif
+}
 
 struct PhysicalButtonState {
     int8_t configuredIndex = -1;
@@ -2057,7 +2072,7 @@ void initializeButtons() {
 
     if (isPhysicalButtonEnabled(button1)) {
         if (button1.touchSupported) {
-            button1.touchRawValue = touchRead(button1.pin);
+            button1.touchRawValue = readNativeTouch(button1.pin);
             button1.touchBaselineValue = button1.touchRawValue;
             button1.lastSampledPressed = false;
         } else if (button1.limitSwitch) {
@@ -2078,7 +2093,7 @@ void initializeButtons() {
 
     if (isPhysicalButtonEnabled(button2)) {
         if (button2.touchSupported) {
-            button2.touchRawValue = touchRead(button2.pin);
+            button2.touchRawValue = readNativeTouch(button2.pin);
             button2.touchBaselineValue = button2.touchRawValue;
             button2.lastSampledPressed = false;
         } else if (button2.limitSwitch) {
@@ -2361,7 +2376,7 @@ bool sampleButtonPressed(PhysicalButtonState& button) {
         return pinHigh == button.limitSwitchActiveHigh;
     }
 
-    const uint16_t rawValue = touchRead(button.pin);
+    const uint16_t rawValue = readNativeTouch(button.pin);
     button.touchRawValue = rawValue;
     if (button.touchBaselineValue == 0 && rawValue > 0) {
         button.touchBaselineValue = rawValue;

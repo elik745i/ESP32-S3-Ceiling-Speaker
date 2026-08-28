@@ -17,6 +17,7 @@ ASSET_PREFIXES = (
     "esp32s3-notifier",
     "esp32s3-notifier-hacs",
     "esp32s3-notifier-hacs-slim",
+    "esp32c3-notifier-hacs",
 )
 
 

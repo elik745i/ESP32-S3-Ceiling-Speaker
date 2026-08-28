@@ -2,3 +2,4 @@ esptool==5.1.0
 pyserial==3.5
 pyinstaller==6.15.0
 pillow==11.3.0
+platformio==6.1.19

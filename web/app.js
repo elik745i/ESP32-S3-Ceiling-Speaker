@@ -13,6 +13,7 @@ import { createEffectsTab } from "./modules/effects-tab.js";
 import { createHardwareTab } from "./modules/hardware-tab.js";
 import { createInfoTab } from "./modules/info-tab.js";
 import { createMotorTab } from "./modules/motor-tab.js";
+import { createLocalBuilder } from "./modules/local-builder.js";
 import { createMqttTab } from "./modules/mqtt-tab.js";
 import { normalizeMotorRuntimeConfig } from "./modules/motor-runtime-config.js";
 import {
@@ -1063,6 +1064,23 @@ const elements = {
   usbFlasherStartButton: document.getElementById("usbFlasherStartButton"),
   usbFlasherCancelButton: document.getElementById("usbFlasherCancelButton"),
   usbFlasherOpenTargetButton: document.getElementById("usbFlasherOpenTargetButton"),
+  localBuilderPanel: document.getElementById("localBuilderPanel"),
+  runtimeFirmwarePanel: document.getElementById("runtimeFirmwarePanel"),
+  localBuilderBadge: document.getElementById("localBuilderBadge"),
+  localBuilderChip: document.getElementById("localBuilderChip"),
+  localBuilderPort: document.getElementById("localBuilderPort"),
+  localBuilderRefreshPorts: document.getElementById("localBuilderRefreshPorts"),
+  localBuilderMaximum: document.getElementById("localBuilderMaximum"),
+  localBuilderWebUi: document.getElementById("localBuilderWebUi"),
+  localBuilderHacs: document.getElementById("localBuilderHacs"),
+  localBuilderAudio: document.getElementById("localBuilderAudio"),
+  localBuilderErase: document.getElementById("localBuilderErase"),
+  localBuilderCompatibility: document.getElementById("localBuilderCompatibility"),
+  localBuilderProgressFill: document.getElementById("localBuilderProgressFill"),
+  localBuilderProgressLabel: document.getElementById("localBuilderProgressLabel"),
+  localBuilderLog: document.getElementById("localBuilderLog"),
+  localBuilderCompileFlash: document.getElementById("localBuilderCompileFlash"),
+  localBuilderCancel: document.getElementById("localBuilderCancel"),
   message: document.getElementById("message"),
   playForm: document.getElementById("playForm"),
   playbackActionButton: document.getElementById("playbackActionButton"),
@@ -1239,6 +1257,13 @@ firmwareTab = createFirmwareTab({
   setMessage,
   beginFirmwareReconnectReload,
   setCurrentFirmwareVersion,
+});
+
+const localBuilder = createLocalBuilder({
+  elements,
+  currentSettingsSnapshot,
+  setMessage,
+  toast,
 });
 
 usbFlasher = createUsbFlasher({
@@ -4469,6 +4494,9 @@ function populateBatteryAdcPinOptions(settings = state.settings) {
 
 function availableStatusLedPins() {
   const chipFamily = String(state.status?.firmware?.chipFamily || "esp32s3").toLowerCase();
+  if (chipFamily.includes("c3")) {
+    return [...Array.from({ length: 11 }, (_, index) => index), 20, 21];
+  }
   const maxPin = chipFamily === "esp32" ? 39 : 48;
   return Array.from({ length: maxPin + 1 }, (_, index) => index);
 }
@@ -8763,7 +8791,7 @@ function setupTabs() {
         stopTouchLivePolling();
       }
 
-      if (resolvedTabName === "firmware") {
+      if (resolvedTabName === "firmware" && !document.body.classList.contains("local-builder-mode")) {
         refreshFirmwareInfo(true).catch(handleError);
       }
 
@@ -9359,4 +9387,5 @@ Promise.allSettled([loadStatus(), loadSettings()])
     restoreSavedActiveTabIfVisible();
     uiHistoryModule?.captureSnapshot({ replace: true });
   });
+localBuilder.initialize().catch(handleError);
 startStatusPolling();
