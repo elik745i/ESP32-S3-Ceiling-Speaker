@@ -11,6 +11,7 @@ ESP32 Notifier v0.1.29
 - Fixed the ELMA Flasher layout so the Flash USB Device button remains pinned and visible at the bottom under Windows display scaling.
 - Applied the approved ELMA IoT project logo to the executable, application window, Alt+Tab switcher, and Windows taskbar instead of the default Python/Tk icon.
 - Added automatic USB target detection plus a manual ESP32/ESP32-S3 override. Incompatible chip choices are disabled for the selected firmware, and the flasher blocks erase/write when the connected chip and firmware family differ.
+- Corrected chip reporting so ESP32-C3/C6/S2 and other recognized models are not collapsed into generic ESP32; unsupported targets and detected flash capacity are now shown explicitly.
 - Added optional target preconfiguration, disabled by default, for a friendly device name, Wi-Fi credentials, an explicitly unique static IP, MQTT broker credentials/discovery, fallback AP credentials, and web authentication. Blank fields retain device/clone defaults; static source IPs and hardware-derived device/MQTT identities are never cloned.
 - Moved clone-image endpoints outside the generic firmware route so manifest and partition requests cannot be swallowed by the firmware status handler.
 - Raised station Wi-Fi transmit power from 8.5 dBm to a conservative 15 dBm ceiling for more reliable mesh and OTA links without using the radio's 20 dBm maximum.

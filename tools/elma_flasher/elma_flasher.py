@@ -47,6 +47,17 @@ RED = "#b42318"
 GREEN = "#18864b"
 CHIP_FAMILIES = {"esp32": "ESP32", "esp32s3": "ESP32-S3"}
 CHIP_CHOICES = {"auto": "Auto-detect (recommended)", **CHIP_FAMILIES}
+KNOWN_CHIP_MODELS = {
+    "esp32s3": "ESP32-S3",
+    "esp32c3": "ESP32-C3",
+    "esp32c6": "ESP32-C6",
+    "esp32s2": "ESP32-S2",
+    "esp32h2": "ESP32-H2",
+    "esp32c2": "ESP32-C2",
+    "esp32c5": "ESP32-C5",
+    "esp32p4": "ESP32-P4",
+    "esp32": "ESP32",
+}
 
 
 def resource_path(relative: str) -> pathlib.Path:
@@ -93,11 +104,15 @@ def chip_family_from_image(data: bytes) -> str:
 
 def chip_family_from_esptool_output(output: str) -> str:
     normalized = output.upper().replace("_", "-")
-    if re.search(r"\bESP32-S3\b", normalized):
-        return "esp32s3"
-    if re.search(r"\bESP32\b", normalized):
-        return "esp32"
-    raise RuntimeError("The flashing engine connected, but did not report a supported ESP32 chip family.")
+    for model, label in KNOWN_CHIP_MODELS.items():
+        if re.search(rf"\b{re.escape(label)}\b", normalized):
+            return model
+    raise RuntimeError("The flashing engine connected, but did not report a recognized ESP chip model.")
+
+
+def flash_size_from_esptool_output(output: str) -> str:
+    match = re.search(r"(?:Embedded\s+)?Flash\s+(\d+)\s*(MB|KB)\b", output, re.I)
+    return f"{match.group(1)} {match.group(2).upper()}" if match else ""
 
 
 def crc32(data: bytes) -> int:
@@ -673,8 +688,8 @@ class FlasherApplication:
 
     def _detect_chip_worker(self, port: str) -> None:
         try:
-            family = self._detect_target_chip(port)
-            self._emit("chip_detected", family)
+            model, flash_size = self._detect_target_chip(port)
+            self._emit("chip_detected", model, flash_size)
         except BaseException as error:
             self._emit("chip_detection_error", friendly_error(error))
 
@@ -705,8 +720,11 @@ class FlasherApplication:
                 elif event[0] == "chip_detected":
                     self.detecting_chip = False
                     self.detected_family = event[1]
-                    self.detected_chip.set(f"Detected: {CHIP_FAMILIES[event[1]]}")
-                    self.detected_chip_label.configure(fg=GREEN)
+                    model_label = KNOWN_CHIP_MODELS.get(event[1], event[1].upper())
+                    flash_label = f" · {event[2]}" if event[2] else ""
+                    unsupported = event[1] not in CHIP_FAMILIES
+                    self.detected_chip.set(f"Detected: {model_label}{flash_label}{' (unsupported)' if unsupported else ''}")
+                    self.detected_chip_label.configure(fg=RED if unsupported else GREEN)
                 elif event[0] == "chip_detection_error":
                     self.detecting_chip = False
                     self.detected_family = ""
@@ -806,7 +824,7 @@ class FlasherApplication:
         partitions = (asset_base / "partitions.bin").read_bytes()
         return family, [(bootloader_address, bootloader), (0x8000, partitions), (APPLICATION_ADDRESS, application)], None
 
-    def _detect_target_chip(self, port: str) -> str:
+    def _detect_target_chip(self, port: str) -> tuple[str, str]:
         lines: list[str] = []
 
         def capture(line: str) -> None:
@@ -823,7 +841,8 @@ class FlasherApplication:
                 raise RuntimeError(f"Automatic chip detection stopped with code {error.code}.") from error
         finally:
             bridge.flush()
-        return chip_family_from_esptool_output("\n".join(lines))
+        output = "\n".join(lines)
+        return chip_family_from_esptool_output(output), flash_size_from_esptool_output(output)
 
     def _esptool(self, arguments: list[str]) -> None:
         bridge = EsptoolOutput(self._handle_esptool_line)
@@ -935,17 +954,20 @@ class FlasherApplication:
                 )
             self._emit("status", 14, "Detecting target chip", f"Checking the ESP connected on {port} before any erase or write.", ORANGE)
             try:
-                detected_family = self._detect_target_chip(port)
-                self._emit("chip_detected", detected_family)
+                detected_family, detected_flash_size = self._detect_target_chip(port)
+                self._emit("chip_detected", detected_family, detected_flash_size)
             except BaseException:
                 if requested_family == "auto":
                     raise
                 detected_family = requested_family
+                detected_flash_size = ""
                 self._log(f"Automatic detection unavailable; using manual {CHIP_FAMILIES[requested_family]} override. Espressif's loader will still verify the chip before writing.")
             if detected_family != family:
+                detected_label = KNOWN_CHIP_MODELS.get(detected_family, detected_family.upper())
+                flash_detail = f" with {detected_flash_size} flash" if detected_flash_size else ""
                 raise RuntimeError(
-                    f"Connected target is {CHIP_FAMILIES[detected_family]}, but the selected firmware is for {CHIP_FAMILIES[family]}. "
-                    "Nothing was erased or written. Select matching firmware."
+                    f"Connected target reports {detected_label}{flash_detail}, but the selected firmware is compiled for {CHIP_FAMILIES[family]}. "
+                    "Flash capacity does not make different ESP chip architectures compatible. Nothing was erased or written."
                 )
             self._write_flash(port, family, parts, bool(job["erase"]))
             if configuration is not None:
@@ -993,6 +1015,9 @@ def self_test() -> int:
     if chip_family_from_image(esp32_header) != "esp32" or chip_family_from_image(esp32s3_header) != "esp32s3":
         return 5
     if chip_family_from_esptool_output("Chip is ESP32-S3") != "esp32s3" or chip_family_from_esptool_output("Chip is ESP32") != "esp32":
+        return 5
+    c3_output = "Chip type: ESP32-C3 (revision v0.4)\nFeatures: Wi-Fi, Embedded Flash 4MB (XMC)"
+    if chip_family_from_esptool_output(c3_output) != "esp32c3" or flash_size_from_esptool_output(c3_output) != "4 MB":
         return 5
     clone = sanitize_clone_configuration({
         "device": {"deviceName": "source", "friendlyName": "Source"},
