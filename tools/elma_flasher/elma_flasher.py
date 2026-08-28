@@ -5,7 +5,9 @@ from __future__ import annotations
 import base64
 import binascii
 import contextlib
+import ctypes
 import io
+import ipaddress
 import json
 import os
 import pathlib
@@ -28,6 +30,7 @@ from serial.tools import list_ports
 
 
 APP_VERSION = "0.1.29"
+WINDOWS_APP_USER_MODEL_ID = "ELMA.IoT.Flasher"
 FLASH_BAUD = 460800
 CONSOLE_BAUD = 115200
 OTA_DATA_ADDRESS = 0xE000
@@ -42,11 +45,39 @@ WHITE = "#fffdf8"
 MUTED = "#6e6961"
 RED = "#b42318"
 GREEN = "#18864b"
+CHIP_FAMILIES = {"esp32": "ESP32", "esp32s3": "ESP32-S3"}
+CHIP_CHOICES = {"auto": "Auto-detect (recommended)", **CHIP_FAMILIES}
 
 
 def resource_path(relative: str) -> pathlib.Path:
     base = pathlib.Path(getattr(sys, "_MEIPASS", pathlib.Path(__file__).resolve().parent))
     return base / relative
+
+
+def configure_windows_identity() -> None:
+    """Give the process its own Windows taskbar identity before creating a window."""
+    if sys.platform == "win32":
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(WINDOWS_APP_USER_MODEL_ID)
+
+
+def window_has_windows_icon(root: tk.Tk) -> bool:
+    """Confirm that the native top-level window exposes a taskbar icon handle."""
+    if sys.platform != "win32":
+        return True
+    user32 = ctypes.windll.user32
+    window = int(root.winfo_id())
+    handles = []
+    while window and window not in handles:
+        handles.append(window)
+        window = int(user32.GetParent(window))
+    wm_geticon = 0x007F
+    for handle in handles:
+        for icon_type in (1, 0, 2):  # ICON_BIG, ICON_SMALL, ICON_SMALL2
+            if user32.SendMessageW(handle, wm_geticon, icon_type, 0):
+                return True
+        if user32.GetClassLongPtrW(handle, -14) or user32.GetClassLongPtrW(handle, -34):
+            return True
+    return False
 
 
 def chip_family_from_image(data: bytes) -> str:
@@ -60,6 +91,15 @@ def chip_family_from_image(data: bytes) -> str:
     raise ValueError(f"Unsupported Espressif image chip ID 0x{chip_id:04X}.")
 
 
+def chip_family_from_esptool_output(output: str) -> str:
+    normalized = output.upper().replace("_", "-")
+    if re.search(r"\bESP32-S3\b", normalized):
+        return "esp32s3"
+    if re.search(r"\bESP32\b", normalized):
+        return "esp32"
+    raise RuntimeError("The flashing engine connected, but did not report a supported ESP32 chip family.")
+
+
 def crc32(data: bytes) -> int:
     return binascii.crc32(data) & 0xFFFFFFFF
 
@@ -70,14 +110,43 @@ def sanitize_clone_configuration(settings: object) -> dict:
     cloned = json.loads(json.dumps(settings))
     device = cloned.setdefault("device", {})
     mqtt = cloned.setdefault("mqtt", {})
+    wifi = cloned.setdefault("wifi", {})
     if isinstance(device, dict):
         device.pop("deviceName", None)
         device.pop("friendlyName", None)
     if isinstance(mqtt, dict):
         mqtt.pop("clientId", None)
         mqtt.pop("baseTopic", None)
+    if isinstance(wifi, dict):
+        # A source device's static address must never be duplicated onto a new
+        # device. It can be supplied explicitly in Preconfigure target instead.
+        wifi["useStaticIp"] = False
+        for field in ("staticIp", "gateway", "subnet", "dns1", "dns2"):
+            wifi.pop(field, None)
     cloned.pop("usingSavedSettings", None)
     return cloned
+
+
+def merge_configuration(base: dict, overrides: dict) -> dict:
+    merged = json.loads(json.dumps(base))
+    for section, values in overrides.items():
+        if not isinstance(values, dict):
+            merged[section] = values
+            continue
+        target = merged.setdefault(section, {})
+        if not isinstance(target, dict):
+            target = {}
+            merged[section] = target
+        target.update(values)
+    # These identities are always derived by firmware from the target efuse MAC.
+    device = merged.setdefault("device", {})
+    mqtt = merged.setdefault("mqtt", {})
+    if isinstance(device, dict):
+        device.pop("deviceName", None)
+    if isinstance(mqtt, dict):
+        mqtt.pop("clientId", None)
+        mqtt.pop("baseTopic", None)
+    return merged
 
 
 def friendly_error(error: BaseException) -> str:
@@ -164,8 +233,9 @@ class EsptoolOutput(io.TextIOBase):
 
 
 class FlasherApplication:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, auto_detect_chip: bool = True) -> None:
         self.root = root
+        self.auto_detect_chip = auto_detect_chip
         self.events: queue.Queue[tuple] = queue.Queue()
         self.busy = False
         self.last_ip = ""
@@ -176,6 +246,38 @@ class FlasherApplication:
         self.password = tk.StringVar(value="")
         self.firmware_file = tk.StringVar(value="")
         self.port = tk.StringVar(value="")
+        self.chip_choice = tk.StringVar(value="auto")
+        self.chip_choice_label = tk.StringVar(value=CHIP_CHOICES["auto"])
+        self.detected_chip = tk.StringVar(value="Detected: not checked")
+        self.firmware_family = tk.StringVar(value="Firmware: not selected")
+        self.preconfigure_enabled = tk.BooleanVar(value=False)
+        self.preconfigure_summary = tk.StringVar(value="Disabled — device or clone defaults will be used")
+        self.preconfigure_values: dict[str, object] = {
+            "friendly_name": "",
+            "wifi_ssid": "",
+            "wifi_password": "",
+            "use_static_ip": False,
+            "static_ip": "",
+            "gateway": "",
+            "subnet": "",
+            "dns1": "",
+            "dns2": "",
+            "mqtt_host": "",
+            "mqtt_port": "",
+            "mqtt_username": "",
+            "mqtt_password": "",
+            "mqtt_discovery": "default",
+            "ap_ssid": "",
+            "ap_password": "",
+            "ap_fallback": "default",
+            "web_auth": "default",
+            "web_username": "",
+            "web_password": "",
+        }
+        self.selected_image_family = ""
+        self.detected_family = ""
+        self.detecting_chip = False
+        self.esptool_lock = threading.Lock()
         self.status = tk.StringVar(value="Ready to flash another ESP device")
         self.detail = tk.StringVar(value="Connect the target using a USB data cable, then select its COM port.")
         self.progress = 0
@@ -186,6 +288,9 @@ class FlasherApplication:
 
     def _configure_window(self) -> None:
         self.root.title(f"ELMA Flasher v{APP_VERSION}")
+        self.window_icon_path = resource_path("assets/ELMA-Flasher.ico")
+        self.root.iconbitmap(default=str(self.window_icon_path))
+        self.window_icon_applied = True
         self.root.geometry("860x760")
         self.root.minsize(760, 690)
         self.root.configure(bg=PAPER)
@@ -236,6 +341,11 @@ class FlasherApplication:
         self.file_entry.grid(row=4, column=0, columnspan=5, sticky="ew", padx=(24, 8), ipady=6)
         self.browse_button = tk.Button(options, text="Browse…", command=self.choose_file, state="disabled", bg="#eceae5", fg=DARK, relief="solid", bd=1, padx=14, pady=5)
         self.browse_button.grid(row=4, column=5, sticky="ew")
+        self.file_entry.bind("<FocusOut>", lambda _event: self._inspect_selected_firmware(False))
+        self.file_entry.bind("<Return>", lambda _event: self._inspect_selected_firmware(True))
+        tk.Checkbutton(options, text="Preconfigure target", variable=self.preconfigure_enabled, command=self._update_preconfigure_summary, bg=WHITE, activebackground=WHITE, selectcolor=WHITE, fg=DARK, font=("Segoe UI", 10, "bold")).grid(row=5, column=0, sticky="w", pady=(12, 0))
+        tk.Label(options, textvariable=self.preconfigure_summary, bg=WHITE, fg=MUTED, font=("Segoe UI", 8), anchor="w").grid(row=5, column=1, columnspan=4, sticky="ew", padx=(8, 8), pady=(12, 0))
+        tk.Button(options, text="Configure…", command=self.open_preconfiguration, bg="#eceae5", fg=DARK, relief="solid", bd=1, padx=14, pady=5).grid(row=5, column=5, sticky="ew", pady=(12, 0))
         options.columnconfigure(1, weight=1)
         options.columnconfigure(3, weight=1)
 
@@ -245,7 +355,20 @@ class FlasherApplication:
         port_card.pack(side="left", fill="both", expand=True, padx=(0, 7))
         self.port_combo = ttk.Combobox(port_card, textvariable=self.port, state="readonly", font=("Segoe UI", 10))
         self.port_combo.pack(side="left", fill="x", expand=True)
+        self.port_combo.bind("<<ComboboxSelected>>", lambda _event: self.detect_selected_chip())
         tk.Button(port_card, text="Refresh", command=self.refresh_ports, bg="#eceae5", fg=DARK, relief="solid", bd=1, padx=12, pady=6).pack(side="left", padx=(8, 0))
+
+        chip_card = tk.LabelFrame(target, text=" Target chip ", bg=WHITE, fg=DARK, font=("Segoe UI", 11, "bold"), bd=1, relief="solid", padx=12, pady=7)
+        chip_card.pack(side="left", fill="both", expand=True, padx=7)
+        self.chip_button = tk.Menubutton(chip_card, textvariable=self.chip_choice_label, bg="#eceae5", fg=DARK, activebackground="#e0ddd6", relief="solid", bd=1, padx=10, pady=5, indicatoron=True)
+        self.chip_menu = tk.Menu(self.chip_button, tearoff=False)
+        self.chip_button.configure(menu=self.chip_menu)
+        for family, label in CHIP_CHOICES.items():
+            self.chip_menu.add_radiobutton(label=label, variable=self.chip_choice, value=family, command=self._update_chip_choice_label)
+        self.chip_button.pack(fill="x")
+        self.detected_chip_label = tk.Label(chip_card, textvariable=self.detected_chip, bg=WHITE, fg=MUTED, font=("Segoe UI", 8), anchor="w")
+        self.detected_chip_label.pack(fill="x", pady=(4, 0))
+        tk.Label(chip_card, textvariable=self.firmware_family, bg=WHITE, fg=MUTED, font=("Segoe UI", 8), anchor="w").pack(fill="x")
 
         erase_card = tk.LabelFrame(target, text=" Clean target before flashing? ", bg=WHITE, fg=DARK, font=("Segoe UI", 11, "bold"), bd=1, relief="solid", padx=12, pady=8)
         erase_card.pack(side="left", fill="both", expand=True, padx=(7, 0))
@@ -280,11 +403,244 @@ class FlasherApplication:
         clone_state = "normal" if self.mode.get() == "clone" else "disabled"
         for control in (self.source_entry, self.user_entry, self.password_entry):
             control.configure(state=clone_state)
+        if self.mode.get() == "file":
+            self._inspect_selected_firmware(False)
+        else:
+            self._set_selected_image_family("")
+
+    def _update_chip_choice_label(self) -> None:
+        choice = self.chip_choice.get()
+        self.chip_choice_label.set(CHIP_CHOICES.get(choice, CHIP_CHOICES["auto"]))
+
+    def _set_selected_image_family(self, family: str) -> None:
+        self.selected_image_family = family if family in CHIP_FAMILIES else ""
+        if self.selected_image_family:
+            self.firmware_family.set(f"Firmware: {CHIP_FAMILIES[self.selected_image_family]}")
+        elif self.mode.get() == "clone":
+            self.firmware_family.set("Firmware: determined from source")
+        else:
+            self.firmware_family.set("Firmware: not selected")
+        for index, candidate in enumerate(CHIP_FAMILIES, start=1):
+            compatible = not self.selected_image_family or candidate == self.selected_image_family
+            self.chip_menu.entryconfigure(index, state="normal" if compatible else "disabled")
+        if self.chip_choice.get() not in ("auto", self.selected_image_family) and self.selected_image_family:
+            self.chip_choice.set("auto")
+            self._update_chip_choice_label()
+
+    def _inspect_selected_firmware(self, show_error: bool) -> None:
+        if self.mode.get() != "file":
+            return
+        value = self.firmware_file.get().strip()
+        if not value:
+            self._set_selected_image_family("")
+            return
+        try:
+            path = pathlib.Path(value)
+            with path.open("rb") as stream:
+                family = chip_family_from_image(stream.read(24))
+            self._set_selected_image_family(family)
+        except (OSError, ValueError) as error:
+            self._set_selected_image_family("")
+            self.firmware_family.set("Firmware: invalid or unsupported")
+            if show_error:
+                messagebox.showerror("ELMA Flasher", str(error))
+
+    def _update_preconfigure_summary(self) -> None:
+        if not self.preconfigure_enabled.get():
+            self.preconfigure_summary.set("Disabled — device or clone defaults will be used")
+            return
+        try:
+            overrides = self._preconfiguration_overrides(self.preconfigure_values)
+            fields = sum(len(values) for values in overrides.values() if isinstance(values, dict))
+            self.preconfigure_summary.set(f"Enabled — {fields} explicit override{'s' if fields != 1 else ''}; blank fields use device defaults")
+        except ValueError:
+            self.preconfigure_summary.set("Enabled — configuration needs correction")
+
+    @staticmethod
+    def _preconfiguration_overrides(values: dict[str, object]) -> dict:
+        text = {key: str(value).strip() for key, value in values.items() if key != "use_static_ip"}
+        overrides: dict[str, dict] = {}
+
+        friendly_name = text.get("friendly_name", "")
+        if len(friendly_name) > 64:
+            raise ValueError("Friendly device name must be 64 characters or fewer.")
+        if friendly_name:
+            overrides.setdefault("device", {})["friendlyName"] = friendly_name
+
+        ssid = text.get("wifi_ssid", "")
+        wifi_password = text.get("wifi_password", "")
+        if len(ssid) > 32:
+            raise ValueError("Wi-Fi SSID must be 32 characters or fewer.")
+        if len(wifi_password) > 63:
+            raise ValueError("Wi-Fi password must be 63 characters or fewer.")
+        if wifi_password and not ssid:
+            raise ValueError("Enter a Wi-Fi SSID when supplying a Wi-Fi password.")
+        if ssid:
+            wifi = overrides.setdefault("wifi", {})
+            wifi["ssid"] = ssid
+            wifi["password"] = wifi_password
+
+        use_static_ip = bool(values.get("use_static_ip", False))
+        if use_static_ip:
+            required = {"staticIp": text.get("static_ip", ""), "gateway": text.get("gateway", ""), "subnet": text.get("subnet", "")}
+            if not all(required.values()):
+                raise ValueError("Static IP, gateway and subnet are required when static addressing is enabled.")
+            for label, value in {**required, "dns1": text.get("dns1", ""), "dns2": text.get("dns2", "")}.items():
+                if value:
+                    try:
+                        if ipaddress.ip_address(value).version != 4:
+                            raise ValueError
+                    except ValueError as error:
+                        raise ValueError(f"{label} must be a valid IPv4 address.") from error
+            wifi = overrides.setdefault("wifi", {})
+            wifi.update({"useStaticIp": True, **required})
+            if text.get("dns1"):
+                wifi["dns1"] = text["dns1"]
+            if text.get("dns2"):
+                wifi["dns2"] = text["dns2"]
+
+        mqtt_fields = {
+            "host": text.get("mqtt_host", ""),
+            "username": text.get("mqtt_username", ""),
+            "password": text.get("mqtt_password", ""),
+        }
+        for key, value in mqtt_fields.items():
+            if value:
+                overrides.setdefault("mqtt", {})[key] = value
+        mqtt_port = text.get("mqtt_port", "")
+        if mqtt_port:
+            try:
+                port = int(mqtt_port)
+            except ValueError as error:
+                raise ValueError("MQTT port must be a number from 1 to 65535.") from error
+            if not 1 <= port <= 65535:
+                raise ValueError("MQTT port must be a number from 1 to 65535.")
+            overrides.setdefault("mqtt", {})["port"] = port
+        mqtt_discovery = text.get("mqtt_discovery", "default")
+        if mqtt_discovery in ("enabled", "disabled"):
+            overrides.setdefault("mqtt", {})["discoveryEnabled"] = mqtt_discovery == "enabled"
+
+        ap_ssid = text.get("ap_ssid", "")
+        ap_password = text.get("ap_password", "")
+        if len(ap_ssid) > 32:
+            raise ValueError("Fallback AP name must be 32 characters or fewer.")
+        if ap_password and len(ap_password) < 8:
+            raise ValueError("Fallback AP password must contain at least 8 characters.")
+        if ap_ssid:
+            overrides.setdefault("wifi", {})["apSsid"] = ap_ssid
+        if ap_password:
+            overrides.setdefault("wifi", {})["apPassword"] = ap_password
+        ap_fallback = text.get("ap_fallback", "default")
+        if ap_fallback in ("enabled", "disabled"):
+            overrides.setdefault("wifi", {})["apFallbackEnabled"] = ap_fallback == "enabled"
+
+        web_auth = text.get("web_auth", "default")
+        web_username = text.get("web_username", "")
+        web_password = text.get("web_password", "")
+        if web_auth == "enabled" and (not web_username or not web_password):
+            raise ValueError("Web username and password are required when web authentication is enabled.")
+        if web_auth in ("enabled", "disabled"):
+            web = overrides.setdefault("webAuth", {})
+            web["enabled"] = web_auth == "enabled"
+            if web_username:
+                web["username"] = web_username
+            if web_password:
+                web["password"] = web_password
+        return overrides
+
+    def open_preconfiguration(self) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Preconfigure target — ELMA Flasher")
+        dialog.geometry("640x610")
+        dialog.minsize(600, 560)
+        dialog.configure(bg=PAPER)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.iconbitmap(default=str(self.window_icon_path))
+
+        header = tk.Frame(dialog, bg=DARK, height=64)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        tk.Label(header, text="Preconfigure target", bg=DARK, fg=WHITE, font=("Segoe UI", 17, "bold")).pack(anchor="w", padx=20, pady=(10, 0))
+        tk.Label(header, text="Blank fields retain the flashed device or cloned configuration defaults.", bg=DARK, fg="#d9d5ce", font=("Segoe UI", 9)).pack(anchor="w", padx=20)
+
+        local: dict[str, tk.Variable] = {}
+        for key, value in self.preconfigure_values.items():
+            local[key] = tk.BooleanVar(value=bool(value)) if key == "use_static_ip" else tk.StringVar(value=str(value))
+
+        notebook = ttk.Notebook(dialog)
+        notebook.pack(fill="both", expand=True, padx=18, pady=16)
+
+        def page(title: str) -> tk.Frame:
+            frame = tk.Frame(notebook, bg=WHITE, padx=18, pady=16)
+            frame.columnconfigure(1, weight=1)
+            notebook.add(frame, text=title)
+            return frame
+
+        def field(parent: tk.Frame, row: int, label: str, key: str, secret: bool = False) -> tk.Entry:
+            tk.Label(parent, text=label, bg=WHITE, fg=DARK, anchor="w").grid(row=row, column=0, sticky="w", padx=(0, 12), pady=6)
+            entry = tk.Entry(parent, textvariable=local[key], show="•" if secret else "", relief="solid", bd=1)
+            entry.grid(row=row, column=1, sticky="ew", pady=6, ipady=5)
+            return entry
+
+        network = page("Identity & Wi-Fi")
+        tk.Label(network, text="Hardware identity", bg=WHITE, fg=DARK, font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 6))
+        tk.Label(network, text="Generated from the target chip hardware ID — never cloned or editable", bg=WHITE, fg=GREEN, anchor="w").grid(row=0, column=1, sticky="w", pady=(0, 6))
+        field(network, 1, "Friendly device name", "friendly_name")
+        field(network, 2, "Wi-Fi SSID", "wifi_ssid")
+        field(network, 3, "Wi-Fi password", "wifi_password", True)
+        tk.Checkbutton(network, text="Use a new static IP (source IP is never cloned)", variable=local["use_static_ip"], bg=WHITE, activebackground=WHITE, selectcolor=WHITE).grid(row=4, column=0, columnspan=2, sticky="w", pady=(10, 2))
+        field(network, 5, "Static IP", "static_ip")
+        field(network, 6, "Gateway", "gateway")
+        field(network, 7, "Subnet", "subnet")
+        field(network, 8, "DNS 1", "dns1")
+        field(network, 9, "DNS 2", "dns2")
+
+        mqtt = page("MQTT")
+        tk.Label(mqtt, text="MQTT client ID and base topic stay tied to the target hardware ID.", bg=WHITE, fg=GREEN, anchor="w", wraplength=500, justify="left").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        field(mqtt, 1, "Broker host", "mqtt_host")
+        field(mqtt, 2, "Broker port", "mqtt_port")
+        field(mqtt, 3, "Username", "mqtt_username")
+        field(mqtt, 4, "Password", "mqtt_password", True)
+        tk.Label(mqtt, text="Home Assistant discovery", bg=WHITE, fg=DARK).grid(row=5, column=0, sticky="w", pady=6)
+        ttk.Combobox(mqtt, textvariable=local["mqtt_discovery"], state="readonly", values=("default", "enabled", "disabled")).grid(row=5, column=1, sticky="ew", pady=6)
+
+        access = page("Fallback AP & Web")
+        field(access, 0, "Fallback AP name", "ap_ssid")
+        field(access, 1, "Fallback AP password", "ap_password", True)
+        tk.Label(access, text="Fallback AP", bg=WHITE, fg=DARK).grid(row=2, column=0, sticky="w", pady=6)
+        ttk.Combobox(access, textvariable=local["ap_fallback"], state="readonly", values=("default", "enabled", "disabled")).grid(row=2, column=1, sticky="ew", pady=6)
+        tk.Label(access, text="Web authentication", bg=WHITE, fg=DARK).grid(row=3, column=0, sticky="w", pady=(18, 6))
+        ttk.Combobox(access, textvariable=local["web_auth"], state="readonly", values=("default", "enabled", "disabled")).grid(row=3, column=1, sticky="ew", pady=(18, 6))
+        field(access, 4, "Web username", "web_username")
+        field(access, 5, "Web password", "web_password", True)
+
+        footer = tk.Frame(dialog, bg=PAPER)
+        footer.pack(fill="x", padx=18, pady=(0, 16))
+
+        def save() -> None:
+            values = {key: variable.get() for key, variable in local.items()}
+            try:
+                self._preconfiguration_overrides(values)
+            except ValueError as error:
+                messagebox.showerror("ELMA Flasher", str(error), parent=dialog)
+                return
+            self.preconfigure_values = values
+            self.preconfigure_enabled.set(True)
+            self._update_preconfigure_summary()
+            dialog.destroy()
+
+        tk.Button(footer, text="Save & Enable", command=save, bg=ORANGE, fg=WHITE, activebackground="#d97e00", activeforeground=WHITE, relief="flat", font=("Segoe UI", 11, "bold"), pady=8).pack(side="right", fill="x", expand=True, padx=(8, 0))
+        tk.Button(footer, text="Cancel", command=dialog.destroy, bg="#eceae5", fg=DARK, relief="solid", bd=1, pady=8).pack(side="left", fill="x", expand=True, padx=(0, 8))
 
     def choose_file(self) -> None:
         value = filedialog.askopenfilename(title="Select ELMA firmware", filetypes=[("ESP32 firmware", "*.bin"), ("All files", "*.*")])
         if value:
             self.firmware_file.set(value)
+            self._inspect_selected_firmware(True)
+
+    def _selected_port(self) -> str:
+        return self.port.get().split(" — ", 1)[0].strip()
 
     def refresh_ports(self) -> None:
         ports = sorted(list_ports.comports(), key=lambda item: item.device)
@@ -296,9 +652,31 @@ class FlasherApplication:
             self.port.set(matching)
         if not self.port.get() and labels:
             self.port.set(labels[0])
+        if self.port.get() and self.auto_detect_chip:
+            self.root.after(50, self.detect_selected_chip)
         if not labels:
             self.port.set("")
+            self.detected_family = ""
+            self.detected_chip.set("Detected: no serial device")
+            self.detected_chip_label.configure(fg=RED)
             self._set_status(0, "No USB serial device detected", "Connect the ESP with a data-capable USB cable, allow Windows to install its driver, then press Refresh.", RED)
+
+    def detect_selected_chip(self) -> None:
+        port = self._selected_port()
+        if not port or self.detecting_chip or self.busy:
+            return
+        self.detecting_chip = True
+        self.detected_family = ""
+        self.detected_chip.set("Detected: checking…")
+        self.detected_chip_label.configure(fg=ORANGE)
+        threading.Thread(target=self._detect_chip_worker, args=(port,), daemon=True).start()
+
+    def _detect_chip_worker(self, port: str) -> None:
+        try:
+            family = self._detect_target_chip(port)
+            self._emit("chip_detected", family)
+        except BaseException as error:
+            self._emit("chip_detection_error", friendly_error(error))
 
     def _emit(self, kind: str, *values) -> None:
         self.events.put((kind, *values))
@@ -324,6 +702,19 @@ class FlasherApplication:
                     self.log.configure(state="disabled")
                 elif event[0] == "status":
                     self._set_status(*event[1:])
+                elif event[0] == "chip_detected":
+                    self.detecting_chip = False
+                    self.detected_family = event[1]
+                    self.detected_chip.set(f"Detected: {CHIP_FAMILIES[event[1]]}")
+                    self.detected_chip_label.configure(fg=GREEN)
+                elif event[0] == "chip_detection_error":
+                    self.detecting_chip = False
+                    self.detected_family = ""
+                    self.detected_chip.set("Detected: unavailable")
+                    self.detected_chip_label.configure(fg=RED)
+                    self._log(f"Chip detection: {event[1]}")
+                elif event[0] == "firmware_family":
+                    self._set_selected_image_family(event[1])
                 elif event[0] == "complete":
                     self.busy = False
                     self.flash_button.configure(state="normal", text="Flash USB Device")
@@ -342,12 +733,17 @@ class FlasherApplication:
     def start(self) -> None:
         if self.busy:
             return
-        port = self.port.get().split(" — ", 1)[0].strip()
+        port = self._selected_port()
         if not port:
             messagebox.showerror("ELMA Flasher", "Select a connected USB serial device.")
             return
         if self.mode.get() == "file" and not self.firmware_file.get().strip():
             messagebox.showerror("ELMA Flasher", "Select an ESP32 application .bin file.")
+            return
+        try:
+            preconfiguration = self._preconfiguration_overrides(self.preconfigure_values) if self.preconfigure_enabled.get() else {}
+        except ValueError as error:
+            messagebox.showerror("ELMA Flasher", str(error))
             return
         self.busy = True
         self.last_ip = ""
@@ -363,6 +759,8 @@ class FlasherApplication:
             "password": self.password.get(),
             "firmware_file": self.firmware_file.get(),
             "erase": self.erase.get() == "yes",
+            "chip_choice": self.chip_choice.get(),
+            "preconfiguration": preconfiguration,
         }
         threading.Thread(target=self._flash_worker, args=(port, job), daemon=True).start()
 
@@ -408,10 +806,29 @@ class FlasherApplication:
         partitions = (asset_base / "partitions.bin").read_bytes()
         return family, [(bootloader_address, bootloader), (0x8000, partitions), (APPLICATION_ADDRESS, application)], None
 
+    def _detect_target_chip(self, port: str) -> str:
+        lines: list[str] = []
+
+        def capture(line: str) -> None:
+            lines.append(line)
+            self._log(line)
+
+        bridge = EsptoolOutput(capture)
+        arguments = ["--chip", "auto", "--port", port, "--baud", "115200", "--before", "default-reset", "--after", "hard-reset", "chip-id"]
+        try:
+            with self.esptool_lock, contextlib.redirect_stdout(bridge), contextlib.redirect_stderr(bridge):
+                esptool.main(arguments)
+        except SystemExit as error:
+            if error.code not in (None, 0):
+                raise RuntimeError(f"Automatic chip detection stopped with code {error.code}.") from error
+        finally:
+            bridge.flush()
+        return chip_family_from_esptool_output("\n".join(lines))
+
     def _esptool(self, arguments: list[str]) -> None:
         bridge = EsptoolOutput(self._handle_esptool_line)
         try:
-            with contextlib.redirect_stdout(bridge), contextlib.redirect_stderr(bridge):
+            with self.esptool_lock, contextlib.redirect_stdout(bridge), contextlib.redirect_stderr(bridge):
                 esptool.main(arguments)
         except SystemExit as error:
             if error.code not in (None, 0):
@@ -447,7 +864,7 @@ class FlasherApplication:
                 write_arguments.extend([f"0x{address:X}", str(path)])
             self._esptool(write_arguments)
 
-    def _provision(self, port: str, configuration: dict) -> str:
+    def _provision(self, port: str, configuration: dict, expect_wifi_ip: bool) -> str:
         payload = json.dumps(configuration, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         checksum = crc32(payload)
         header = f"ELMA_CLONE_CONFIG {len(payload)} {checksum:08X}\n".encode()
@@ -481,6 +898,8 @@ class FlasherApplication:
                             raise RuntimeError(line.split("error=", 1)[1])
                         if "[clone] configuration applied" in line:
                             applied = True
+                            if not expect_wifi_ip:
+                                return ""
                             self._emit("status", 97, "Configuration saved", "Target identity regenerated; waiting for Wi-Fi.", ORANGE)
                         match = re.search(r"\[wifi\].*station connected.*\bip=(\d{1,3}(?:\.\d{1,3}){3})", line, re.I)
                         if applied and match:
@@ -502,12 +921,44 @@ class FlasherApplication:
                 family, parts, configuration = self._prepare_clone(job)
             else:
                 family, parts, configuration = self._prepare_file(job)
-            self._log(f"Image target: {family}")
+            self._emit("firmware_family", family)
+            self._log(f"Image target: {CHIP_FAMILIES[family]}")
+            overrides = job.get("preconfiguration", {})
+            if overrides:
+                configuration = merge_configuration(configuration or {}, overrides)
+                self._log("Optional target preconfiguration will be applied after flashing.")
+            requested_family = str(job.get("chip_choice", "auto"))
+            if requested_family != "auto" and requested_family != family:
+                raise RuntimeError(
+                    f"Manual target selection {CHIP_FAMILIES.get(requested_family, requested_family)} is incompatible with "
+                    f"this {CHIP_FAMILIES[family]} firmware. Choose Auto-detect or {CHIP_FAMILIES[family]}."
+                )
+            self._emit("status", 14, "Detecting target chip", f"Checking the ESP connected on {port} before any erase or write.", ORANGE)
+            try:
+                detected_family = self._detect_target_chip(port)
+                self._emit("chip_detected", detected_family)
+            except BaseException:
+                if requested_family == "auto":
+                    raise
+                detected_family = requested_family
+                self._log(f"Automatic detection unavailable; using manual {CHIP_FAMILIES[requested_family]} override. Espressif's loader will still verify the chip before writing.")
+            if detected_family != family:
+                raise RuntimeError(
+                    f"Connected target is {CHIP_FAMILIES[detected_family]}, but the selected firmware is for {CHIP_FAMILIES[family]}. "
+                    "Nothing was erased or written. Select matching firmware."
+                )
             self._write_flash(port, family, parts, bool(job["erase"]))
             if configuration is not None:
-                ip_address = self._provision(port, configuration)
-                self._emit("status", 100, "Clone complete", f"The target connected using its own hardware identity at {ip_address}.", GREEN)
-                self._emit("complete", ip_address, f"Clone completed successfully.\n\nNew device IP: {ip_address}")
+                wifi = configuration.get("wifi", {}) if isinstance(configuration, dict) else {}
+                expect_wifi_ip = isinstance(wifi, dict) and bool(str(wifi.get("ssid", "")).strip())
+                ip_address = self._provision(port, configuration, expect_wifi_ip)
+                operation = "Clone" if job["mode"] == "clone" else "Flash and configuration"
+                detail = f"The target connected using its own hardware identity at {ip_address}." if ip_address else "Configuration saved; the target retained its own hardware identity."
+                message = f"{operation} completed successfully."
+                if ip_address:
+                    message += f"\n\nNew device IP: {ip_address}"
+                self._emit("status", 100, f"{operation} complete", detail, GREEN)
+                self._emit("complete", ip_address, message)
             else:
                 self._emit("status", 100, "Flash complete", "Firmware was written, verified and the target was reset.", GREEN)
                 self._emit("complete", "", "Firmware flash completed successfully.")
@@ -524,6 +975,7 @@ class FlasherApplication:
 
 def self_test() -> int:
     required = [
+        resource_path("assets/ELMA-Flasher.ico"),
         resource_path("assets/esp32/bootloader.bin"),
         resource_path("assets/esp32/partitions.bin"),
         resource_path("assets/esp32s3/bootloader.bin"),
@@ -534,10 +986,36 @@ def self_test() -> int:
         return 2
     if not getattr(esptool, "main", None) or not getattr(serial, "Serial", None):
         return 3
+    esp32_header = bytearray(24)
+    esp32_header[0] = 0xE9
+    esp32s3_header = bytearray(esp32_header)
+    esp32s3_header[12] = 0x09
+    if chip_family_from_image(esp32_header) != "esp32" or chip_family_from_image(esp32s3_header) != "esp32s3":
+        return 5
+    if chip_family_from_esptool_output("Chip is ESP32-S3") != "esp32s3" or chip_family_from_esptool_output("Chip is ESP32") != "esp32":
+        return 5
+    clone = sanitize_clone_configuration({
+        "device": {"deviceName": "source", "friendlyName": "Source"},
+        "mqtt": {"host": "broker", "clientId": "source", "baseTopic": "source/topic"},
+        "wifi": {"ssid": "mesh", "useStaticIp": True, "staticIp": "192.168.1.40"},
+    })
+    overrides = FlasherApplication._preconfiguration_overrides({
+        "friendly_name": "Kitchen", "wifi_ssid": "mesh", "wifi_password": "secret", "use_static_ip": True,
+        "static_ip": "192.168.1.42", "gateway": "192.168.1.1", "subnet": "255.255.255.0", "dns1": "", "dns2": "",
+        "mqtt_host": "broker", "mqtt_port": "1883", "mqtt_username": "", "mqtt_password": "", "mqtt_discovery": "enabled",
+        "ap_ssid": "ELMA-Setup", "ap_password": "12345678", "ap_fallback": "enabled",
+        "web_auth": "default", "web_username": "", "web_password": "",
+    })
+    configured = merge_configuration(clone, overrides)
+    if configured["device"].get("friendlyName") != "Kitchen" or "deviceName" in configured["device"]:
+        return 6
+    if configured["wifi"].get("staticIp") != "192.168.1.42" or "clientId" in configured["mqtt"] or "baseTopic" in configured["mqtt"]:
+        return 6
     return 0
 
 
 def main() -> int:
+    configure_windows_identity()
     if "--self-test" in sys.argv:
         return self_test()
     if "--ui-smoke-test" in sys.argv:
@@ -546,13 +1024,16 @@ def main() -> int:
             return result
         root = tk.Tk()
         root.attributes("-alpha", 0.0)
-        app = FlasherApplication(root)
+        app = FlasherApplication(root, auto_detect_chip=False)
         root.update()
         button_bottom = app.flash_button.winfo_rooty() + app.flash_button.winfo_height()
         window_bottom = root.winfo_rooty() + root.winfo_height()
+        icon_ok = app.window_icon_path.is_file() and app.window_icon_applied and window_has_windows_icon(root)
+        app._set_selected_image_family("esp32")
+        compatibility_ok = self_test() == 0 and app.chip_menu.entrycget(1, "state") == "normal" and app.chip_menu.entrycget(2, "state") == "disabled"
         layout_ok = app.flash_button.winfo_ismapped() and button_bottom <= window_bottom
         root.destroy()
-        return 0 if layout_ok else 4
+        return 0 if layout_ok and icon_ok and compatibility_ok else 4
     root = tk.Tk()
     FlasherApplication(root)
     root.mainloop()

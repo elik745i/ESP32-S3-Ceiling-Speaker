@@ -2847,11 +2847,10 @@ void applyClonedConfiguration() {
         return;
     }
 
-    // Clone operational settings and credentials, but always bind every
-    // externally visible identity to the target chip's own efuse MAC.
+    // Bind protocol identities to the target efuse MAC. A deliberately supplied
+    // friendly display name may remain, but never controls MQTT IDs/topics.
     const SettingsBundle targetDefaults = settingsManager->defaults();
     cloned.device.deviceName = targetDefaults.device.deviceName;
-    cloned.device.friendlyName = targetDefaults.device.friendlyName;
     cloned.mqtt.clientId = targetDefaults.mqtt.clientId;
     cloned.mqtt.baseTopic = targetDefaults.mqtt.baseTopic;
     cloned.usingSavedSettings = true;

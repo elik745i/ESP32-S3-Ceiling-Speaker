@@ -62,10 +62,12 @@ if (-not $SkipInstall) {
 }
 
 $iconPath = Join-Path $buildRoot 'ELMA-Flasher.ico'
-& $python (Join-Path $projectRoot 'scripts\generate_elma_flasher_icon.py') $iconPath
-if ($LASTEXITCODE -ne 0) {
-    throw "ELMA Flasher icon generation failed with exit code $LASTEXITCODE."
+$iconSource = Join-Path $projectRoot 'web\elma_iot_favicon.ico'
+if (-not (Test-Path -LiteralPath $iconSource)) {
+    throw 'Missing the approved ELMA IoT icon at web\elma_iot_favicon.ico.'
 }
+Copy-Item -LiteralPath $iconSource -Destination $iconPath -Force
+Copy-Item -LiteralPath $iconSource -Destination (Join-Path $assetRoot 'ELMA-Flasher.ico') -Force
 
 & $python -m PyInstaller `
     --noconfirm `
