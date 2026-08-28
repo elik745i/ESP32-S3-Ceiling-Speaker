@@ -207,8 +207,15 @@ class FlasherApplication:
         tk.Label(titles, text="Portable ESP32 / ESP32-S3 cloning and firmware utility", bg=DARK, fg="#d9d5ce", font=("Segoe UI", 10)).pack(anchor="w")
         tk.Label(header, text=f"v{APP_VERSION}", bg=ORANGE, fg=WHITE, font=("Segoe UI", 10, "bold"), padx=12, pady=6).pack(side="right", padx=24)
 
+        # Reserve the primary action before the expanding body so Windows display
+        # scaling can never push the Flash button below the visible client area.
+        footer = tk.Frame(self.root, bg=PAPER)
+        footer.pack(side="bottom", fill="x", padx=22, pady=(0, 16))
+        self.flash_button = tk.Button(footer, text="Flash USB Device", command=self.start, bg=ORANGE, fg=WHITE, activebackground="#d97e00", activeforeground=WHITE, disabledforeground="#ddd8ce", relief="flat", font=("Segoe UI", 12, "bold"), pady=11)
+        self.flash_button.pack(fill="x")
+
         body = tk.Frame(self.root, bg=PAPER)
-        body.pack(fill="both", expand=True, padx=22, pady=18)
+        body.pack(side="top", fill="both", expand=True, padx=22, pady=(18, 12))
 
         options = tk.LabelFrame(body, text=" Firmware source ", bg=WHITE, fg=DARK, font=("Segoe UI", 11, "bold"), bd=1, relief="solid", padx=14, pady=10)
         options.pack(fill="x")
@@ -265,9 +272,6 @@ class FlasherApplication:
         scrollbar = ttk.Scrollbar(log_frame, command=self.log.yview)
         scrollbar.pack(side="right", fill="y")
         self.log.configure(yscrollcommand=scrollbar.set)
-
-        self.flash_button = tk.Button(body, text="Flash USB Device", command=self.start, bg=ORANGE, fg=WHITE, activebackground="#d97e00", activeforeground=WHITE, disabledforeground="#ddd8ce", relief="flat", font=("Segoe UI", 12, "bold"), pady=11)
-        self.flash_button.pack(fill="x", pady=(14, 0))
 
     def _update_mode(self) -> None:
         state = "normal" if self.mode.get() == "file" else "disabled"
@@ -541,11 +545,14 @@ def main() -> int:
         if result:
             return result
         root = tk.Tk()
-        root.withdraw()
-        FlasherApplication(root)
-        root.update_idletasks()
+        root.attributes("-alpha", 0.0)
+        app = FlasherApplication(root)
+        root.update()
+        button_bottom = app.flash_button.winfo_rooty() + app.flash_button.winfo_height()
+        window_bottom = root.winfo_rooty() + root.winfo_height()
+        layout_ok = app.flash_button.winfo_ismapped() and button_bottom <= window_bottom
         root.destroy()
-        return 0
+        return 0 if layout_ok else 4
     root = tk.Tk()
     FlasherApplication(root)
     root.mainloop()

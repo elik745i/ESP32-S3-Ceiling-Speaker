@@ -8,6 +8,7 @@ ESP32 Notifier v0.1.29
 - Displays circular flashing progress aligned with the existing ELMA IoT interface and offers the target device IP after cloned Wi-Fi connects.
 - Added a loopback-only localhost launcher for Chrome/Edge so Web Serial can show the COM-port chooser even though an ESP device's own HTTP page is not a secure browser origin.
 - Added ELMA Flasher, a styled single-file Windows application with its Python runtime, Espressif flashing engine, serial support, and ESP32/ESP32-S3 boot images embedded. It provides native COM selection, Clone Current Device, Flash From File, optional erase, progress/error reporting, hardware-ID-safe configuration cloning, and cloned-device IP handoff without requiring browser Web Serial or separately installed utilities.
+- Fixed the ELMA Flasher layout so the Flash USB Device button remains pinned and visible at the bottom under Windows display scaling.
 - Moved clone-image endpoints outside the generic firmware route so manifest and partition requests cannot be swallowed by the firmware status handler.
 - Raised station Wi-Fi transmit power from 8.5 dBm to a conservative 15 dBm ceiling for more reliable mesh and OTA links without using the radio's 20 dBm maximum.
 - Fixed local-upload rollback reporting so a successfully booted v0.1.29 image is not falsely reported as having rolled back because its upload label differed from its semantic version.
