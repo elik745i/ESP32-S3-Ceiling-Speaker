@@ -1575,6 +1575,126 @@ void WebServerManager::registerApiRoutes() {
             sendJson(request, response);
         });
 
+    auto* localUploadStartHandler = new AsyncCallbackJsonWebHandler(
+        "/api/firmware/upload/start",
+        [this](AsyncWebServerRequest* request, JsonVariant& json) {
+            if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+                return;
+            }
+            const String sessionId = String(static_cast<const char*>(json["sessionId"] | ""));
+            const String filename = String(static_cast<const char*>(json["filename"] | ""));
+            const size_t totalSize = json["size"] | 0U;
+            if (sessionId.isEmpty() || filename.isEmpty() || totalSize == 0) {
+                request->send(400, "application/json", "{\"error\":\"Missing upload session, filename, or size.\"}");
+                return;
+            }
+            String error;
+            if (!otaManager_->beginLocalUpload(filename, totalSize, error, sessionId)) {
+                request->send(409, "application/json", String("{\"error\":\"") + error + "\"}");
+                return;
+            }
+            JsonDocument response;
+            response["ok"] = true;
+            otaManager_->appendLocalUploadStatus(response["upload"].to<JsonObject>());
+            sendJson(request, response);
+        });
+    localUploadStartHandler->setMethod(HTTP_POST);
+    server_.addHandler(localUploadStartHandler);
+
+    server_.on("/api/firmware/upload/status", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+            return;
+        }
+        JsonDocument response;
+        response["ok"] = true;
+        otaManager_->appendLocalUploadStatus(response["upload"].to<JsonObject>());
+        sendJson(request, response);
+    });
+
+    server_.on(
+        "/api/firmware/upload/chunk", HTTP_PUT,
+        [](AsyncWebServerRequest* request) {
+            (void)request;
+        }, nullptr,
+        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+                return;
+            }
+            auto rememberError = [request](const String& error) {
+                if (request->_tempObject != nullptr) {
+                    return;
+                }
+                const size_t length = error.length();
+                char* stored = static_cast<char*>(calloc(length + 1, sizeof(char)));
+                if (stored != nullptr) {
+                    memcpy(stored, error.c_str(), length);
+                    request->_tempObject = stored;
+                }
+            };
+
+            if (!request->hasParam("sessionId") || !request->hasParam("offset")) {
+                rememberError("Missing upload session or offset.");
+            } else if (total == 0 || total > 32768U) {
+                rememberError("Firmware upload chunk must contain 1 to 32768 bytes.");
+            } else if (request->_tempObject == nullptr) {
+                const String sessionId = request->getParam("sessionId")->value();
+                const size_t baseOffset = static_cast<size_t>(strtoull(request->getParam("offset")->value().c_str(), nullptr, 10));
+                String error;
+                if (!otaManager_->writeLocalUploadChunkAt(sessionId, baseOffset + index, data, len, error)) {
+                    rememberError(error);
+                }
+            }
+
+            if (index + len != total) {
+                return;
+            }
+            if (request->_tempObject != nullptr) {
+                request->send(
+                    409,
+                    "application/json",
+                    String("{\"error\":\"") + static_cast<const char*>(request->_tempObject) + "\"}");
+                return;
+            }
+            JsonDocument response;
+            response["ok"] = true;
+            otaManager_->appendLocalUploadStatus(response["upload"].to<JsonObject>());
+            sendJson(request, response);
+        });
+
+    auto* localUploadFinishHandler = new AsyncCallbackJsonWebHandler(
+        "/api/firmware/upload/finish",
+        [this](AsyncWebServerRequest* request, JsonVariant& json) {
+            if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+                return;
+            }
+            const String sessionId = String(static_cast<const char*>(json["sessionId"] | ""));
+            String error;
+            if (sessionId.isEmpty() || !otaManager_->finishLocalUpload(error, sessionId)) {
+                request->send(409, "application/json", String("{\"error\":\"") + (error.isEmpty() ? "Missing upload session." : error) + "\"}");
+                return;
+            }
+            request->send(200, "application/json", "{\"ok\":true,\"message\":\"Local firmware uploaded. Restarting...\"}");
+        });
+    localUploadFinishHandler->setMethod(HTTP_POST);
+    server_.addHandler(localUploadFinishHandler);
+
+    auto* localUploadCancelHandler = new AsyncCallbackJsonWebHandler(
+        "/api/firmware/upload/cancel",
+        [this](AsyncWebServerRequest* request, JsonVariant& json) {
+            if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+                return;
+            }
+            const String sessionId = String(static_cast<const char*>(json["sessionId"] | ""));
+            String error;
+            if (!otaManager_->cancelLocalUpload(sessionId, error)) {
+                request->send(409, "application/json", String("{\"error\":\"") + error + "\"}");
+                return;
+            }
+            request->send(200, "application/json", "{\"ok\":true,\"message\":\"Local firmware upload cancelled.\"}");
+        });
+    localUploadCancelHandler->setMethod(HTTP_POST);
+    server_.addHandler(localUploadCancelHandler);
+
     server_.on(
         "/api/firmware/upload", HTTP_POST,
         [this](AsyncWebServerRequest* request) {

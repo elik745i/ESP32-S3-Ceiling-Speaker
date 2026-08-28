@@ -22,10 +22,13 @@ class OtaManager {
     void loop();
     bool triggerCheck(bool applyAfterCheck);
     bool triggerReleaseRefresh(String& error);
-    bool beginLocalUpload(const String& filename, size_t totalSize, String& error);
+    bool beginLocalUpload(const String& filename, size_t totalSize, String& error, const String& sessionId = String());
     bool writeLocalUploadChunk(const uint8_t* data, size_t len, String& error);
-    bool finishLocalUpload(String& error);
+    bool writeLocalUploadChunkAt(const String& sessionId, size_t offset, const uint8_t* data, size_t len, String& error);
+    bool finishLocalUpload(String& error, const String& sessionId = String());
+    bool cancelLocalUpload(const String& sessionId, String& error);
     void abortLocalUpload(const String& error);
+    void appendLocalUploadStatus(JsonObject root) const;
     void appendStatusJson(JsonObject root) const;
     void appendFirmwareInfoJson(JsonObject root, bool refresh, String& error);
     void reportError(const String& error);
@@ -94,6 +97,8 @@ class OtaManager {
     bool localUploadOk_ = false;
     bool localUploadHeaderValidated_ = false;
     size_t localUploadHeaderBytes_ = 0;
+    String localUploadSessionId_;
+    String localUploadFilename_;
     bool rebootPending_ = false;
     unsigned long rebootAtMs_ = 0;
     std::vector<ReleaseInfo> releaseCache_;

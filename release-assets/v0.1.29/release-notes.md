@@ -11,6 +11,7 @@ ESP32 Notifier v0.1.29
 - Moved clone-image endpoints outside the generic firmware route so manifest and partition requests cannot be swallowed by the firmware status handler.
 - Raised station Wi-Fi transmit power from 8.5 dBm to a conservative 15 dBm ceiling for more reliable mesh and OTA links without using the radio's 20 dBm maximum.
 - Fixed local-upload rollback reporting so a successfully booted v0.1.29 image is not falsely reported as having rolled back because its upload label differed from its semantic version.
+- Replaced the single fragile browser upload request with resumable, idempotent 16 KiB chunks. Weak Wi-Fi interruptions now reconcile the device's committed byte offset and retry indefinitely, while the upload button becomes Cancel Upload Local Firmware and safely aborts the pending OTA image on request.
 
 Release assets:
 

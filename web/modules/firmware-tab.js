@@ -1,4 +1,110 @@
 export function createFirmwareTab({ state, elements, request, loadStatus, setMessage, beginFirmwareReconnectReload, setCurrentFirmwareVersion }) {
+  const localUploadChunkSize = 16 * 1024;
+  const localUploadRequestTimeoutMs = 60000;
+  let localUploadSession = null;
+
+  function delay(milliseconds) {
+    return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+  }
+
+  function setLocalUploadButtonActive(active) {
+    if (!elements.uploadFirmwareButton) {
+      return;
+    }
+    elements.uploadFirmwareButton.textContent = active
+      ? "Cancel Upload Local Firmware"
+      : "Upload Local Firmware";
+    elements.uploadFirmwareButton.classList.toggle("danger", active);
+  }
+
+  function isLocalUploadActive() {
+    return Boolean(localUploadSession && !localUploadSession.cancelled);
+  }
+
+  async function localUploadFetch(path, options = {}) {
+    if (!localUploadSession || localUploadSession.cancelled) {
+      throw new DOMException("Local firmware upload cancelled.", "AbortError");
+    }
+    const controller = new AbortController();
+    localUploadSession.requestController = controller;
+    const timeout = window.setTimeout(() => controller.abort(), localUploadRequestTimeoutMs);
+    try {
+      const response = await fetch(path, {
+        cache: "no-store",
+        credentials: "same-origin",
+        ...options,
+        signal: controller.signal,
+      });
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch {
+      }
+      if (!response.ok) {
+        const error = new Error(payload.error || response.statusText || `HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      return payload;
+    } finally {
+      window.clearTimeout(timeout);
+      if (localUploadSession?.requestController === controller) {
+        localUploadSession.requestController = null;
+      }
+    }
+  }
+
+  async function readLocalUploadStatus() {
+    return localUploadFetch("/api/firmware/upload/status");
+  }
+
+  function localUploadProgress(offset, total, detail = "") {
+    const accepted = Math.max(0, Math.min(total, Number(offset || 0)));
+    const percent = total > 0 ? Math.round((accepted * 100) / total) : 0;
+    elements.otaProgressFill.style.width = `${percent}%`;
+    elements.otaProgressLabel.textContent = detail || `Uploading to ESP... ${percent}% (${accepted}/${total} bytes)`;
+  }
+
+  function isFatalLocalUploadError(error) {
+    return /not a valid esp32|unsupported.*chip|chip-family|select a \.bin|empty|larger than|no writable ota|partition is unavailable/i.test(String(error?.message || error));
+  }
+
+  async function cancelLocalFirmwareUpload() {
+    const session = localUploadSession;
+    if (!session) {
+      return;
+    }
+    session.cancelled = true;
+    session.requestController?.abort();
+    elements.otaStatusLabel.textContent = "Cancelling local firmware upload...";
+    elements.otaProgressLabel.textContent = "Cancelling local firmware upload...";
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const response = await fetch("/api/firmware/upload/cancel", {
+          method: "POST",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: session.id }),
+        });
+        if (response.ok || response.status === 409) {
+          break;
+        }
+      } catch {
+      }
+      await delay(500 + attempt * 750);
+    }
+
+    stopFirmwareProgressPolling();
+    setMessage("Local firmware upload cancelled.");
+    elements.otaStatusLabel.textContent = "Local firmware upload cancelled";
+    elements.otaProgressLabel.textContent = "Upload cancelled safely; firmware was not activated.";
+    if (localUploadSession === session) {
+      localUploadSession = null;
+      setLocalUploadButtonActive(false);
+    }
+  }
   function selectedFirmwareVersion() {
     const selected = document.querySelector('input[name="firmwareVersion"]:checked');
     if (!selected) {
@@ -287,63 +393,131 @@ export function createFirmwareTab({ state, elements, request, loadStatus, setMes
       return;
     }
 
-    setMessage(`Uploading ${file.name}...`);
+    const session = {
+      id: window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      cancelled: false,
+      requestController: null,
+      retryCount: 0,
+    };
+    localUploadSession = session;
+    setLocalUploadButtonActive(true);
+    setMessage(`Uploading ${file.name} with automatic resume...`);
     elements.otaStatusLabel.textContent = "Uploading local firmware...";
     elements.otaProgressFill.style.width = "0%";
-    elements.otaProgressLabel.textContent = "Uploading local firmware... 0%";
+    elements.otaProgressLabel.textContent = "Preparing resumable local firmware upload... 0%";
     startFirmwareProgressPolling();
 
-    const formData = new FormData();
-    formData.append("firmware", file, file.name);
-
-    await new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", "/api/firmware/upload");
-
-      xhr.upload.addEventListener("progress", (event) => {
-        if (!event.lengthComputable) {
-          return;
-        }
-        const percent = Math.max(0, Math.min(100, Math.round((event.loaded * 100) / event.total)));
-        const deviceProgress = Number(state.status?.otaManager?.updateProgress || state.status?.ota?.updateProgress || 0);
-        if (deviceProgress <= percent) {
-          elements.otaProgressFill.style.width = `${percent}%`;
-          elements.otaProgressLabel.textContent = `Uploading to ESP... ${percent}% (${event.loaded}/${event.total} bytes)`;
-        }
-      });
-
-      xhr.addEventListener("load", async () => {
-        let payload = {};
+    let offset = 0;
+    let started = false;
+    try {
+      while (!session.cancelled && offset < file.size) {
         try {
-          payload = JSON.parse(xhr.responseText || "{}");
-        } catch {
-          payload = {};
-        }
+          if (!started) {
+            const start = await localUploadFetch("/api/firmware/upload/start", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sessionId: session.id, filename: file.name, size: file.size }),
+            });
+            offset = Number(start.upload?.offset || 0);
+            started = true;
+            session.retryCount = 0;
+            localUploadProgress(offset, file.size);
+          }
 
-        if (xhr.status >= 200 && xhr.status < 300) {
-          state.awaitingFirmwareReboot = true;
-          setMessage(payload.message || "Local firmware uploaded.");
+          const end = Math.min(file.size, offset + localUploadChunkSize);
+          const chunk = file.slice(offset, end);
+          const result = await localUploadFetch(
+            `/api/firmware/upload/chunk?sessionId=${encodeURIComponent(session.id)}&offset=${offset}`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/octet-stream" },
+              body: chunk,
+            },
+          );
+          const acknowledged = Number(result.upload?.offset ?? end);
+          if (acknowledged <= offset || acknowledged > file.size) {
+            throw new Error(`Device returned invalid resume offset ${acknowledged}.`);
+          }
+          offset = acknowledged;
+          session.retryCount = 0;
+          localUploadProgress(offset, file.size);
+        } catch (error) {
+          if (session.cancelled || error?.name === "AbortError" && session.cancelled) {
+            break;
+          }
+          if (isFatalLocalUploadError(error)) {
+            throw error;
+          }
+
+          session.retryCount += 1;
           try {
-            await loadStatus();
+            const status = await readLocalUploadStatus();
+            const upload = status.upload || {};
+            if (upload.active && upload.sessionId === session.id) {
+              offset = Math.max(0, Math.min(file.size, Number(upload.offset || 0)));
+              started = true;
+            } else {
+              offset = 0;
+              started = false;
+            }
           } catch {
           }
-          beginFirmwareReconnectReload();
-          resolve();
-          return;
+
+          const retryDelay = Math.min(5000, 500 + session.retryCount * 500);
+          const retryText = `Connection interrupted; retry ${session.retryCount} resumes at ${offset}/${file.size} bytes in ${(retryDelay / 1000).toFixed(1)}s. Press Cancel Upload Local Firmware to stop.`;
+          localUploadProgress(offset, file.size, retryText);
+          elements.otaStatusLabel.textContent = "Weak connection — upload will keep retrying";
+          setMessage(retryText);
+          await delay(retryDelay);
         }
+      }
 
-        reject(new Error(payload.error || xhr.statusText || "Local firmware upload failed."));
-      });
+      if (session.cancelled) {
+        return;
+      }
 
-      xhr.addEventListener("error", () => reject(new Error("Local firmware upload failed.")));
-      xhr.send(formData);
-    }).catch((error) => {
-      stopFirmwareProgressPolling();
-      throw error;
-    }).finally(() => {
+      localUploadProgress(file.size, file.size, "Firmware received; validating and activating update...");
+      let finishConfirmed = false;
+      let lastFinishError = null;
+      for (let attempt = 0; attempt < 3 && !session.cancelled; attempt += 1) {
+        try {
+          const result = await localUploadFetch("/api/firmware/upload/finish", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId: session.id }),
+          });
+          finishConfirmed = Boolean(result.ok);
+          break;
+        } catch (error) {
+          lastFinishError = error;
+          if (isFatalLocalUploadError(error)) {
+            throw error;
+          }
+          await delay(750);
+        }
+      }
+      if (!finishConfirmed && lastFinishError?.status) {
+        throw lastFinishError;
+      }
+
+      // A successful finish schedules a reboot, so the last HTTP acknowledgement
+      // can itself be lost. Reaching this point with every byte acknowledged is
+      // sufficient to switch into reconnect monitoring.
+      state.awaitingFirmwareReboot = true;
+      setMessage(finishConfirmed ? "Local firmware uploaded. Device is restarting..." : "Firmware fully transferred; waiting for the device to restart...");
+      elements.otaStatusLabel.textContent = "Local firmware transferred";
+      beginFirmwareReconnectReload(2500);
       elements.localFirmwareFile.value = "";
       updateLocalFirmwareLabel();
-    });
+    } finally {
+      if (localUploadSession === session) {
+        localUploadSession = null;
+        setLocalUploadButtonActive(false);
+      }
+      if (!state.awaitingFirmwareReboot) {
+        stopFirmwareProgressPolling();
+      }
+    }
   }
 
   return {
@@ -358,5 +532,7 @@ export function createFirmwareTab({ state, elements, request, loadStatus, setMes
     installSelectedFirmware,
     updateLocalFirmwareLabel,
     uploadLocalFirmware,
+    cancelLocalFirmwareUpload,
+    isLocalUploadActive,
   };
 }

@@ -1267,7 +1267,7 @@
             <span id="localFirmwareLabel" class="scan-status">No local firmware selected</span>
           </div>
           <input id="localFirmwareFile" name="localFirmwareFile" type="file" accept=".bin,application/octet-stream" aria-labelledby="uploadFirmwareButton" hidden>
-          <p class="note">Settings auto-save after edits. Number fields accept commas, but they are normalized to dots before saving. Local upload accepts a single ESP32 application .bin and reboots automatically after a successful flash.</p>
+          <p class="note">Settings auto-save after edits. Number fields accept commas, but they are normalized to dots before saving. Local firmware upload uses resumable 16 KiB chunks, keeps retrying weak connections, and reboots only after every byte is verified. The upload button becomes Cancel Upload Local Firmware while a transfer is active.</p>
           <div class="actions">
             <button id="rebootButton" type="button" class="secondary">Reboot</button>
           </div>

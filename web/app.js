@@ -8994,6 +8994,14 @@ async function uploadLocalFirmware() {
   return firmwareTab?.uploadLocalFirmware();
 }
 
+async function cancelLocalFirmwareUpload() {
+  return firmwareTab?.cancelLocalFirmwareUpload();
+}
+
+function isLocalFirmwareUploadActive() {
+  return Boolean(firmwareTab?.isLocalUploadActive());
+}
+
 async function postSimple(path, message) {
   await request(path, { method: "POST", body: JSON.stringify({}) });
   setMessage(message);
@@ -9070,6 +9078,10 @@ elements.updateAvailableDialog?.addEventListener("cancel", (event) => {
   closeUpdateAvailablePopup();
 });
 document.getElementById("uploadFirmwareButton").addEventListener("click", () => {
+  if (isLocalFirmwareUploadActive()) {
+    cancelLocalFirmwareUpload().catch(handleError);
+    return;
+  }
   elements.localFirmwareFile.value = "";
   updateLocalFirmwareLabel();
   elements.localFirmwareFile.click();

@@ -479,8 +479,12 @@ bool OtaManager::triggerCheck(bool applyAfterCheck) {
     return true;
 }
 
-bool OtaManager::beginLocalUpload(const String& filename, size_t totalSize, String& error) {
+bool OtaManager::beginLocalUpload(const String& filename, size_t totalSize, String& error, const String& sessionId) {
     if (busy_) {
+        if (localUploadStarted_ && !sessionId.isEmpty() && sessionId == localUploadSessionId_ &&
+            filename == localUploadFilename_ && totalSize == progressTotalBytes_) {
+            return true;
+        }
         error = "Another update is already in progress.";
         return false;
     }
@@ -503,6 +507,8 @@ bool OtaManager::beginLocalUpload(const String& filename, size_t totalSize, Stri
     localUploadOk_ = false;
     localUploadHeaderValidated_ = false;
     localUploadHeaderBytes_ = 0;
+    localUploadSessionId_ = sessionId;
+    localUploadFilename_ = filename;
     memset(localUploadHeader_, 0, sizeof(localUploadHeader_));
     busy_ = true;
 
@@ -577,9 +583,41 @@ bool OtaManager::writeLocalUploadChunk(const uint8_t* data, size_t len, String& 
     return true;
 }
 
-bool OtaManager::finishLocalUpload(String& error) {
+bool OtaManager::writeLocalUploadChunkAt(
+    const String& sessionId,
+    size_t offset,
+    const uint8_t* data,
+    size_t len,
+    String& error) {
+    if (!localUploadStarted_ || sessionId.isEmpty() || sessionId != localUploadSessionId_) {
+        error = "Local upload session is not active.";
+        return false;
+    }
+    if (offset > progressBytes_) {
+        error = String("Upload offset mismatch; resume at byte ") + progressBytes_ + ".";
+        return false;
+    }
+    if (offset + len <= progressBytes_) {
+        // The browser did not receive the previous acknowledgement and retried
+        // an already committed chunk. Treat this as idempotent success.
+        return true;
+    }
+
+    const size_t acceptedPrefix = progressBytes_ - offset;
+    return writeLocalUploadChunk(data + acceptedPrefix, len - acceptedPrefix, error);
+}
+
+bool OtaManager::finishLocalUpload(String& error, const String& sessionId) {
     if (!localUploadStarted_) {
         error = "Firmware upload did not start.";
+        return false;
+    }
+    if (!sessionId.isEmpty() && sessionId != localUploadSessionId_) {
+        error = "Local upload session does not match.";
+        return false;
+    }
+    if (!localUploadSessionId_.isEmpty() && progressTotalBytes_ > 0 && progressBytes_ != progressTotalBytes_) {
+        error = String("Firmware upload is incomplete; resume at byte ") + progressBytes_ + ".";
         return false;
     }
     if (!localUploadHadData_) {
@@ -607,6 +645,8 @@ bool OtaManager::finishLocalUpload(String& error) {
     localUploadStarted_ = false;
     localUploadHeaderValidated_ = false;
     localUploadHeaderBytes_ = 0;
+    localUploadSessionId_ = "";
+    localUploadFilename_ = "";
     busy_ = false;
     progressBytes_ = progressTotalBytes_;
     progressPercent_ = 100;
@@ -618,6 +658,19 @@ bool OtaManager::finishLocalUpload(String& error) {
     return true;
 }
 
+bool OtaManager::cancelLocalUpload(const String& sessionId, String& error) {
+    if (!localUploadStarted_) {
+        error = "No local firmware upload is active.";
+        return false;
+    }
+    if (!sessionId.isEmpty() && sessionId != localUploadSessionId_) {
+        error = "Local upload session does not match.";
+        return false;
+    }
+    abortLocalUpload("Local firmware upload cancelled by user.");
+    return true;
+}
+
 void OtaManager::abortLocalUpload(const String& error) {
     Update.abort();
     localUploadStarted_ = false;
@@ -625,12 +678,24 @@ void OtaManager::abortLocalUpload(const String& error) {
     localUploadOk_ = false;
     localUploadHeaderValidated_ = false;
     localUploadHeaderBytes_ = 0;
+    localUploadSessionId_ = "";
+    localUploadFilename_ = "";
     busy_ = false;
     resetProgress();
     selectedVersion_ = "local";
     lastMessage_ = error;
     syncAppState("error", error);
     pumpProgressCallback();
+}
+
+void OtaManager::appendLocalUploadStatus(JsonObject root) const {
+    root["active"] = localUploadStarted_;
+    root["sessionId"] = localUploadSessionId_;
+    root["filename"] = localUploadFilename_;
+    root["offset"] = progressBytes_;
+    root["total"] = progressTotalBytes_;
+    root["progress"] = progressPercent_;
+    root["message"] = lastMessage_;
 }
 
 void OtaManager::appendStatusJson(JsonObject root) const {
