@@ -5248,16 +5248,18 @@ function beginFirmwareReconnectReload(initialDelayMs = 12000) {
   state.firmwareReloadPending = true;
   if (state.firmwareReloadTimer) {
     window.clearTimeout(state.firmwareReloadTimer);
+    state.firmwareReloadTimer = null;
   }
-  state.firmwareReloadTimer = window.setTimeout(async function pollDeviceReturn() {
-    try {
-      await fetch(`/api/status?ts=${Date.now()}`, { cache: "no-store" });
-      window.location.reload();
-      return;
-    } catch {
-      state.firmwareReloadTimer = window.setTimeout(pollDeviceReturn, 3000);
-    }
-  }, initialDelayMs);
+  state.rebootOverlayArmed = true;
+  showRebootOverlay("Firmware installed — rebooting device...", 30);
+  // A GitHub OTA may acknowledge completion several seconds before the
+  // scheduled reboot. Do not mistake the still-running old firmware for the
+  // restarted device, while still allowing an observed disconnect to reconnect
+  // and refresh immediately when the new firmware is available.
+  state.rebootOverlayReconnectAllowedAt = Math.max(
+    state.rebootOverlayReconnectAllowedAt,
+    state.rebootOverlayStartedAt + Math.max(0, Number(initialDelayMs || 0)),
+  );
 }
 
 function setPill(element, label, mode) {

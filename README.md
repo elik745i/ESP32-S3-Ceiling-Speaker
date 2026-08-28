@@ -11,12 +11,16 @@ Project story and current device write-up:
 
 ## Current Release
 
-- Firmware version: `v0.1.30`
+- Firmware version: `v0.1.31`
 - Primary release repository: `elma-iot/ELMA-IoT`
 - GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.30.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.31.bin`
 
 This is the active development version for the next standard GitHub release.
+
+### v0.1.31 development highlights
+
+- Successful GitHub OTA and resumable local firmware uploads now open the existing reboot countdown overlay, wait for the device to disconnect and return, clear browser caches, and hard-refresh the page so the new firmware UI and status are loaded.
 
 ### v0.1.30 development highlights
 
@@ -533,18 +537,18 @@ Current OTA and rollback behavior:
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.30`:
+Release asset names for `v0.1.31`:
 
-- `esp32-notifier-v0.1.30.bin`
-- `esp32-notifier-hacs-v0.1.30.bin`
-- `esp32-notifier-hacs-slim-v0.1.30.bin`
-- `esp32s3-notifier-v0.1.30.bin`
-- `esp32s3-notifier-hacs-v0.1.30.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.30.bin`
-- `esp32c3-notifier-hacs-v0.1.30.bin`
-- `ELMA-Flasher-v0.1.30.exe`
+- `esp32-notifier-v0.1.31.bin`
+- `esp32-notifier-hacs-v0.1.31.bin`
+- `esp32-notifier-hacs-slim-v0.1.31.bin`
+- `esp32s3-notifier-v0.1.31.bin`
+- `esp32s3-notifier-hacs-v0.1.31.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.31.bin`
+- `esp32c3-notifier-hacs-v0.1.31.bin`
+- `ELMA-Flasher-v0.1.31.exe`
 
-GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard firmware variants plus the standalone Windows ELMA Flasher and upload all matching assets to that release.
+GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the seven supported firmware variants plus the standalone Windows ELMA Flasher and upload all matching assets to that release.
 
 ## Battery Monitoring
 
@@ -623,6 +627,7 @@ Key files and directories:
 
 Current release notes live here:
 
+- [release-assets/v0.1.31/release-notes.md](release-assets/v0.1.31/release-notes.md)
 - [release-assets/v0.1.30/release-notes.md](release-assets/v0.1.30/release-notes.md)
 - [release-assets/v0.1.29/release-notes.md](release-assets/v0.1.29/release-notes.md)
 - File Manager autoplay now advances from an explicit firmware completion event, so next, shuffle, and repeat remain reliable even when status polling misses the brief idle transition. Queue advancement is restricted to File Manager playback and never applies to radio, ambient audio, effects, notifications, or direct URLs.
