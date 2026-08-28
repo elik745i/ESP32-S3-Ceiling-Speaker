@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 VERSION_PATTERN = re.compile(r'^#define APP_VERSION "(\d+\.\d+\.\d+)"$', re.MULTILINE)
+FLASHER_VERSION_PATTERN = re.compile(r'^APP_VERSION = "(\d+\.\d+\.\d+)"$', re.MULTILINE)
 ASSET_PREFIXES = (
     "esp32-notifier",
     "esp32-notifier-hacs",
@@ -34,6 +35,11 @@ def validate(project_dir: Path, expected_tag: str = "") -> str:
     if expected_tag and expected_tag != tag:
         errors.append(f"release tag {expected_tag!r} does not match firmware APP_VERSION {tag!r}")
 
+    flasher_source = (project_dir / "tools" / "elma_flasher" / "elma_flasher.py").read_text(encoding="utf-8")
+    flasher_match = FLASHER_VERSION_PATTERN.search(flasher_source)
+    if not flasher_match or flasher_match.group(1) != version:
+        errors.append("ELMA Flasher APP_VERSION is missing or does not match firmware APP_VERSION")
+
     readme = (project_dir / "README.md").read_text(encoding="utf-8")
     required_readme_lines = (
         f"- Firmware version: `{tag}`",
@@ -54,6 +60,9 @@ def validate(project_dir: Path, expected_tag: str = "") -> str:
             asset = f"{prefix}-{tag}.bin"
             if asset not in notes:
                 errors.append(f"release notes do not list {asset}")
+        flasher_asset = f"ELMA-Flasher-{tag}.exe"
+        if flasher_asset not in notes:
+            errors.append(f"release notes do not list {flasher_asset}")
 
     if errors:
         raise RuntimeError("Project version validation failed:\n- " + "\n- ".join(errors))
@@ -85,4 +94,3 @@ except NameError:
         raise SystemExit(cli())
 else:
     validate(Path(env.subst("$PROJECT_DIR")).resolve())  # type: ignore[name-defined]
-

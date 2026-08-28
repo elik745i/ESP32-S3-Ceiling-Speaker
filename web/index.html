@@ -1256,6 +1256,7 @@
             <button id="checkOtaButton" type="button">Check Releases</button>
             <button id="applyOtaButton" type="button" class="secondary">Install Selected</button>
             <button id="uploadFirmwareButton" type="button" class="secondary">Upload Local Firmware</button>
+            <button id="usbFlashAnotherDeviceButton" type="button" class="secondary">Flash Another Device</button>
           </div>
           <div class="row">
             <label class="check"><input form="settingsForm" name="ota.autoCheck" type="checkbox"> Check for updates on boot</label>
@@ -1325,6 +1326,69 @@
         <button id="updateAvailableCloseButton" type="button" class="secondary">Close</button>
       </div>
       <div id="updateAvailableBody" class="note">Checking update details...</div>
+    </div>
+  </dialog>
+
+  <dialog id="usbFlasherDialog" class="storage-preview-modal usb-flasher-modal">
+    <div class="storage-preview-shell usb-flasher-shell">
+      <div class="storage-preview-header">
+        <div>
+          <strong>Flash Another ESP Device</strong>
+          <div class="scan-status">Connect the target device to this computer with a USB data cable.</div>
+        </div>
+        <button id="usbFlasherCloseButton" type="button" class="secondary">Close</button>
+      </div>
+
+      <div id="usbFlasherCompatibility" class="usb-flasher-alert" role="status"></div>
+
+      <fieldset id="usbFlasherOptions" class="usb-flasher-options">
+        <legend>Firmware source</legend>
+        <label class="usb-flasher-choice">
+          <input type="radio" name="usbFlasherMode" value="clone" checked>
+          <span><strong>Clone Current Device</strong><small>Copies this firmware and configuration, including Wi-Fi and MQTT credentials. Target identity is regenerated from its own hardware ID.</small></span>
+        </label>
+        <label class="usb-flasher-choice">
+          <input type="radio" name="usbFlasherMode" value="file">
+          <span><strong>Flash From File</strong><small>Uses a local ESP32 application .bin. Configuration is not copied in this mode.</small></span>
+        </label>
+        <input id="usbFlasherFile" type="file" accept=".bin,application/octet-stream" hidden>
+        <button id="usbFlasherChooseFileButton" type="button" class="secondary" hidden>Choose Firmware File</button>
+        <span id="usbFlasherFileLabel" class="scan-status" hidden>No firmware file selected</span>
+
+        <div class="usb-flasher-group-title">Clean target before flashing?</div>
+        <div class="usb-flasher-clean-row">
+          <label class="usb-flasher-choice compact">
+            <input type="radio" name="usbFlasherErase" value="yes" checked>
+            <span><strong>Yes — full erase</strong><small>Best for a new device or a clean clone.</small></span>
+          </label>
+          <label class="usb-flasher-choice compact">
+            <input type="radio" name="usbFlasherErase" value="no">
+            <span><strong>No — preserve flash data</strong><small>Keeps unrelated target data; clone settings still replace configuration.</small></span>
+          </label>
+        </div>
+      </fieldset>
+
+      <div class="usb-flasher-progress-wrap">
+        <div class="usb-flasher-ring" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="USB flashing progress">
+          <svg viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="usb-flasher-ring-track" cx="60" cy="60" r="52"></circle>
+            <circle id="usbFlasherProgressCircle" class="usb-flasher-ring-value" cx="60" cy="60" r="52"></circle>
+          </svg>
+          <div class="usb-flasher-ring-center"><strong id="usbFlasherProgressValue">0</strong><span>%</span></div>
+        </div>
+        <div class="usb-flasher-progress-copy">
+          <strong id="usbFlasherStatus">Ready to select a USB device</strong>
+          <span id="usbFlasherDetail">The browser will ask which serial device may be used.</span>
+          <a id="usbFlasherTargetLink" class="wifi-handoff-address" href="#" target="_blank" rel="noopener noreferrer" hidden></a>
+        </div>
+      </div>
+
+      <pre id="usbFlasherLog" class="log-box usb-flasher-log">Waiting to start...</pre>
+      <div class="actions">
+        <button id="usbFlasherStartButton" type="button">Select USB Device &amp; Flash</button>
+        <button id="usbFlasherCancelButton" type="button" class="secondary">Cancel</button>
+        <a id="usbFlasherOpenTargetButton" class="button-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Open New Device</a>
+      </div>
     </div>
   </dialog>
 

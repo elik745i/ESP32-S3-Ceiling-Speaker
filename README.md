@@ -11,14 +11,21 @@ Project story and current device write-up:
 
 ## Current Release
 
-- Firmware version: `v0.1.28`
+- Firmware version: `v0.1.29`
 - Primary release repository: `elma-iot/ELMA-IoT`
 - GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.28.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.29.bin`
 
 This is the active development version for the next standard GitHub release.
 
-### v0.1.28 development highlights
+### v0.1.29 development highlights
+
+- Added browser-based USB flashing from the Firmware tab, with clone-current-device and local-file modes, optional full-chip erase, target-family validation, circular progress, and actionable serial/permission errors.
+- Clone mode transfers the current firmware plus saved configuration, Wi-Fi, and MQTT credentials while regenerating the target device name, friendly name, MQTT client ID, and base topic from the target's own hardware ID.
+- After cloning, the USB provisioning channel reports the target's Wi-Fi address so the browser can offer the newly flashed device directly.
+- `ELMA-Flasher-v0.1.29.exe` is the recommended Windows path when the device UI is opened over HTTP. It is a single portable executable with the ELMA interface, COM-port selection, Espressif flashing engine, serial support, and ESP32/ESP32-S3 boot support embedded; Python, PlatformIO, esptool, and browser Web Serial are not required on the target PC.
+- The portable flasher supports Clone Current Device and Flash From File, optional full erase, chip-family validation, verified writes, hardware-ID-safe configuration provisioning, and opening the cloned device's reported Wi-Fi IP.
+- The localhost browser helper remains available as a development fallback: run `python scripts/usb_flasher_proxy.py <device-ip>` or double-click `scripts/start_usb_flasher_proxy.cmd`.
 
 - Fixed manual GitHub-release installation after refreshing the Firmware list: selecting an installed, older, or alternate compatible asset now proceeds into download/flashing instead of remaining stuck at `Resolving release` with OTA marked busy. Release refresh and install TLS operations are serialized, and Install Selected stays disabled while the list is refreshing.
 - Reduced genuinely idle ESP32-S3 load from roughly 25-31% aggregate (about 50% on Core 1) to typically 0-2% by rate-limiting unchanged Wi-Fi state publication, servicing runtime state at 50 Hz, bypassing disabled audio/battery paths, and yielding longer only while playback and OTA are inactive.
@@ -519,16 +526,17 @@ Current OTA and rollback behavior:
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.28`:
+Release asset names for `v0.1.29`:
 
-- `esp32-notifier-v0.1.28.bin`
-- `esp32-notifier-hacs-v0.1.28.bin`
-- `esp32-notifier-hacs-slim-v0.1.28.bin`
-- `esp32s3-notifier-v0.1.28.bin`
-- `esp32s3-notifier-hacs-v0.1.28.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.28.bin`
+- `esp32-notifier-v0.1.29.bin`
+- `esp32-notifier-hacs-v0.1.29.bin`
+- `esp32-notifier-hacs-slim-v0.1.29.bin`
+- `esp32s3-notifier-v0.1.29.bin`
+- `esp32s3-notifier-hacs-v0.1.29.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.29.bin`
+- `ELMA-Flasher-v0.1.29.exe`
 
-GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard release variants and upload the matching OTA assets back to that release.
+GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the six standard firmware variants plus the standalone Windows ELMA Flasher and upload all matching assets to that release.
 
 ## Battery Monitoring
 
@@ -607,7 +615,7 @@ Key files and directories:
 
 Current release notes live here:
 
-- [release-assets/v0.1.28/release-notes.md](release-assets/v0.1.28/release-notes.md)
+- [release-assets/v0.1.29/release-notes.md](release-assets/v0.1.29/release-notes.md)
 - File Manager autoplay now advances from an explicit firmware completion event, so next, shuffle, and repeat remain reliable even when status polling misses the brief idle transition. Queue advancement is restricted to File Manager playback and never applies to radio, ambient audio, effects, notifications, or direct URLs.
 - File Manager playback now reports decoder position and duration and provides synchronized inline and preview seek controls that reset correctly between tracks.
 - GitHub release checks now run on a background FreeRTOS task so TLS and JSON work cannot starve the audio loop; the decoder uses a 1.25 MiB PSRAM queue with only a small SRAM fallback.

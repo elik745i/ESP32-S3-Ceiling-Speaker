@@ -428,6 +428,16 @@ AppStateSnapshot runtimeStateSnapshot;
 bool runtimeStateSnapshotInitialized = false;
 unsigned long lastRuntimeStateServiceAt = 0;
 
+struct CloneProvisioningState {
+    String commandLine;
+    String payload;
+    size_t expectedLength = 0;
+    uint32_t expectedCrc32 = 0;
+    bool receiving = false;
+};
+
+CloneProvisioningState cloneProvisioning;
+
 constexpr float kBatteryPercentEmptyVoltage = 3.2f;
 constexpr float kBatteryPercentFullVoltage = 4.2f;
 constexpr unsigned long kTouchFactoryResetHoldMs = 10000UL;
@@ -470,6 +480,8 @@ constexpr uint8_t kCpuBurstDownshiftSamples = 8;
 constexpr unsigned long kRuntimeStateServiceIntervalMs = 20UL;
 constexpr uint32_t kActiveLoopDelayMs = 1;
 constexpr uint32_t kIdleLoopDelayMs = 5;
+constexpr size_t kCloneConfigurationMaxBytes = 32768;
+constexpr char kCloneConfigurationCommand[] = "ELMA_CLONE_CONFIG ";
 
 constexpr char kOtaRollbackNamespace[] = "ota_state";
 constexpr char kOtaPendingVersionKey[] = "pend_ver";
@@ -1268,6 +1280,34 @@ String normalizedAppVersion() {
     return String("v") + APP_VERSION;
 }
 
+String normalizedFirmwareVersionFromLabel(String value) {
+    value.trim();
+    const int binaryExtension = value.indexOf(".bin");
+    if (binaryExtension >= 0) {
+        value = value.substring(0, binaryExtension);
+    }
+
+    int versionMarker = value.lastIndexOf("-v");
+    if (versionMarker < 0) {
+        versionMarker = value.lastIndexOf("-V");
+    }
+    if (versionMarker >= 0) {
+        value = value.substring(versionMarker + 1);
+    }
+
+    value.trim();
+    while (value.endsWith(")")) {
+        value.remove(value.length() - 1);
+        value.trim();
+    }
+    if (!value.startsWith("v") && !value.startsWith("V") && value.length() > 0 && isDigit(value[0])) {
+        value = "v" + value;
+    } else if (value.startsWith("V")) {
+        value.setCharAt(0, 'v');
+    }
+    return value;
+}
+
 String readPreferenceStringIfPresent(Preferences& prefs, const char* key) {
     return prefs.isKey(key) ? prefs.getString(key, "") : String("");
 }
@@ -1356,13 +1396,24 @@ void persistRollbackOutcome(const String& version, const String& reason) {
     prefs.end();
 }
 
+void clearRollbackOutcome() {
+    Preferences prefs;
+    if (prefs.begin(kOtaRollbackNamespace, false)) {
+        removePreferenceIfPresent(prefs, kOtaLastBadVersionKey);
+        removePreferenceIfPresent(prefs, kOtaLastBadReasonKey);
+        prefs.end();
+    }
+    lastRolledBackVersion = "";
+    lastRollbackReason = "";
+}
+
 void loadRollbackState() {
     Preferences prefs;
     if (!prefs.begin(kOtaRollbackNamespace, false)) {
         return;
     }
 
-    otaPendingVersion = readPreferenceStringIfPresent(prefs, kOtaPendingVersionKey);
+    otaPendingVersion = normalizedFirmwareVersionFromLabel(readPreferenceStringIfPresent(prefs, kOtaPendingVersionKey));
     String pendingReason = readPreferenceStringIfPresent(prefs, kOtaPendingReasonKey);
     lastRolledBackVersion = readPreferenceStringIfPresent(prefs, kOtaLastBadVersionKey);
     lastRollbackReason = readPreferenceStringIfPresent(prefs, kOtaLastBadReasonKey);
@@ -1385,7 +1436,7 @@ void loadRollbackState() {
     } else {
         otaPendingVerification = false;
         otaHealthConfirmed = true;
-        if (!otaPendingVersion.isEmpty() && otaPendingVersion != currentVersion) {
+        if (!otaPendingVersion.isEmpty() && !otaPendingVersion.equalsIgnoreCase(currentVersion)) {
             lastRolledBackVersion = otaPendingVersion;
             if (pendingReason.isEmpty()) {
                 pendingReason = "New firmware rebooted before health confirmation; bootloader rolled back.";
@@ -1393,6 +1444,14 @@ void loadRollbackState() {
             lastRollbackReason = pendingReason;
             prefs.putString(kOtaLastBadVersionKey, lastRolledBackVersion);
             prefs.putString(kOtaLastBadReasonKey, lastRollbackReason);
+        } else if (!otaPendingVersion.isEmpty()) {
+            // A non-pending partition running the attempted version is a
+            // successful update, not a rollback. Older builds stored the full
+            // local-upload label here, which caused a false mismatch.
+            removePreferenceIfPresent(prefs, kOtaLastBadVersionKey);
+            removePreferenceIfPresent(prefs, kOtaLastBadReasonKey);
+            lastRolledBackVersion = "";
+            lastRollbackReason = "";
         }
         removePreferenceIfPresent(prefs, kOtaPendingVersionKey);
         removePreferenceIfPresent(prefs, kOtaPendingReasonKey);
@@ -1502,6 +1561,7 @@ void confirmOtaHealthIfReady() {
         otaPendingVerification = false;
         otaPendingVersion = "";
         clearRollbackPendingInfo();
+        clearRollbackOutcome();
         refreshRollbackStateInOtaManager();
         Serial.println("[rollback] OTA firmware marked healthy");
         Serial.flush();
@@ -1731,7 +1791,7 @@ void handleOtaRestartRequest(const String& reason) {
             attemptedVersion = "unknown firmware";
         }
         storeRollbackPendingInfo(
-            attemptedVersion,
+            normalizedFirmwareVersionFromLabel(attemptedVersion),
             "Firmware did not complete post-update health confirmation; the bootloader restored the previous image.");
     }
     requestRestartSequence(reason, false);
@@ -2733,6 +2793,142 @@ bool saveSettingsFromJson(JsonVariantConst root, String& error) {
     return true;
 }
 
+uint32_t cloneConfigurationCrc32(const uint8_t* data, size_t length) {
+    uint32_t crc = 0xFFFFFFFFUL;
+    for (size_t index = 0; index < length; ++index) {
+        crc ^= data[index];
+        for (uint8_t bit = 0; bit < 8; ++bit) {
+            crc = (crc >> 1U) ^ (0xEDB88320UL & (0U - (crc & 1U)));
+        }
+    }
+    return crc ^ 0xFFFFFFFFUL;
+}
+
+void resetCloneProvisioningReceiver() {
+    cloneProvisioning.commandLine = "";
+    cloneProvisioning.payload = "";
+    cloneProvisioning.expectedLength = 0;
+    cloneProvisioning.expectedCrc32 = 0;
+    cloneProvisioning.receiving = false;
+}
+
+void applyClonedConfiguration() {
+    const uint32_t actualCrc = cloneConfigurationCrc32(
+        reinterpret_cast<const uint8_t*>(cloneProvisioning.payload.c_str()),
+        cloneProvisioning.payload.length());
+    if (actualCrc != cloneProvisioning.expectedCrc32) {
+        Serial.printf("[clone] error=configuration checksum mismatch expected=%08lX actual=%08lX\n",
+                      static_cast<unsigned long>(cloneProvisioning.expectedCrc32),
+                      static_cast<unsigned long>(actualCrc));
+        resetCloneProvisioningReceiver();
+        return;
+    }
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+    DynamicJsonDocument document(cloneProvisioning.payload.length() * 2U + 2048U);
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+    const DeserializationError parseError = deserializeJson(document, cloneProvisioning.payload);
+    if (parseError || document.overflowed() || !document.is<JsonObject>()) {
+        Serial.printf("[clone] error=invalid configuration json detail=%s\n", parseError.c_str());
+        resetCloneProvisioningReceiver();
+        return;
+    }
+
+    SettingsBundle cloned = settingsManager->defaults();
+    String error;
+    if (!settingsManager->updateFromJson(cloned, document.as<JsonVariantConst>(), error)) {
+        Serial.printf("[clone] error=configuration rejected detail=%s\n", error.c_str());
+        resetCloneProvisioningReceiver();
+        return;
+    }
+
+    // Clone operational settings and credentials, but always bind every
+    // externally visible identity to the target chip's own efuse MAC.
+    const SettingsBundle targetDefaults = settingsManager->defaults();
+    cloned.device.deviceName = targetDefaults.device.deviceName;
+    cloned.device.friendlyName = targetDefaults.device.friendlyName;
+    cloned.mqtt.clientId = targetDefaults.mqtt.clientId;
+    cloned.mqtt.baseTopic = targetDefaults.mqtt.baseTopic;
+    cloned.usingSavedSettings = true;
+    settingsManager->save(cloned);
+    *settings = settingsManager->load();
+
+    Serial.printf("[clone] configuration applied identity=%s mqttClientId=%s mqttBaseTopic=%s\n",
+                  settings->device.deviceName.c_str(),
+                  settings->mqtt.clientId.c_str(),
+                  settings->mqtt.baseTopic.c_str());
+    Serial.println("[clone] restarting target");
+    Serial.flush();
+    resetCloneProvisioningReceiver();
+    scheduleReboot(500);
+}
+
+void beginCloneProvisioningPayload(const String& command) {
+    const String arguments = command.substring(strlen(kCloneConfigurationCommand));
+    const int separator = arguments.indexOf(' ');
+    if (separator <= 0) {
+        Serial.println("[clone] error=invalid provisioning header");
+        return;
+    }
+
+    const size_t length = static_cast<size_t>(strtoul(arguments.substring(0, separator).c_str(), nullptr, 10));
+    const uint32_t crc = static_cast<uint32_t>(strtoul(arguments.substring(separator + 1).c_str(), nullptr, 16));
+    if (length == 0 || length > kCloneConfigurationMaxBytes) {
+        Serial.printf("[clone] error=configuration length must be 1..%u bytes\n",
+                      static_cast<unsigned>(kCloneConfigurationMaxBytes));
+        return;
+    }
+
+    cloneProvisioning.payload = "";
+    if (!cloneProvisioning.payload.reserve(length + 1U)) {
+        Serial.println("[clone] error=unable to allocate configuration buffer");
+        return;
+    }
+    cloneProvisioning.expectedLength = length;
+    cloneProvisioning.expectedCrc32 = crc;
+    cloneProvisioning.receiving = true;
+    Serial.printf("[clone] receiving configuration bytes=%u\n", static_cast<unsigned>(length));
+}
+
+void serviceCloneProvisioningSerial() {
+    while (Serial.available() > 0) {
+        const char value = static_cast<char>(Serial.read());
+        if (cloneProvisioning.receiving) {
+            cloneProvisioning.payload += value;
+            if (cloneProvisioning.payload.length() == cloneProvisioning.expectedLength) {
+                applyClonedConfiguration();
+            }
+            continue;
+        }
+
+        if (value == '\r') {
+            continue;
+        }
+        if (value != '\n') {
+            if (cloneProvisioning.commandLine.length() < 160U) {
+                cloneProvisioning.commandLine += value;
+            } else {
+                cloneProvisioning.commandLine = "";
+            }
+            continue;
+        }
+
+        const String command = cloneProvisioning.commandLine;
+        cloneProvisioning.commandLine = "";
+        if (command.startsWith(kCloneConfigurationCommand)) {
+            beginCloneProvisioningPayload(command);
+        } else if (command == "ELMA_CLONE_PING") {
+            Serial.printf("[clone] provisioning ready identity=%s\n", settings->device.deviceName.c_str());
+            Serial.flush();
+        }
+    }
+}
+
 bool saveMotorRuntimeConfigFromJson(JsonVariantConst root, String& error) {
     if (settings == nullptr || settingsManager == nullptr) {
         error = "Motor settings are unavailable.";
@@ -3562,6 +3758,8 @@ void setup() {
     }
 
     applyRuntimeSettings();
+    Serial.printf("[clone] provisioning ready identity=%s\n", settings->device.deviceName.c_str());
+    Serial.flush();
 }
 
 namespace {
@@ -3912,6 +4110,7 @@ void loop() {
     }
 
     const unsigned long now = millis();
+    serviceCloneProvisioningSerial();
     processDeferredActions();
     serviceWapeTriggerPulse();
     if (now - lastInputPollAt >= kInputPollIntervalMs) {

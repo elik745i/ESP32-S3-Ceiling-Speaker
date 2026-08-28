@@ -2,6 +2,8 @@
 .vscode/
 .idea/
 node_modules/
+__pycache__/
+*.pyc
 .web-build/
 .tmp-webbundle/
 compile_commands.json
@@ -11,6 +13,8 @@ include/generated_web_assets.h
 *.elf
 *.map
 *.log
+*.exe
+.elma-flasher-build/
 build.log
 upload_check.log
 

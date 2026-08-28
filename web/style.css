@@ -1411,6 +1411,220 @@ body {
     background: linear-gradient(90deg, #dc6f5c, #b42318);
   }
 
+  .usb-flasher-modal {
+    width: min(760px, calc(100vw - 24px));
+  }
+
+  .usb-flasher-shell {
+    display: grid;
+    gap: 14px;
+  }
+
+  .usb-flasher-shell .storage-preview-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 12px;
+  }
+
+  .usb-flasher-shell .storage-preview-header > button {
+    width: auto;
+    min-width: 88px;
+    justify-self: end;
+  }
+
+  .usb-flasher-alert {
+    padding: 10px 12px;
+    border: 1px solid #d7c29f;
+    border-radius: 10px;
+    background: #fff8e8;
+    color: #69430b;
+    font-size: 0.88rem;
+    line-height: 1.45;
+  }
+
+  .usb-flasher-alert.ok {
+    border-color: #86c99b;
+    background: #effaf2;
+    color: #14532d;
+  }
+
+  .usb-flasher-alert.error {
+    border-color: #e6a39a;
+    background: #fff1f2;
+    color: #7f1d1d;
+  }
+
+  .usb-flasher-options {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--panel-soft);
+  }
+
+  .usb-flasher-options legend,
+  .usb-flasher-group-title {
+    padding: 0 4px;
+    font-weight: 800;
+    color: var(--ink);
+  }
+
+  .usb-flasher-group-title {
+    margin-top: 6px;
+  }
+
+  .usb-flasher-choice {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 11px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #ffffff;
+    cursor: pointer;
+  }
+
+  .usb-flasher-choice:has(input:checked) {
+    border-color: #d98200;
+    box-shadow: 0 0 0 2px rgba(217, 130, 0, 0.12);
+  }
+
+  .usb-flasher-choice input {
+    margin-top: 3px;
+  }
+
+  .usb-flasher-choice span,
+  .usb-flasher-choice small {
+    display: block;
+  }
+
+  .usb-flasher-choice small {
+    margin-top: 3px;
+    color: var(--muted);
+    line-height: 1.35;
+  }
+
+  .usb-flasher-clean-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .usb-flasher-progress-wrap {
+    display: grid;
+    grid-template-columns: 132px minmax(0, 1fr);
+    gap: 18px;
+    align-items: center;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: linear-gradient(145deg, #fffdf9, #f5f1e9);
+  }
+
+  .usb-flasher-ring {
+    position: relative;
+    width: 120px;
+    height: 120px;
+  }
+
+  .usb-flasher-ring svg {
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+  }
+
+  .usb-flasher-ring-track,
+  .usb-flasher-ring-value {
+    fill: none;
+    stroke-width: 9;
+  }
+
+  .usb-flasher-ring-track {
+    stroke: #e4ded4;
+  }
+
+  .usb-flasher-ring-value {
+    stroke: #d98200;
+    stroke-linecap: round;
+    stroke-dasharray: 326.73;
+    stroke-dashoffset: 326.73;
+    transition: stroke-dashoffset 180ms ease, stroke 180ms ease;
+  }
+
+  .usb-flasher-ring-value.ok {
+    stroke: #23824b;
+  }
+
+  .usb-flasher-ring-value.error {
+    stroke: #b42318;
+  }
+
+  .usb-flasher-ring-center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink);
+  }
+
+  .usb-flasher-ring-center strong {
+    font-size: 1.8rem;
+  }
+
+  .usb-flasher-ring-center span {
+    margin-top: 7px;
+    font-weight: 800;
+  }
+
+  .usb-flasher-progress-copy {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+  }
+
+  .usb-flasher-progress-copy > strong {
+    font-size: 1.05rem;
+  }
+
+  .usb-flasher-progress-copy > span {
+    color: var(--muted);
+    line-height: 1.45;
+  }
+
+  .usb-flasher-log {
+    max-height: 170px;
+    margin: 0;
+  }
+
+  .button-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 42px;
+    padding: 0 15px;
+    border-radius: 9px;
+    background: #23824b;
+    color: #ffffff;
+    font-weight: 800;
+    text-decoration: none;
+  }
+
+  @media (max-width: 620px) {
+    .usb-flasher-clean-row {
+      grid-template-columns: 1fr;
+    }
+
+    .usb-flasher-progress-wrap {
+      grid-template-columns: 1fr;
+      justify-items: center;
+      text-align: center;
+    }
+  }
+
   .device-summary-grid {
     margin-top: 2px;
     grid-template-columns: repeat(3, minmax(0, 1fr));

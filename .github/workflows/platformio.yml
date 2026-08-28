@@ -78,3 +78,36 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/${{ matrix.asset }}
+
+  release-flasher:
+    if: github.event_name == 'release'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install frontend and firmware build dependencies
+        run: |
+          npm ci
+          python -m pip install platformio
+      - name: Validate release tag and application versions
+        run: python scripts/project_version.py --tag "${{ github.event.release.tag_name }}"
+      - name: Build embedded ESP32 support images
+        run: pio run -e esp32_notifier -e esp32s3_notifier
+      - name: Build portable ELMA Flasher
+        shell: powershell
+        run: .\scripts\build_elma_flasher.ps1
+      - name: Validate packaged ELMA Flasher
+        shell: powershell
+        run: |
+          $process = Start-Process -FilePath ".\release-assets\${{ github.event.release.tag_name }}\ELMA-Flasher-${{ github.event.release.tag_name }}.exe" -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "ELMA Flasher self-test failed with exit code $($process.ExitCode)." }
+      - name: Upload ELMA Flasher to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/${{ github.event.release.tag_name }}/ELMA-Flasher-${{ github.event.release.tag_name }}.exe

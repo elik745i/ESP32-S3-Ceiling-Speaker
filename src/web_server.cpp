@@ -40,7 +40,9 @@ void WebServerManager::begin(
 #include <AsyncJson.h>
 #include <cstring>
 #include <memory>
+#include <esp_flash.h>
 #include <esp_heap_caps.h>
+#include <esp_ota_ops.h>
 
 #include "generated_web_assets.h"
 #include "storage_backend.h"
@@ -51,6 +53,21 @@ namespace {
 constexpr size_t kStorageReserveBytes = 4096;
 constexpr size_t kStorageDirectoryListBatchDefault = 0;
 constexpr size_t kSettingsJsonMaxContentLength = 32768;
+constexpr uint32_t kClonePartitionTableAddress = 0x8000;
+constexpr uint32_t kClonePartitionTableSize = 0x1000;
+constexpr uint32_t kCloneOtaDataAddress = 0xe000;
+constexpr uint32_t kCloneOtaDataSize = 0x2000;
+constexpr uint32_t kCloneApplicationAddress = 0x10000;
+
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+constexpr uint32_t kCloneBootloaderAddress = 0x0000;
+constexpr uint32_t kCloneBootloaderSize = 0x8000;
+constexpr char kCloneChipFamily[] = "ESP32-S3";
+#else
+constexpr uint32_t kCloneBootloaderAddress = 0x1000;
+constexpr uint32_t kCloneBootloaderSize = 0x7000;
+constexpr char kCloneChipFamily[] = "ESP32";
+#endif
 
 struct StorageReindexStatus {
     bool active = false;
@@ -141,6 +158,31 @@ bool requestMatchesEtag(AsyncWebServerRequest* request, const String& tag) {
     }
     const AsyncWebHeader* header = request->getHeader("If-None-Match");
     return header != nullptr && header->value() == tag;
+}
+
+void sendCloneFlashRegion(
+    AsyncWebServerRequest* request,
+    uint32_t sourceAddress,
+    uint32_t length,
+    const String& downloadName) {
+    AsyncWebServerResponse* response = request->beginChunkedResponse(
+        "application/octet-stream",
+        [sourceAddress, length](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
+            if (index >= length || maxLen == 0) {
+                return 0;
+            }
+            const size_t remaining = static_cast<size_t>(length) - index;
+            const size_t chunkSize = min(maxLen, remaining);
+            const esp_err_t result = esp_flash_read(
+                esp_flash_default_chip,
+                buffer,
+                sourceAddress + static_cast<uint32_t>(index),
+                static_cast<uint32_t>(chunkSize));
+            return result == ESP_OK ? chunkSize : 0;
+        });
+    response->addHeader("Cache-Control", "no-store");
+    response->addHeader("Content-Disposition", String("attachment; filename=\"") + downloadName + "\"");
+    request->send(response);
 }
 
 StorageTarget storageTargetFromRequest(AsyncWebServerRequest* request) {
@@ -1421,6 +1463,85 @@ void WebServerManager::registerApiRoutes() {
         const bool refresh = request->hasParam("refresh") && request->getParam("refresh")->value() == "1";
         otaManager_->appendFirmwareInfoJson(response.to<JsonObject>(), refresh, error);
         sendJson(request, response);
+    });
+
+    server_.on("/api/usb-flasher/manifest", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+            return;
+        }
+
+        const esp_partition_t* runningPartition = esp_ota_get_running_partition();
+        if (runningPartition == nullptr) {
+            request->send(503, "application/json", "{\"error\":\"Running firmware partition is unavailable.\"}");
+            return;
+        }
+
+        JsonDocument response;
+        response["version"] = APP_VERSION;
+        response["chipFamily"] = kCloneChipFamily;
+        response["flashSize"] = ESP.getFlashChipSize();
+        response["identityPolicy"] = "target-hardware-id";
+        response["configurationIncluded"] = true;
+
+        JsonArray parts = response["parts"].to<JsonArray>();
+        JsonObject bootloader = parts.add<JsonObject>();
+        bootloader["name"] = "bootloader";
+        bootloader["sourceUrl"] = "/api/usb-flasher/part?name=bootloader";
+        bootloader["address"] = kCloneBootloaderAddress;
+        bootloader["size"] = kCloneBootloaderSize;
+
+        JsonObject partitions = parts.add<JsonObject>();
+        partitions["name"] = "partitions";
+        partitions["sourceUrl"] = "/api/usb-flasher/part?name=partitions";
+        partitions["address"] = kClonePartitionTableAddress;
+        partitions["size"] = kClonePartitionTableSize;
+
+        JsonObject application = parts.add<JsonObject>();
+        application["name"] = "application";
+        application["sourceUrl"] = "/api/usb-flasher/part?name=application";
+        application["address"] = kCloneApplicationAddress;
+        application["size"] = ESP.getSketchSize();
+
+        JsonObject otaData = response["otaData"].to<JsonObject>();
+        otaData["address"] = kCloneOtaDataAddress;
+        otaData["size"] = kCloneOtaDataSize;
+        otaData["action"] = "erase";
+        sendJson(request, response);
+    });
+
+    server_.on("/api/usb-flasher/part", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
+            return;
+        }
+        if (!request->hasParam("name")) {
+            request->send(400, "application/json", "{\"error\":\"Missing firmware part name.\"}");
+            return;
+        }
+
+        const String name = request->getParam("name")->value();
+        if (name == "bootloader") {
+            sendCloneFlashRegion(request, kCloneBootloaderAddress, kCloneBootloaderSize, "bootloader.bin");
+            return;
+        }
+        if (name == "partitions") {
+            sendCloneFlashRegion(request, kClonePartitionTableAddress, kClonePartitionTableSize, "partitions.bin");
+            return;
+        }
+        if (name == "application") {
+            const esp_partition_t* runningPartition = esp_ota_get_running_partition();
+            if (runningPartition == nullptr) {
+                request->send(503, "application/json", "{\"error\":\"Running firmware partition is unavailable.\"}");
+                return;
+            }
+            sendCloneFlashRegion(
+                request,
+                runningPartition->address,
+                ESP.getSketchSize(),
+                String("esp32-notifier-clone-v") + APP_VERSION + ".bin");
+            return;
+        }
+
+        request->send(404, "application/json", "{\"error\":\"Unknown firmware clone part.\"}");
     });
 
     server_.on(

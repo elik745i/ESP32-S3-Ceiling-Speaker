@@ -8,6 +8,7 @@ import { createConfigurationSettingsSnapshotModule } from "./modules/configurati
 import { createDeviceTab } from "./modules/device-tab.js";
 import { createDisplayTab } from "./modules/display-tab.js";
 import { createFirmwareTab } from "./modules/firmware-tab.js";
+import { createUsbFlasher } from "./modules/usb-flasher.js";
 import { createEffectsTab } from "./modules/effects-tab.js";
 import { createHardwareTab } from "./modules/hardware-tab.js";
 import { createInfoTab } from "./modules/info-tab.js";
@@ -150,6 +151,7 @@ let deviceTab = null;
 let displayTab = null;
 let effectsTab = null;
 let firmwareTab = null;
+let usbFlasher = null;
 let hardwareTab = null;
 let infoTab = null;
 let motorTab = null;
@@ -1044,6 +1046,23 @@ const elements = {
   uploadFirmwareButton: document.getElementById("uploadFirmwareButton"),
   localFirmwareFile: document.getElementById("localFirmwareFile"),
   localFirmwareLabel: document.getElementById("localFirmwareLabel"),
+  usbFlashAnotherDeviceButton: document.getElementById("usbFlashAnotherDeviceButton"),
+  usbFlasherDialog: document.getElementById("usbFlasherDialog"),
+  usbFlasherCloseButton: document.getElementById("usbFlasherCloseButton"),
+  usbFlasherCompatibility: document.getElementById("usbFlasherCompatibility"),
+  usbFlasherOptions: document.getElementById("usbFlasherOptions"),
+  usbFlasherFile: document.getElementById("usbFlasherFile"),
+  usbFlasherChooseFileButton: document.getElementById("usbFlasherChooseFileButton"),
+  usbFlasherFileLabel: document.getElementById("usbFlasherFileLabel"),
+  usbFlasherProgressCircle: document.getElementById("usbFlasherProgressCircle"),
+  usbFlasherProgressValue: document.getElementById("usbFlasherProgressValue"),
+  usbFlasherStatus: document.getElementById("usbFlasherStatus"),
+  usbFlasherDetail: document.getElementById("usbFlasherDetail"),
+  usbFlasherTargetLink: document.getElementById("usbFlasherTargetLink"),
+  usbFlasherLog: document.getElementById("usbFlasherLog"),
+  usbFlasherStartButton: document.getElementById("usbFlasherStartButton"),
+  usbFlasherCancelButton: document.getElementById("usbFlasherCancelButton"),
+  usbFlasherOpenTargetButton: document.getElementById("usbFlasherOpenTargetButton"),
   message: document.getElementById("message"),
   playForm: document.getElementById("playForm"),
   playbackActionButton: document.getElementById("playbackActionButton"),
@@ -1220,6 +1239,12 @@ firmwareTab = createFirmwareTab({
   setMessage,
   beginFirmwareReconnectReload,
   setCurrentFirmwareVersion,
+});
+
+usbFlasher = createUsbFlasher({
+  elements,
+  request,
+  setMessage,
 });
 
 infoTab = createInfoTab({

@@ -39,8 +39,11 @@ void WiFiManager::updateRadioModeAndSleep() {
 
     // Allow modem sleep whenever we are not actively hosting an AP.
     // AP mode is kept fully awake so the captive portal remains responsive.
+    // Use the same conservative 15 dBm ceiling for station and AP operation.
+    // The previous 8.5 dBm station limit made marginal mesh links unreliable;
+    // 15 dBm is still below the ESP32/ESP32-S3 supported maximum.
     WiFi.setSleep(!apMode_);
-    WiFi.setTxPower(apMode_ ? WIFI_POWER_15dBm : WIFI_POWER_8_5dBm);
+    WiFi.setTxPower(WIFI_POWER_15dBm);
 }
 
 void WiFiManager::begin(const SettingsBundle& settings, AppState& appState) {
