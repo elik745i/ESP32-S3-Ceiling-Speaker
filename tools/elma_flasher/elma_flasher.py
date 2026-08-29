@@ -33,7 +33,7 @@ import serial
 from serial.tools import list_ports
 
 
-APP_VERSION = "0.1.32"
+APP_VERSION = "0.1.33"
 WINDOWS_APP_USER_MODEL_ID = "ELMA.IoT.Flasher"
 FLASH_BAUD = 460800
 CONSOLE_BAUD = 115200
@@ -596,6 +596,80 @@ class DesignerServer:
             job.error = friendly_error(error)
             job.status = "Build or flash failed"
             job.append(f"ERROR: {job.error}")
+
+
+def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bool = False) -> bool:
+    """Render the local designer in ELMA's bundled Qt WebEngine window."""
+    from PySide6.QtCore import QTimer, QUrl
+    from PySide6.QtGui import QIcon
+    from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+    from PySide6.QtWidgets import QApplication, QMainWindow
+
+    origin = urllib.parse.urlparse(url)
+
+    class LocalDesignerPage(QWebEnginePage):
+        def acceptNavigationRequest(self, target: QUrl, navigation_type, is_main_frame: bool) -> bool:
+            if not is_main_frame:
+                return True
+            parsed = urllib.parse.urlparse(target.toString())
+            return parsed.scheme in ("http", "https") and parsed.hostname == origin.hostname and parsed.port == origin.port
+
+        def createWindow(self, _window_type):
+            return None
+
+    qt_app = QApplication.instance() or QApplication(["ELMA Device Designer"])
+    qt_app.setApplicationName("ELMA Device Designer")
+    qt_app.setOrganizationName("ELMA IoT")
+    qt_app.setApplicationVersion(APP_VERSION)
+    qt_app.setStyle("Fusion")
+    icon = QIcon(str(icon_path))
+    qt_app.setWindowIcon(icon)
+
+    profile = QWebEngineProfile.defaultProfile()
+    profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
+    profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.MemoryHttpCache)
+
+    window = QMainWindow()
+    window.setWindowTitle(f"ELMA Device Designer v{APP_VERSION}")
+    window.setWindowIcon(icon)
+    window.resize(1280, 900)
+    window.setMinimumSize(960, 680)
+    view = QWebEngineView(window)
+    page = LocalDesignerPage(profile, view)
+    view.setPage(page)
+    window.setCentralWidget(view)
+
+    result = {"loaded": False}
+
+    def finish_smoke_test() -> None:
+        window.close()
+        qt_app.quit()
+
+    def loaded(ok: bool) -> None:
+        result["loaded"] = bool(ok)
+        if smoke_test:
+            QTimer.singleShot(100, finish_smoke_test)
+        elif not ok:
+            view.setHtml(
+                "<html><body style='font:16px Segoe UI;background:#f7f5ef;color:#2a2926;padding:40px'>"
+                "<h1>ELMA Device Designer could not start</h1>"
+                "<p>The bundled Designer interface did not load. Close this window and retry.</p>"
+                "</body></html>"
+            )
+
+    view.loadFinished.connect(loaded)
+    if smoke_test:
+        QTimer.singleShot(15000, finish_smoke_test)
+    else:
+        window.showMaximized()
+    view.setUrl(QUrl(url))
+    window.show() if smoke_test else None
+    qt_app.exec()
+    view.deleteLater()
+    window.deleteLater()
+    qt_app.processEvents()
+    return result["loaded"]
 
 
 class FlasherApplication:
@@ -1350,13 +1424,18 @@ class FlasherApplication:
             webbrowser.open(f"http://{self.last_ip}/")
 
     def open_designer(self) -> None:
-        """Open the shared ELMA web configurator backed by this local EXE."""
+        """Switch to the bundled native Designer view without launching a browser."""
         try:
             url = self.designer_server.start()
-            self._log(f"ELMA Device Designer: {url}")
-            webbrowser.open(url)
+            self._log("Opening the bundled ELMA Device Designer window")
+            self.root.withdraw()
+            run_native_designer_window(url, self.window_icon_path)
         except BaseException as error:
             messagebox.showerror("ELMA Device Designer", friendly_error(error))
+        finally:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
 
     def close(self) -> None:
         self.designer_server.stop()
@@ -1456,6 +1535,21 @@ def main() -> int:
         layout_ok = app.flash_button.winfo_ismapped() and button_bottom <= window_bottom
         root.destroy()
         return 0 if layout_ok and icon_ok and compatibility_ok and designer_ok else 4
+    if "--native-designer-smoke-test" in sys.argv:
+        result = self_test()
+        if result:
+            return result
+        root = tk.Tk()
+        root.withdraw()
+        app = FlasherApplication(root, auto_detect_chip=False)
+        root.withdraw()
+        try:
+            designer_url = app.designer_server.start()
+            native_designer_ok = run_native_designer_window(designer_url, app.window_icon_path, smoke_test=True)
+        finally:
+            app.designer_server.stop()
+            root.destroy()
+        return 0 if native_designer_ok else 7
     root = tk.Tk()
     FlasherApplication(root)
     root.mainloop()

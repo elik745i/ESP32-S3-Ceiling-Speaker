@@ -64,6 +64,12 @@ if (-not $SkipInstall) {
         throw "ELMA Flasher build dependency installation failed with exit code $LASTEXITCODE."
     }
 }
+$qtRuntimeRoot = Join-Path $venvRoot 'Lib\site-packages\PySide6'
+foreach ($runtimeName in @('MSVCP140.dll', 'VCRUNTIME140.dll', 'VCRUNTIME140_1.dll')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $qtRuntimeRoot $runtimeName))) {
+        throw "Missing bundled Qt runtime dependency $runtimeName. Reinstall the ELMA Flasher build requirements."
+    }
+}
 
 $iconPath = Join-Path $buildRoot 'ELMA-Flasher.ico'
 $iconSource = Join-Path $projectRoot 'web\elma_iot_favicon.ico'
@@ -93,33 +99,56 @@ if (-not (Test-Path -LiteralPath $compilerExe)) {
     throw 'ELMA portable compiler core was not produced.'
 }
 
-& $python -m PyInstaller `
-    --noconfirm `
-    --clean `
-    --onefile `
-    --windowed `
-    --name $assetName `
-    --icon $iconPath `
-    --add-data "$assetRoot;assets" `
-    --add-data "$(Join-Path $projectRoot 'web');web" `
-    --add-data "$(Join-Path $projectRoot 'src');builder_project\src" `
-    --add-data "$(Join-Path $projectRoot 'include');builder_project\include" `
-    --add-data "$(Join-Path $projectRoot 'scripts');builder_project\scripts" `
-    --add-data "$(Join-Path $projectRoot 'partitions');builder_project\partitions" `
-    --add-data "$(Join-Path $projectRoot 'web');builder_project\web" `
-    --add-data "$(Join-Path $projectRoot 'platformio.ini');builder_project" `
-    --add-data "$(Join-Path $projectRoot 'sdkconfig.defaults');builder_project" `
-    --add-data "$(Join-Path $projectRoot 'package.json');builder_project" `
-    --add-data "$(Join-Path $projectRoot 'package-lock.json');builder_project" `
-    --add-binary "$compilerExe;." `
-    --collect-all esptool `
-    --hidden-import serial.tools.list_ports `
-    --distpath $releaseRoot `
-    --workpath (Join-Path $buildRoot 'pyinstaller-work') `
-    --specpath (Join-Path $buildRoot 'pyinstaller-spec') `
-    (Join-Path $projectRoot 'tools\elma_flasher\elma_flasher.py')
-if ($LASTEXITCODE -ne 0) {
-    throw "ELMA Flasher packaging failed with exit code $LASTEXITCODE."
+$inheritedPath = $env:PATH
+$basePythonRoot = (& $python -c 'import pathlib, sys; print(pathlib.Path(sys.base_prefix))').Trim()
+$env:PATH = @(
+    (Join-Path $venvRoot 'Scripts'),
+    $basePythonRoot,
+    (Join-Path $basePythonRoot 'Scripts'),
+    (Join-Path $env:SystemRoot 'System32'),
+    $env:SystemRoot,
+    (Join-Path $env:SystemRoot 'System32\Wbem')
+) -join ';'
+try {
+    & $python -m PyInstaller `
+        --noconfirm `
+        --clean `
+        --onefile `
+        --windowed `
+        --name $assetName `
+        --icon $iconPath `
+        --add-data "$assetRoot;assets" `
+        --add-data "$(Join-Path $projectRoot 'web');web" `
+        --add-data "$(Join-Path $projectRoot 'src');builder_project\src" `
+        --add-data "$(Join-Path $projectRoot 'include');builder_project\include" `
+        --add-data "$(Join-Path $projectRoot 'scripts');builder_project\scripts" `
+        --add-data "$(Join-Path $projectRoot 'partitions');builder_project\partitions" `
+        --add-data "$(Join-Path $projectRoot 'web');builder_project\web" `
+        --add-data "$(Join-Path $projectRoot 'platformio.ini');builder_project" `
+        --add-data "$(Join-Path $projectRoot 'sdkconfig.defaults');builder_project" `
+        --add-data "$(Join-Path $projectRoot 'package.json');builder_project" `
+        --add-data "$(Join-Path $projectRoot 'package-lock.json');builder_project" `
+        --add-binary "$compilerExe;." `
+        --add-binary "$(Join-Path $qtRuntimeRoot 'MSVCP140.dll');." `
+        --add-binary "$(Join-Path $qtRuntimeRoot 'VCRUNTIME140.dll');." `
+        --add-binary "$(Join-Path $qtRuntimeRoot 'VCRUNTIME140_1.dll');." `
+        --collect-all esptool `
+        --hidden-import PySide6.QtCore `
+        --hidden-import PySide6.QtGui `
+        --hidden-import PySide6.QtWidgets `
+        --hidden-import PySide6.QtWebEngineCore `
+        --hidden-import PySide6.QtWebEngineWidgets `
+        --hidden-import serial.tools.list_ports `
+        --distpath $releaseRoot `
+        --workpath (Join-Path $buildRoot 'pyinstaller-work') `
+        --specpath (Join-Path $buildRoot 'pyinstaller-spec') `
+        (Join-Path $projectRoot 'tools\elma_flasher\elma_flasher.py')
+    $packagingExitCode = $LASTEXITCODE
+} finally {
+    $env:PATH = $inheritedPath
+}
+if ($packagingExitCode -ne 0) {
+    throw "ELMA Flasher packaging failed with exit code $packagingExitCode."
 }
 
 $exePath = Join-Path $releaseRoot "$assetName.exe"

@@ -109,6 +109,8 @@ jobs:
         run: |
           $process = Start-Process -FilePath ".\release-assets\${{ github.event.release.tag_name }}\ELMA-Flasher-${{ github.event.release.tag_name }}.exe" -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "ELMA Flasher self-test failed with exit code $($process.ExitCode)." }
+          $designer = Start-Process -FilePath ".\release-assets\${{ github.event.release.tag_name }}\ELMA-Flasher-${{ github.event.release.tag_name }}.exe" -ArgumentList '--native-designer-smoke-test' -WindowStyle Hidden -Wait -PassThru
+          if ($designer.ExitCode -ne 0) { throw "Bundled ELMA Device Designer test failed with exit code $($designer.ExitCode)." }
       - name: Upload ELMA Flasher to release
         uses: softprops/action-gh-release@v2
         with:

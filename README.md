@@ -11,12 +11,18 @@ Project story and current device write-up:
 
 ## Current Release
 
-- Firmware version: `v0.1.32`
+- Firmware version: `v0.1.33`
 - Primary release repository: `elma-iot/ELMA-IoT`
 - GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.32.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.33.bin`
 
 This is the active development version for the next standard GitHub release.
+
+### v0.1.33 development highlights
+
+- Device Designer now opens as a native ELMA application view backed by the Qt WebEngine renderer bundled inside the portable executable; it no longer opens the system browser or depends on Edge/WebView2.
+- Closing Device Designer returns to the main flasher window, while its loopback-only compiler, configuration, COM-port detection, and flashing backend remain internal to ELMA Flasher.
+- Packaged release validation now loads the complete Designer UI through the bundled renderer before the EXE can be uploaded.
 
 ### v0.1.32 development highlights
 
@@ -542,16 +548,16 @@ Current OTA and rollback behavior:
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.32`:
+Release asset names for `v0.1.33`:
 
-- `esp32-notifier-v0.1.32.bin`
-- `esp32-notifier-hacs-v0.1.32.bin`
-- `esp32-notifier-hacs-slim-v0.1.32.bin`
-- `esp32s3-notifier-v0.1.32.bin`
-- `esp32s3-notifier-hacs-v0.1.32.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.32.bin`
-- `esp32c3-notifier-hacs-v0.1.32.bin`
-- `ELMA-Flasher-v0.1.32.exe`
+- `esp32-notifier-v0.1.33.bin`
+- `esp32-notifier-hacs-v0.1.33.bin`
+- `esp32-notifier-hacs-slim-v0.1.33.bin`
+- `esp32s3-notifier-v0.1.33.bin`
+- `esp32s3-notifier-hacs-v0.1.33.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.33.bin`
+- `esp32c3-notifier-hacs-v0.1.33.bin`
+- `ELMA-Flasher-v0.1.33.exe`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the seven supported firmware variants plus the standalone Windows ELMA Flasher and upload all matching assets to that release.
 
@@ -632,6 +638,7 @@ Key files and directories:
 
 Current release notes live here:
 
+- [release-assets/v0.1.33/release-notes.md](release-assets/v0.1.33/release-notes.md)
 - [release-assets/v0.1.32/release-notes.md](release-assets/v0.1.32/release-notes.md)
 - [release-assets/v0.1.31/release-notes.md](release-assets/v0.1.31/release-notes.md)
 - [release-assets/v0.1.30/release-notes.md](release-assets/v0.1.30/release-notes.md)
