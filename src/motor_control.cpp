@@ -1,6 +1,7 @@
 #include "motor_control.h"
 
 #include <ArduinoJson.h>
+#include <driver/gpio.h>
 
 namespace {
 constexpr uint32_t kDefaultRunDurationMs = 5000;
@@ -138,9 +139,15 @@ void MotorController::releaseConfiguredPins() {
     for (ChannelPins& channel : configuredChannels_) {
         if (channel.forwardPin >= 0) {
             digitalWrite(channel.forwardPin, LOW);
+            pinMode(channel.forwardPin, OUTPUT);
+            gpio_hold_dis(static_cast<gpio_num_t>(channel.forwardPin));
+            digitalWrite(channel.forwardPin, LOW);
             pinMode(channel.forwardPin, INPUT);
         }
         if (channel.backwardPin >= 0) {
+            digitalWrite(channel.backwardPin, LOW);
+            pinMode(channel.backwardPin, OUTPUT);
+            gpio_hold_dis(static_cast<gpio_num_t>(channel.backwardPin));
             digitalWrite(channel.backwardPin, LOW);
             pinMode(channel.backwardPin, INPUT);
         }
@@ -150,12 +157,32 @@ void MotorController::releaseConfiguredPins() {
 void MotorController::configurePins() {
     for (const ChannelPins& channel : configuredChannels_) {
         if (channel.forwardPin >= 0) {
+            digitalWrite(channel.forwardPin, LOW);
             pinMode(channel.forwardPin, OUTPUT);
+            gpio_hold_dis(static_cast<gpio_num_t>(channel.forwardPin));
             digitalWrite(channel.forwardPin, LOW);
         }
         if (channel.backwardPin >= 0) {
-            pinMode(channel.backwardPin, OUTPUT);
             digitalWrite(channel.backwardPin, LOW);
+            pinMode(channel.backwardPin, OUTPUT);
+            gpio_hold_dis(static_cast<gpio_num_t>(channel.backwardPin));
+            digitalWrite(channel.backwardPin, LOW);
+        }
+    }
+}
+
+void MotorController::prepareForRestart() {
+    stopAllChannels();
+    for (const ChannelPins& channel : configuredChannels_) {
+        const int8_t pins[] = {channel.forwardPin, channel.backwardPin};
+        for (const int8_t pin : pins) {
+            if (pin < 0) {
+                continue;
+            }
+            digitalWrite(pin, LOW);
+            pinMode(pin, OUTPUT);
+            digitalWrite(pin, LOW);
+            gpio_hold_en(static_cast<gpio_num_t>(pin));
         }
     }
 }
@@ -262,7 +289,25 @@ bool MotorController::runChannel(uint8_t channelIndex, bool forward, uint32_t du
     const int8_t activePin = forward ? channelPins.forwardPin : channelPins.backwardPin;
     const int8_t inactivePin = forward ? channelPins.backwardPin : channelPins.forwardPin;
     digitalWrite(inactivePin, LOW);
+    delayMicroseconds(20);
     digitalWrite(activePin, HIGH);
+    delayMicroseconds(5);
+    if (digitalRead(activePin) != HIGH) {
+        digitalWrite(activePin, LOW);
+        error = String("Motor GPIO") + String(activePin) + " did not reach HIGH; check wiring or a short circuit.";
+        Serial.printf("[motor] rejected channel=%u direction=%s: GPIO%d remained LOW\n",
+                      static_cast<unsigned>(channelIndex),
+                      directionName(forward),
+                      static_cast<int>(activePin));
+        return false;
+    }
+
+    Serial.printf("[motor] channel=%u direction=%s active=GPIO%d inactive=GPIO%d duration=%lu ms\n",
+                  static_cast<unsigned>(channelIndex),
+                  directionName(forward),
+                  static_cast<int>(activePin),
+                  static_cast<int>(inactivePin),
+                  static_cast<unsigned long>(clampDurationMs(durationMs)));
 
     ChannelRuntime& runtime = runtimeChannels_[channelIndex];
     runtime.active = true;

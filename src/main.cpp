@@ -1541,6 +1541,7 @@ void serviceWapeTriggerPulse() {
     const String version = otaPendingVersion.isEmpty() ? normalizedAppVersion() : otaPendingVersion;
     storeRollbackPendingInfo(version, reason);
     persistRollbackOutcome(version, reason);
+    motorController.prepareForRestart();
     Serial.printf("[rollback] %s\n", reason.c_str());
     Serial.flush();
     const esp_err_t result = esp_ota_mark_app_invalid_rollback_and_reboot();
@@ -3548,8 +3549,6 @@ void processDeferredActions() {
 
 void setup() {
     Serial.begin(115200);
-    waitForSerialConsole();
-    delay(200);
     beginSystemMetrics();
     activeCpuFrequencyMhz = ESP.getCpuFreqMHz();
 
@@ -3583,6 +3582,17 @@ void setup() {
 
     settingsManager->begin();
     *settings = settingsManager->load();
+
+    // Take ownership of configured bridge inputs before storage, networking, or
+    // the USB serial grace period can delay startup. Both inputs must stay LOW
+    // until an explicit motor command is received.
+    motorController.begin([](int8_t limitInputIndex) {
+        return limitInputIndex >= 0 ? readConfiguredLimitSwitchPressed(static_cast<size_t>(limitInputIndex)) : false;
+    });
+    motorController.applySettings(*settings);
+
+    waitForSerialConsole();
+    delay(200);
     if (settings->device.powerCycleFactoryResetEnabled) {
         const uint8_t powerCycleCount = updatePowerCycleCounter(resetReason);
         if (powerCycleCount > 0) {
@@ -3596,6 +3606,7 @@ void setup() {
             settingsManager->reset();
             clearPowerCycleCounter();
             Serial.flush();
+            motorController.prepareForRestart();
             delay(200);
             ESP.restart();
         }
@@ -3651,10 +3662,6 @@ void setup() {
     mqttManager->begin(*settings, *appState, *wifiManager, *otaManager, handleMqttCommand, [](JsonObject root) {
         appendAugmentedMotorStatus(root);
     });
-    motorController.begin([](int8_t limitInputIndex) {
-        return limitInputIndex >= 0 ? readConfiguredLimitSwitchPressed(static_cast<size_t>(limitInputIndex)) : false;
-    });
-
     webServer->begin(
         *appState,
         *wifiManager,
@@ -4210,6 +4217,7 @@ void loop() {
     }
 
     if (rebootRequested && static_cast<long>(millis() - rebootAt) >= 0) {
+        motorController.prepareForRestart();
         ESP.restart();
     }
 

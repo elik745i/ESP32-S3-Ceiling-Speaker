@@ -20,6 +20,7 @@ class MotorController {
 
     void begin(LimitInputReader limitInputReader);
     void applySettings(const SettingsBundle& settings);
+    void prepareForRestart();
     void loop();
     bool available() const;
     bool runChannel(uint8_t channelIndex, bool forward, uint32_t durationMs, int8_t limitInputIndex, String& error);

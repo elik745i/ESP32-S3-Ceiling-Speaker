@@ -33,7 +33,7 @@ import serial
 from serial.tools import list_ports
 
 
-APP_VERSION = "0.1.36"
+APP_VERSION = "0.1.37"
 WINDOWS_APP_USER_MODEL_ID = "ELMA.IoT.Flasher"
 FLASH_BAUD = 460800
 CONSOLE_BAUD = 115200

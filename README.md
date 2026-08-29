@@ -11,12 +11,18 @@ Project story and current device write-up:
 
 ## Current Release
 
-- Firmware version: `v0.1.36`
+- Firmware version: `v0.1.37`
 - Primary release repository: `elma-iot/ELMA-IoT`
 - GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.36.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.37.bin`
 
 This is the active development version for the next standard GitHub release.
+
+### v0.1.37 development highlights
+
+- DRV8833 inputs are forced inactive immediately after saved settings load, before USB serial waiting, storage, Wi-Fi, MQTT, or web startup can leave them floating.
+- Configured motor outputs are stopped and GPIO-held LOW across controlled software restarts, preventing a valve from moving while the ESP reboots.
+- Direction changes now include a short all-inputs-off interval and verify that the selected output reached HIGH, returning a clear wiring/short-circuit error when it did not.
 
 ### v0.1.36 development highlights
 
@@ -565,16 +571,16 @@ Current OTA and rollback behavior:
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.36`:
+Release asset names for `v0.1.37`:
 
-- `esp32-notifier-v0.1.36.bin`
-- `esp32-notifier-hacs-v0.1.36.bin`
-- `esp32-notifier-hacs-slim-v0.1.36.bin`
-- `esp32s3-notifier-v0.1.36.bin`
-- `esp32s3-notifier-hacs-v0.1.36.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.36.bin`
-- `esp32c3-notifier-hacs-v0.1.36.bin`
-- `ELMA-Flasher-v0.1.36.exe`
+- `esp32-notifier-v0.1.37.bin`
+- `esp32-notifier-hacs-v0.1.37.bin`
+- `esp32-notifier-hacs-slim-v0.1.37.bin`
+- `esp32s3-notifier-v0.1.37.bin`
+- `esp32s3-notifier-hacs-v0.1.37.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.37.bin`
+- `esp32c3-notifier-hacs-v0.1.37.bin`
+- `ELMA-Flasher-v0.1.37.exe`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the seven supported firmware variants plus the standalone Windows ELMA Flasher and upload all matching assets to that release.
 
@@ -655,6 +661,7 @@ Key files and directories:
 
 Current release notes live here:
 
+- [release-assets/v0.1.37/release-notes.md](release-assets/v0.1.37/release-notes.md)
 - [release-assets/v0.1.36/release-notes.md](release-assets/v0.1.36/release-notes.md)
 - [release-assets/v0.1.35/release-notes.md](release-assets/v0.1.35/release-notes.md)
 - [release-assets/v0.1.34/release-notes.md](release-assets/v0.1.34/release-notes.md)
