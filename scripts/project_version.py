@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -29,12 +30,15 @@ def firmware_version(project_dir: Path) -> str:
     return match.group(1)
 
 
-def validate(project_dir: Path, expected_tag: str = "") -> str:
+def validate(project_dir: Path, expected_tag: str = "", validate_release_metadata: bool = True) -> str:
     version = firmware_version(project_dir)
     tag = f"v{version}"
     errors: list[str] = []
     if expected_tag and expected_tag != tag:
         errors.append(f"release tag {expected_tag!r} does not match firmware APP_VERSION {tag!r}")
+
+    if not validate_release_metadata:
+        return version
 
     flasher_source = (project_dir / "tools" / "elma_flasher" / "elma_flasher.py").read_text(encoding="utf-8")
     flasher_match = FLASHER_VERSION_PATTERN.search(flasher_source)
@@ -76,8 +80,9 @@ def cli() -> int:
     parser.add_argument("--tag", default="", help="Release tag that must match APP_VERSION (for example v0.1.27)")
     parser.add_argument("--print", action="store_true", dest="print_version")
     args = parser.parse_args()
+    portable_builder = os.environ.get("ELMA_PORTABLE_BUILDER") == "1"
     try:
-        version = validate(args.project_dir.resolve(), args.tag)
+        version = validate(args.project_dir.resolve(), args.tag, validate_release_metadata=not portable_builder)
     except RuntimeError as error:
         print(error, file=sys.stderr)
         return 1
@@ -94,4 +99,7 @@ except NameError:
     if __name__ == "__main__":
         raise SystemExit(cli())
 else:
-    validate(Path(env.subst("$PROJECT_DIR")).resolve())  # type: ignore[name-defined]
+    validate(  # type: ignore[name-defined]
+        Path(env.subst("$PROJECT_DIR")).resolve(),
+        validate_release_metadata=os.environ.get("ELMA_PORTABLE_BUILDER") != "1",
+    )

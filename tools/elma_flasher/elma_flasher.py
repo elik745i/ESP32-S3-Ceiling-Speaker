@@ -33,7 +33,7 @@ import serial
 from serial.tools import list_ports
 
 
-APP_VERSION = "0.1.33"
+APP_VERSION = "0.1.34"
 WINDOWS_APP_USER_MODEL_ID = "ELMA.IoT.Flasher"
 FLASH_BAUD = 460800
 CONSOLE_BAUD = 115200
@@ -1550,6 +1550,36 @@ def main() -> int:
             app.designer_server.stop()
             root.destroy()
         return 0 if native_designer_ok else 7
+    if "--portable-builder-compile-test" in sys.argv:
+        if not getattr(sys, "frozen", False):
+            return 8
+        server = DesignerServer(None)
+        project = server.project_root()
+        if (project / "tools").exists() or (project / "README.md").exists():
+            return 8
+        compiler_environment = os.environ.copy()
+        compiler_environment["ELMA_PORTABLE_BUILDER"] = "1"
+        command = server.compiler_command() + [
+            "run", "--project-dir", str(project), "--environment", "esp32c3_designer_hacs",
+        ]
+        creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        completed = subprocess.run(
+            command,
+            cwd=project,
+            env=compiler_environment,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creation_flags,
+            timeout=600,
+            check=False,
+        )
+        firmware = project / ".pio" / "build" / "esp32c3_designer_hacs" / "firmware.bin"
+        if completed.returncode or not firmware.is_file():
+            return 9
+        try:
+            return 0 if chip_family_from_image(firmware.read_bytes()[:24]) == "esp32c3" else 9
+        except (OSError, ValueError):
+            return 9
     root = tk.Tk()
     FlasherApplication(root)
     root.mainloop()

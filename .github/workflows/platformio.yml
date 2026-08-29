@@ -31,6 +31,11 @@ jobs:
         run: pip install platformio
       - name: Validate project version
         run: python scripts/project_version.py
+      - name: Validate portable reduced builder version path
+        run: |
+          mkdir -p .portable-builder-validation/include
+          cp include/version.h .portable-builder-validation/include/version.h
+          ELMA_PORTABLE_BUILDER=1 python scripts/project_version.py --project-dir .portable-builder-validation
       - name: Build default environment
         run: pio run
 
@@ -111,6 +116,8 @@ jobs:
           if ($process.ExitCode -ne 0) { throw "ELMA Flasher self-test failed with exit code $($process.ExitCode)." }
           $designer = Start-Process -FilePath ".\release-assets\${{ github.event.release.tag_name }}\ELMA-Flasher-${{ github.event.release.tag_name }}.exe" -ArgumentList '--native-designer-smoke-test' -WindowStyle Hidden -Wait -PassThru
           if ($designer.ExitCode -ne 0) { throw "Bundled ELMA Device Designer test failed with exit code $($designer.ExitCode)." }
+          $builder = Start-Process -FilePath ".\release-assets\${{ github.event.release.tag_name }}\ELMA-Flasher-${{ github.event.release.tag_name }}.exe" -ArgumentList '--portable-builder-compile-test' -WindowStyle Hidden -Wait -PassThru
+          if ($builder.ExitCode -ne 0) { throw "Packaged portable firmware compilation test failed with exit code $($builder.ExitCode)." }
       - name: Upload ELMA Flasher to release
         uses: softprops/action-gh-release@v2
         with:
