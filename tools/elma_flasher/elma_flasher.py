@@ -33,7 +33,7 @@ import serial
 from serial.tools import list_ports
 
 
-APP_VERSION = "0.1.31"
+APP_VERSION = "0.1.32"
 WINDOWS_APP_USER_MODEL_ID = "ELMA.IoT.Flasher"
 FLASH_BAUD = 460800
 CONSOLE_BAUD = 115200
@@ -303,7 +303,6 @@ class DesignerJob:
         self.id = uuid.uuid4().hex
         self.state = "queued"
         self.progress = 0
-        self.designer_server = DesignerServer(self)
         self.status = "Queued"
         self.compatibility = "Resolving chip capabilities and selected peripherals."
         self.log: list[str] = []
@@ -448,6 +447,18 @@ class DesignerServer:
         self.thread.start()
         return self.url
 
+    def stop(self) -> None:
+        server = self.httpd
+        thread = self.thread
+        self.httpd = None
+        self.thread = None
+        self.url = ""
+        if server is not None:
+            server.shutdown()
+            server.server_close()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2)
+
     def mock_status(self) -> dict:
         selected = str(self.settings.get("ui", {}).get("gpioBoardSelection", "esp32-c3"))
         chip = "esp32s3" if "s3" in selected else ("esp32c3" if "c3" in selected else "esp32")
@@ -591,6 +602,7 @@ class FlasherApplication:
     def __init__(self, root: tk.Tk, auto_detect_chip: bool = True) -> None:
         self.root = root
         self.auto_detect_chip = auto_detect_chip
+        self.designer_server = DesignerServer(self)
         self.events: queue.Queue[tuple] = queue.Queue()
         self.busy = False
         self.last_ip = ""
@@ -637,6 +649,7 @@ class FlasherApplication:
         self.detail = tk.StringVar(value="Connect the target using a USB data cable, then select its COM port.")
         self.progress = 0
         self._configure_window()
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
         self._build_ui()
         self.refresh_ports()
         self.root.after(80, self._process_events)
@@ -1345,6 +1358,10 @@ class FlasherApplication:
         except BaseException as error:
             messagebox.showerror("ELMA Device Designer", friendly_error(error))
 
+    def close(self) -> None:
+        self.designer_server.stop()
+        self.root.destroy()
+
 
 def self_test() -> int:
     required = [
@@ -1428,9 +1445,17 @@ def main() -> int:
         icon_ok = app.window_icon_path.is_file() and app.window_icon_applied and window_has_windows_icon(root)
         app._set_selected_image_family("esp32")
         compatibility_ok = self_test() == 0 and app.chip_menu.entrycget(1, "state") == "normal" and app.chip_menu.entrycget(2, "state") == "disabled" and app.chip_menu.entrycget(3, "state") == "disabled"
+        designer_ok = False
+        try:
+            designer_url = app.designer_server.start()
+            with urllib.request.urlopen(f"{designer_url}api/builder/status", timeout=3) as response:
+                designer_status = json.loads(response.read().decode("utf-8"))
+            designer_ok = designer_status.get("active") is True and designer_status.get("version") == APP_VERSION
+        finally:
+            app.designer_server.stop()
         layout_ok = app.flash_button.winfo_ismapped() and button_bottom <= window_bottom
         root.destroy()
-        return 0 if layout_ok and icon_ok and compatibility_ok else 4
+        return 0 if layout_ok and icon_ok and compatibility_ok and designer_ok else 4
     root = tk.Tk()
     FlasherApplication(root)
     root.mainloop()

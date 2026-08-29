@@ -11,12 +11,17 @@ Project story and current device write-up:
 
 ## Current Release
 
-- Firmware version: `v0.1.31`
+- Firmware version: `v0.1.32`
 - Primary release repository: `elma-iot/ELMA-IoT`
 - GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.31.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.32.bin`
 
 This is the active development version for the next standard GitHub release.
+
+### v0.1.32 development highlights
+
+- Fixed Open Device Designer in the portable ELMA Flasher by assigning the loopback designer server to the main application, removing an erroneous recursive server allocation from compile jobs, and closing the local server cleanly when the application exits.
+- The packaged UI smoke test now starts the designer server and verifies its local status API so this launch-path regression is caught before release.
 
 ### v0.1.31 development highlights
 
@@ -537,16 +542,16 @@ Current OTA and rollback behavior:
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.31`:
+Release asset names for `v0.1.32`:
 
-- `esp32-notifier-v0.1.31.bin`
-- `esp32-notifier-hacs-v0.1.31.bin`
-- `esp32-notifier-hacs-slim-v0.1.31.bin`
-- `esp32s3-notifier-v0.1.31.bin`
-- `esp32s3-notifier-hacs-v0.1.31.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.31.bin`
-- `esp32c3-notifier-hacs-v0.1.31.bin`
-- `ELMA-Flasher-v0.1.31.exe`
+- `esp32-notifier-v0.1.32.bin`
+- `esp32-notifier-hacs-v0.1.32.bin`
+- `esp32-notifier-hacs-slim-v0.1.32.bin`
+- `esp32s3-notifier-v0.1.32.bin`
+- `esp32s3-notifier-hacs-v0.1.32.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.32.bin`
+- `esp32c3-notifier-hacs-v0.1.32.bin`
+- `ELMA-Flasher-v0.1.32.exe`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the seven supported firmware variants plus the standalone Windows ELMA Flasher and upload all matching assets to that release.
 
@@ -627,6 +632,7 @@ Key files and directories:
 
 Current release notes live here:
 
+- [release-assets/v0.1.32/release-notes.md](release-assets/v0.1.32/release-notes.md)
 - [release-assets/v0.1.31/release-notes.md](release-assets/v0.1.31/release-notes.md)
 - [release-assets/v0.1.30/release-notes.md](release-assets/v0.1.30/release-notes.md)
 - [release-assets/v0.1.29/release-notes.md](release-assets/v0.1.29/release-notes.md)
