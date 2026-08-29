@@ -111,7 +111,10 @@ export function createLocalBuilder({ elements, currentSettingsSnapshot, setMessa
   async function compileAndFlash() {
     const port = elements.localBuilderPort.value;
     if (!port) throw new Error("Connect and select a USB ESP device first.");
-    const settings = currentSettingsSnapshot();
+    // The standalone Flash tab deliberately reads the shared Designer backend
+    // at click time so a second WebEngine view cannot flash a stale snapshot.
+    const desktopFlashView = new URLSearchParams(window.location.search).get("elmaView") === "flash";
+    const settings = desktopFlashView ? await api("/api/settings") : currentSettingsSnapshot();
     const payload = {
       port,
       chip: elements.localBuilderChip.value,
@@ -148,6 +151,12 @@ export function createLocalBuilder({ elements, currentSettingsSnapshot, setMessa
     elements.localBuilderPanel.hidden = false;
     if (elements.runtimeFirmwarePanel) elements.runtimeFirmwarePanel.hidden = true;
     elements.localBuilderBadge.textContent = `Local compiler ${status.version || ""}`.trim();
+    if (new URLSearchParams(window.location.search).get("elmaView") === "flash") {
+      const heading = elements.localBuilderPanel.querySelector(".local-builder-heading h3");
+      const copy = elements.localBuilderPanel.querySelector(".local-builder-heading p");
+      if (heading) heading.textContent = "Flash USB Device";
+      if (copy) copy.textContent = "Uses the complete configuration saved in Device Designer. Select the connected target, then compile and flash.";
+    }
     await refreshPorts();
     elements.localBuilderRefreshPorts.addEventListener("click", () => refreshPorts().catch((error) => setMessage(error.message, true)));
     elements.localBuilderChip.addEventListener("change", applyTargetPolicy);

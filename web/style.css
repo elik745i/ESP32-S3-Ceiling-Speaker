@@ -4914,3 +4914,26 @@ body {
     animation: none;
   }
 }
+body.desktop-flash-view .hero,
+body.desktop-flash-view .tabs,
+body.desktop-flash-view .tab-panel:not(#tab-firmware) {
+  display: none !important;
+}
+
+body.desktop-flash-view #tab-firmware {
+  display: block !important;
+  padding-top: 0;
+}
+
+body.desktop-flash-view #tab-firmware > h2 {
+  display: none;
+}
+
+body.desktop-flash-view .wrap {
+  max-width: 1180px;
+  padding-top: 20px;
+}
+
+body.desktop-flash-view .panel-wide {
+  min-height: calc(100vh - 40px);
+}

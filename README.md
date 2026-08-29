@@ -11,12 +11,17 @@ Project story and current device write-up:
 
 ## Current Release
 
-- Firmware version: `v0.1.35`
+- Firmware version: `v0.1.36`
 - Primary release repository: `elma-iot/ELMA-IoT`
 - GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.35.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.36.bin`
 
 This is the active development version for the next standard GitHub release.
+
+### v0.1.36 development highlights
+
+- ELMA Flasher now opens directly into one native application window with `Device Designer` and `Flash USB Device` tabs at the top.
+- Device Designer is the default tab. Switching to Flash USB Device saves the complete live designer configuration, and flashing reads that shared configuration before compiling and provisioning the connected target.
 
 ### v0.1.35 development highlights
 
@@ -560,16 +565,16 @@ Current OTA and rollback behavior:
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.35`:
+Release asset names for `v0.1.36`:
 
-- `esp32-notifier-v0.1.35.bin`
-- `esp32-notifier-hacs-v0.1.35.bin`
-- `esp32-notifier-hacs-slim-v0.1.35.bin`
-- `esp32s3-notifier-v0.1.35.bin`
-- `esp32s3-notifier-hacs-v0.1.35.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.35.bin`
-- `esp32c3-notifier-hacs-v0.1.35.bin`
-- `ELMA-Flasher-v0.1.35.exe`
+- `esp32-notifier-v0.1.36.bin`
+- `esp32-notifier-hacs-v0.1.36.bin`
+- `esp32-notifier-hacs-slim-v0.1.36.bin`
+- `esp32s3-notifier-v0.1.36.bin`
+- `esp32s3-notifier-hacs-v0.1.36.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.36.bin`
+- `esp32c3-notifier-hacs-v0.1.36.bin`
+- `ELMA-Flasher-v0.1.36.exe`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the seven supported firmware variants plus the standalone Windows ELMA Flasher and upload all matching assets to that release.
 
@@ -650,6 +655,7 @@ Key files and directories:
 
 Current release notes live here:
 
+- [release-assets/v0.1.36/release-notes.md](release-assets/v0.1.36/release-notes.md)
 - [release-assets/v0.1.35/release-notes.md](release-assets/v0.1.35/release-notes.md)
 - [release-assets/v0.1.34/release-notes.md](release-assets/v0.1.34/release-notes.md)
 - [release-assets/v0.1.33/release-notes.md](release-assets/v0.1.33/release-notes.md)

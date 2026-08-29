@@ -4733,8 +4733,8 @@ function resolveStorageTarget(target = state.activeStorageTarget || "flash") {
   return target === "flash" && !flashStorageAvailable() ? "sd" : target;
 }
 
-function activateTabByName(tabName) {
-  return tabNavigation?.activateTabByName(tabName) || false;
+function activateTabByName(tabName, options = {}) {
+  return tabNavigation?.activateTabByName(tabName, options) || false;
 }
 
 function activeTabName() {
@@ -8793,7 +8793,7 @@ function setupTabs() {
         stopTouchLivePolling();
       }
 
-      if (resolvedTabName === "firmware" && !document.body.classList.contains("local-builder-mode")) {
+      if (resolvedTabName === "firmware" && !desktopFlashView && !document.body.classList.contains("local-builder-mode")) {
         refreshFirmwareInfo(true).catch(handleError);
       }
 
@@ -9266,7 +9266,7 @@ for (const field of elements.settingsForm.elements) {
 
   if (field.type === "checkbox" || field.tagName === "SELECT") {
     field.addEventListener("change", () => {
-      if (field.name.startsWith("wifi.")) {
+      if (field.name.startsWith("wifi.") && !document.body.classList.contains("local-builder-mode")) {
         state.settingsDirty = true;
       } else {
         queueSettingsSave(150);
@@ -9315,7 +9315,7 @@ for (const field of elements.settingsForm.elements) {
     if (event.target.name?.startsWith("mqtt.")) {
       setMqttConnectStatus("");
     }
-    if (event.target.name.startsWith("wifi.")) {
+    if (event.target.name.startsWith("wifi.") && !document.body.classList.contains("local-builder-mode")) {
       // Network changes can disconnect the page. Keep them local until the
       // explicit Connect action submits the complete credential/IP fields.
       state.settingsDirty = true;
@@ -9348,6 +9348,10 @@ function handleError(error) {
 }
 
 resetTransientOverlays();
+const desktopFlashView = new URLSearchParams(window.location.search).get("elmaView") === "flash";
+if (desktopFlashView) {
+  document.body.classList.add("desktop-flash-view");
+}
 restoreStorageLocation();
 state.peripheralDiagramPositions = loadPeripheralDiagramPositions();
 restorePeripheralProfileSelections();
@@ -9386,8 +9390,27 @@ Promise.allSettled([loadStatus(), loadSettings()])
         handleError(result.reason);
       }
     }
-    restoreSavedActiveTabIfVisible();
+    if (desktopFlashView) {
+      activateTabByName("firmware", { persist: false });
+    } else {
+      restoreSavedActiveTabIfVisible();
+    }
     uiHistoryModule?.captureSnapshot({ replace: true });
   });
 localBuilder.initialize().catch(handleError);
+window.elmaSaveDesignerSettings = () => saveSettings({ silent: true });
+window.elmaBeginFlashSync = () => {
+  if (!desktopFlashView) return;
+  elements.localBuilderCompileFlash.disabled = true;
+  elements.localBuilderProgressLabel.textContent = "Synchronizing Device Designer settings...";
+};
+window.elmaRefreshFlashSettings = async () => {
+  if (!desktopFlashView) return;
+  try {
+    await loadSettings();
+    elements.localBuilderProgressLabel.textContent = "Designer configuration synchronized — ready to compile and flash";
+  } finally {
+    elements.localBuilderCompileFlash.disabled = false;
+  }
+};
 startStatusPolling();

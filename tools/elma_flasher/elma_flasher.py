@@ -33,7 +33,7 @@ import serial
 from serial.tools import list_ports
 
 
-APP_VERSION = "0.1.35"
+APP_VERSION = "0.1.36"
 WINDOWS_APP_USER_MODEL_ID = "ELMA.IoT.Flasher"
 FLASH_BAUD = 460800
 CONSOLE_BAUD = 115200
@@ -600,12 +600,12 @@ class DesignerServer:
 
 
 def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bool = False) -> bool:
-    """Render the local designer in ELMA's bundled Qt WebEngine window."""
+    """Render the designer and USB flasher as tabs in one native ELMA window."""
     from PySide6.QtCore import QTimer, QUrl
     from PySide6.QtGui import QIcon
     from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
     from PySide6.QtWebEngineWidgets import QWebEngineView
-    from PySide6.QtWidgets import QApplication, QMainWindow
+    from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget
 
     origin = urllib.parse.urlparse(url)
 
@@ -619,8 +619,8 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
         def createWindow(self, _window_type):
             return None
 
-    qt_app = QApplication.instance() or QApplication(["ELMA Device Designer"])
-    qt_app.setApplicationName("ELMA Device Designer")
+    qt_app = QApplication.instance() or QApplication(["ELMA Flasher"])
+    qt_app.setApplicationName("ELMA Flasher")
     qt_app.setOrganizationName("ELMA IoT")
     qt_app.setApplicationVersion(APP_VERSION)
     qt_app.setStyle("Fusion")
@@ -632,45 +632,92 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
     profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.MemoryHttpCache)
 
     window = QMainWindow()
-    window.setWindowTitle(f"ELMA Device Designer v{APP_VERSION}")
+    window.setWindowTitle(f"ELMA Flasher v{APP_VERSION}")
     window.setWindowIcon(icon)
     window.resize(1280, 900)
     window.setMinimumSize(960, 680)
-    view = QWebEngineView(window)
-    page = LocalDesignerPage(profile, view)
-    view.setPage(page)
-    window.setCentralWidget(view)
+    tabs = QTabWidget(window)
+    tabs.setDocumentMode(True)
+    tabs.setTabPosition(QTabWidget.TabPosition.North)
+    tabs.setStyleSheet(
+        "QTabWidget::pane { border: 0; background: #f7f5ef; }"
+        "QTabBar::tab { background: #e8e5de; color: #2a2926; padding: 12px 28px; "
+        "font: 600 11pt 'Segoe UI'; border: 1px solid #d2cec4; border-bottom: 0; }"
+        "QTabBar::tab:selected { background: #f39200; color: white; }"
+        "QTabBar::tab:hover:!selected { background: #dcd8cf; }"
+    )
+    designer_view = QWebEngineView(tabs)
+    designer_page = LocalDesignerPage(profile, designer_view)
+    designer_view.setPage(designer_page)
+    flash_view = QWebEngineView(tabs)
+    flash_page = LocalDesignerPage(profile, flash_view)
+    flash_view.setPage(flash_page)
+    tabs.addTab(designer_view, "Device Designer")
+    tabs.addTab(flash_view, "Flash USB Device")
+    tabs.setCurrentIndex(0)
+    window.setCentralWidget(tabs)
 
-    result = {"loaded": False}
+    result = {
+        "designer_loaded": False,
+        "flash_loaded": False,
+        "tabs_ok": tabs.count() == 2
+        and tabs.tabText(0) == "Device Designer"
+        and tabs.tabText(1) == "Flash USB Device"
+        and tabs.currentIndex() == 0,
+    }
 
     def finish_smoke_test() -> None:
         window.close()
         qt_app.quit()
 
-    def loaded(ok: bool) -> None:
-        result["loaded"] = bool(ok)
-        if smoke_test:
+    def maybe_finish_smoke_test() -> None:
+        if smoke_test and result["designer_loaded"] and result["flash_loaded"] and result["tabs_ok"]:
             QTimer.singleShot(100, finish_smoke_test)
-        elif not ok:
-            view.setHtml(
+
+    def designer_loaded(ok: bool) -> None:
+        result["designer_loaded"] = bool(ok)
+        maybe_finish_smoke_test()
+        if not ok and not smoke_test:
+            designer_view.setHtml(
                 "<html><body style='font:16px Segoe UI;background:#f7f5ef;color:#2a2926;padding:40px'>"
                 "<h1>ELMA Device Designer could not start</h1>"
                 "<p>The bundled Designer interface did not load. Close this window and retry.</p>"
                 "</body></html>"
             )
 
-    view.loadFinished.connect(loaded)
+    def flash_loaded(ok: bool) -> None:
+        result["flash_loaded"] = bool(ok)
+        maybe_finish_smoke_test()
+
+    def tab_changed(index: int) -> None:
+        if index != 1:
+            return
+        # Save every live form value, including Wi-Fi fields that normally wait
+        # for an explicit Connect action on a running device. The Flash tab
+        # reads this shared backend object when its button is pressed.
+        flash_view.page().runJavaScript("window.elmaBeginFlashSync?.()")
+        designer_view.page().runJavaScript("window.elmaSaveDesignerSettings?.()")
+        QTimer.singleShot(
+            400,
+            lambda: flash_view.page().runJavaScript("window.elmaRefreshFlashSettings?.()"),
+        )
+
+    designer_view.loadFinished.connect(designer_loaded)
+    flash_view.loadFinished.connect(flash_loaded)
+    tabs.currentChanged.connect(tab_changed)
     if smoke_test:
         QTimer.singleShot(15000, finish_smoke_test)
     else:
         window.showMaximized()
-    view.setUrl(QUrl(url))
+    designer_view.setUrl(QUrl(url))
+    flash_view.setUrl(QUrl(f"{url}?elmaView=flash"))
     window.show() if smoke_test else None
     qt_app.exec()
-    view.deleteLater()
+    designer_view.deleteLater()
+    flash_view.deleteLater()
     window.deleteLater()
     qt_app.processEvents()
-    return result["loaded"]
+    return result["designer_loaded"] and result["flash_loaded"] and result["tabs_ok"]
 
 
 class FlasherApplication:
@@ -1594,9 +1641,19 @@ def main() -> int:
             return 0 if chip_family_from_image(firmware.read_bytes()[:24]) == "esp32c3" else 9
         except (OSError, ValueError):
             return 9
+    # Start directly in the unified native window. A hidden controller supplies
+    # the proven serial detection, erase, flash and provisioning implementation
+    # to the loopback-only Designer backend.
     root = tk.Tk()
-    FlasherApplication(root)
-    root.mainloop()
+    root.withdraw()
+    app = FlasherApplication(root)
+    root.withdraw()
+    try:
+        designer_url = app.designer_server.start()
+        run_native_designer_window(designer_url, app.window_icon_path)
+    finally:
+        app.designer_server.stop()
+        root.destroy()
     return 0
 
 

@@ -48,12 +48,12 @@ export function initTabNavigation({ storageKey, onActivate } = {}) {
   activateTab(initialTab, { persist: !preserveSavedInitialTab });
 
   return {
-    activateTabByName(tabName) {
+    activateTabByName(tabName, options = {}) {
       const button = buttons.find((candidate) => candidate.dataset.tab === tabName);
       if (!button || button.hidden || button.disabled) {
         return false;
       }
-      activateTab(tabName);
+      activateTab(tabName, options);
       return true;
     },
     activeTabName() {
