@@ -499,7 +499,13 @@
               <label>Saved Volume (%)
                 <input form="settingsForm" name="device.savedVolumePercent" type="number" min="0" max="100">
               </label>
-              <label class="gpio-remap-source">WS2812 GPIO
+              <label>Status LED type
+                <select form="settingsForm" name="device.statusLedType">
+                  <option value="regular">Regular LED</option>
+                  <option value="neopixel">RGB NeoPixel / WS2812</option>
+                </select>
+              </label>
+              <label class="gpio-remap-source">Status LED GPIO
                 <select id="statusLedPin" form="settingsForm" name="device.statusLedPin"></select>
               </label>
             </div>
@@ -519,7 +525,7 @@
                 <select id="sdMisoPin" form="settingsForm" name="sd.misoPin"></select>
               </label>
             </div>
-            <p class="note">On ESP32-S3 Super Mini / Zero style boards, the built-in WS2812 is typically on GPIO21. GPIO10 is the current external RGB default in this firmware.</p>
+            <p class="note">The status LED indicates network state: steady blue when connected, blinking blue in AP mode, and fast flashing while disconnected. Select Regular LED for a single-color GPIO LED or RGB NeoPixel / WS2812 for an addressable onboard LED.</p>
             <label class="check"><input id="lowBatterySleepToggle" form="settingsForm" name="device.lowBatterySleepEnabled" type="checkbox"> Deep sleep on low battery</label>
             <label class="check"><input id="powerCycleFactoryResetToggle" form="settingsForm" name="device.powerCycleFactoryResetEnabled" type="checkbox"> Factory reset after 7 power cycles</label>
             <label class="check"><input id="touchHoldFactoryResetToggle" form="settingsForm" name="device.touchHoldFactoryResetEnabled" type="checkbox"> Factory reset after 10-second touch hold</label>

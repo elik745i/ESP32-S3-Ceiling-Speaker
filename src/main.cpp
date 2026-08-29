@@ -24,12 +24,12 @@ void waitForSerialConsole(unsigned long timeoutMs = 1500) {
 void scheduleReboot(uint32_t delayMs);
 
 uint8_t activeStatusLedPin = DefaultConfig::STATUS_LED_PIN;
+bool activeStatusLedIsNeoPixel = DefaultConfig::STATUS_LED_IS_NEOPIXEL;
 bool statusLedInitialized = false;
 
 constexpr uint8_t kStatusLedBrightness = 24;
 constexpr unsigned long kApStatusLedBlinkIntervalMs = 1000UL;
 
-#if APP_STATUS_LED_IS_NEOPIXEL
 Adafruit_NeoPixel statusLedPixel(1, DefaultConfig::STATUS_LED_PIN, NEO_GRB + NEO_KHZ800);
 bool statusLedColorKnown = false;
 uint8_t lastStatusLedRed = 0;
@@ -37,10 +37,15 @@ uint8_t lastStatusLedGreen = 0;
 uint8_t lastStatusLedBlue = 0;
 
 void initializeStatusLed() {
-    statusLedPixel.setPin(activeStatusLedPin);
-    statusLedPixel.begin();
-    statusLedPixel.clear();
-    statusLedPixel.show();
+    if (activeStatusLedIsNeoPixel) {
+        statusLedPixel.setPin(activeStatusLedPin);
+        statusLedPixel.begin();
+        statusLedPixel.clear();
+        statusLedPixel.show();
+    } else {
+        pinMode(activeStatusLedPin, OUTPUT);
+        digitalWrite(activeStatusLedPin, LOW);
+    }
     statusLedColorKnown = true;
     lastStatusLedRed = 0;
     lastStatusLedGreen = 0;
@@ -55,8 +60,12 @@ void writeStatusLedColor(uint8_t red, uint8_t green, uint8_t blue) {
     if (statusLedColorKnown && red == lastStatusLedRed && green == lastStatusLedGreen && blue == lastStatusLedBlue) {
         return;
     }
-    statusLedPixel.setPixelColor(0, statusLedPixel.Color(red, green, blue));
-    statusLedPixel.show();
+    if (activeStatusLedIsNeoPixel) {
+        statusLedPixel.setPixelColor(0, statusLedPixel.Color(red, green, blue));
+        statusLedPixel.show();
+    } else {
+        digitalWrite(activeStatusLedPin, (red != 0 || green != 0 || blue != 0) ? HIGH : LOW);
+    }
     statusLedColorKnown = true;
     lastStatusLedRed = red;
     lastStatusLedGreen = green;
@@ -67,38 +76,23 @@ void writeStatusLed(bool on) {
     writeStatusLedColor(0, on ? kStatusLedBrightness : 0, 0);
 }
 
-#else
-void initializeStatusLed() {
-    pinMode(activeStatusLedPin, OUTPUT);
-    digitalWrite(activeStatusLedPin, LOW);
-    statusLedInitialized = true;
+bool statusLedTypeIsNeoPixel(const String& type) {
+    return type.equalsIgnoreCase("neopixel");
 }
 
-void writeStatusLed(bool on) {
-    if (!statusLedInitialized) {
-        return;
-    }
-    digitalWrite(activeStatusLedPin, on ? HIGH : LOW);
-}
-
-void writeStatusLedColor(uint8_t red, uint8_t green, uint8_t blue) {
-    writeStatusLed(red != 0 || green != 0 || blue != 0);
-}
-
-#endif
-
-void applyStatusLedPin(uint8_t pin) {
-    if (statusLedInitialized && pin == activeStatusLedPin) {
+void applyStatusLedConfig(uint8_t pin, const String& type) {
+    const bool useNeoPixel = statusLedTypeIsNeoPixel(type);
+    if (statusLedInitialized && pin == activeStatusLedPin && useNeoPixel == activeStatusLedIsNeoPixel) {
         return;
     }
 
     writeStatusLed(false);
-#if !APP_STATUS_LED_IS_NEOPIXEL
     if (statusLedInitialized) {
         pinMode(activeStatusLedPin, INPUT);
     }
-#endif
     activeStatusLedPin = pin;
+    activeStatusLedIsNeoPixel = useNeoPixel;
+    statusLedColorKnown = false;
     initializeStatusLed();
 }
 
@@ -2616,7 +2610,7 @@ void applyRuntimeSettings() {
     initializeButtons();
     motorController.applySettings(*settings);
     appState->setDevice(settings->device.deviceName, settings->device.friendlyName, settings->usingSavedSettings);
-    applyStatusLedPin(settings->device.statusLedPin);
+    applyStatusLedConfig(settings->device.statusLedPin, settings->device.statusLedType);
     applyWapeTriggerPin(settings->oled.displayType == "wape" ? settings->oled.wapeTriggerPin : 0);
     wifiManager->applySettings(*settings);
     batteryMonitor->applySettings(settings->battery, settings->battery.adcPin);
@@ -3613,6 +3607,7 @@ void setup() {
     }
     beginStorageBackends(*settings);
     activeStatusLedPin = settings->device.statusLedPin;
+    activeStatusLedIsNeoPixel = statusLedTypeIsNeoPixel(settings->device.statusLedType);
     activeWapeTriggerPin = settings->oled.displayType == "wape" ? settings->oled.wapeTriggerPin : 0;
 
     initializeButtons();

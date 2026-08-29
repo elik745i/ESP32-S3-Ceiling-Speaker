@@ -12,6 +12,10 @@
 #define APP_DEFAULT_STATUS_LED_PIN 22
 #endif
 
+#ifndef APP_STATUS_LED_IS_NEOPIXEL
+#define APP_STATUS_LED_IS_NEOPIXEL 0
+#endif
+
 struct WiFiSettings {
     String ssid;
     String password;
@@ -139,6 +143,7 @@ struct DeviceSettings {
     String deviceName;
     String friendlyName;
     uint8_t statusLedPin = APP_DEFAULT_STATUS_LED_PIN;
+    String statusLedType = APP_STATUS_LED_IS_NEOPIXEL ? "neopixel" : "regular";
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
     uint8_t savedVolumePercent = 35;
 #else

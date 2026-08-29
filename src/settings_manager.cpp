@@ -597,6 +597,7 @@ SettingsBundle SettingsManager::defaults() const {
     settings.device.deviceName = uniqueDeviceName;
     settings.device.friendlyName = uniqueFriendlyName;
     settings.device.statusLedPin = DefaultConfig::STATUS_LED_PIN;
+    settings.device.statusLedType = DefaultConfig::STATUS_LED_TYPE;
     settings.device.savedVolumePercent = DefaultConfig::DEFAULT_VOLUME_PERCENT;
     settings.device.audioMuted = DefaultConfig::DEFAULT_AUDIO_MUTED;
     settings.device.button1Action = DefaultConfig::BUTTON1_DEFAULT_ACTION;
@@ -624,6 +625,8 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     settings.wifi.apPassword.trim();
     settings.device.deviceName.trim();
     settings.device.friendlyName.trim();
+    settings.device.statusLedType.trim();
+    settings.device.statusLedType.toLowerCase();
     settings.mqtt.clientId.trim();
     settings.mqtt.baseTopic.trim();
     settings.mqtt.host.trim();
@@ -683,6 +686,9 @@ SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     }
     if (!isValidStatusLedPin(settings.device.statusLedPin)) {
         settings.device.statusLedPin = DefaultConfig::STATUS_LED_PIN;
+    }
+    if (settings.device.statusLedType != "regular" && settings.device.statusLedType != "neopixel") {
+        settings.device.statusLedType = DefaultConfig::STATUS_LED_TYPE;
     }
     settings.device.button1Action = normalizeButtonAction(settings.device.button1Action, DefaultConfig::BUTTON1_DEFAULT_ACTION);
     settings.device.button2Action = normalizeButtonAction(settings.device.button2Action, DefaultConfig::BUTTON2_DEFAULT_ACTION);
@@ -898,6 +904,7 @@ SettingsBundle SettingsManager::load() {
     settings.device.deviceName = readString("dev_name", settings.device.deviceName);
     settings.device.friendlyName = readString("dev_friendly", settings.device.friendlyName);
     settings.device.statusLedPin = readUInt("dev_led", settings.device.statusLedPin);
+    settings.device.statusLedType = readString("dev_led_type", settings.device.statusLedType);
     settings.device.savedVolumePercent = readUInt("dev_vol", settings.device.savedVolumePercent);
     settings.device.audioMuted = readBool("dev_muted", settings.device.audioMuted);
     settings.device.button1Action = readString("dev_btn1", settings.device.button1Action);
@@ -1021,6 +1028,7 @@ bool SettingsManager::save(const SettingsBundle& settings) {
     changed |= writeStringIfChanged("dev_name", sanitized.device.deviceName);
     changed |= writeStringIfChanged("dev_friendly", sanitized.device.friendlyName);
     changed |= writeUIntIfChanged("dev_led", sanitized.device.statusLedPin);
+    changed |= writeStringIfChanged("dev_led_type", sanitized.device.statusLedType);
     changed |= writeUIntIfChanged("dev_vol", sanitized.device.savedVolumePercent);
     changed |= writeBoolIfChanged("dev_muted", sanitized.device.audioMuted);
     changed |= writeStringIfChanged("dev_btn1", sanitized.device.button1Action);
@@ -1163,6 +1171,7 @@ void SettingsManager::toJson(const SettingsBundle& settings, JsonObject root) co
     device["deviceName"] = settings.device.deviceName;
     device["friendlyName"] = settings.device.friendlyName;
     device["statusLedPin"] = settings.device.statusLedPin;
+    device["statusLedType"] = settings.device.statusLedType;
     device["savedVolumePercent"] = settings.device.savedVolumePercent;
     device["audioMuted"] = settings.device.audioMuted;
     device["button1Action"] = settings.device.button1Action;
@@ -1367,6 +1376,7 @@ bool SettingsManager::updateFromJson(SettingsBundle& settings, JsonVariantConst 
         copyString(device, "friendlyName", settings.device.friendlyName);
         copyString(device, "button1Action", settings.device.button1Action);
         copyString(device, "button2Action", settings.device.button2Action);
+        copyString(device, "statusLedType", settings.device.statusLedType);
         if (device["statusLedPin"].is<uint8_t>()) settings.device.statusLedPin = device["statusLedPin"].as<uint8_t>();
         if (device["savedVolumePercent"].is<uint8_t>()) settings.device.savedVolumePercent = device["savedVolumePercent"].as<uint8_t>();
         if (device["audioMuted"].is<bool>()) settings.device.audioMuted = device["audioMuted"].as<bool>();

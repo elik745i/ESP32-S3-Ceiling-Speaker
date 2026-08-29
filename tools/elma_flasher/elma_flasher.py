@@ -33,7 +33,7 @@ import serial
 from serial.tools import list_ports
 
 
-APP_VERSION = "0.1.34"
+APP_VERSION = "0.1.35"
 WINDOWS_APP_USER_MODEL_ID = "ELMA.IoT.Flasher"
 FLASH_BAUD = 460800
 CONSOLE_BAUD = 115200
@@ -265,6 +265,7 @@ def default_designer_settings() -> dict:
         "device": {
             "deviceName": "elma-future-device", "friendlyName": "ELMA Future Device",
             "savedVolumePercent": 35, "audioMuted": False, "statusLedPin": 8,
+            "statusLedType": "neopixel",
             "lowBatterySleepEnabled": False, "lowBatterySleepThresholdPercent": 10,
             "lowBatteryWakeIntervalMinutes": 30, "powerCycleFactoryResetEnabled": True,
             "touchHoldFactoryResetEnabled": True,
@@ -1317,6 +1318,7 @@ class FlasherApplication:
         checksum = crc32(payload)
         header = f"ELMA_CLONE_CONFIG {len(payload)} {checksum:08X}\n".encode()
         deadline = time.monotonic() + PROVISION_TIMEOUT_SECONDS
+        header_sent = False
         sent = False
         applied = False
         self._emit("status", 93, "Waiting for target firmware", "Opening the target's 115200-baud provisioning channel.", ORANGE)
@@ -1336,11 +1338,21 @@ class FlasherApplication:
                         if not line:
                             continue
                         self._log(line)
-                        if not sent and "[clone] provisioning ready" in line:
+                        if not header_sent and "[clone] provisioning ready" in line:
                             self._emit("status", 94, "Copying configuration", "Sending Wi-Fi, MQTT, GPIO and peripheral settings.", ORANGE)
                             connection.write(header)
-                            connection.write(payload)
                             connection.flush()
+                            header_sent = True
+                        if header_sent and not sent and "[clone] receiving configuration bytes=" in line:
+                            # Wait for the target to allocate and acknowledge its
+                            # receive buffer, then pace chunks so USB CDC/UART
+                            # buffers cannot drop bytes from a large designer
+                            # configuration and silently replace them with later
+                            # ping traffic before the declared length is reached.
+                            for offset in range(0, len(payload), 128):
+                                connection.write(payload[offset:offset + 128])
+                                connection.flush()
+                                time.sleep(0.005)
                             sent = True
                         if "[clone] error=" in line:
                             raise RuntimeError(line.split("error=", 1)[1])
@@ -1355,8 +1367,10 @@ class FlasherApplication:
             except (serial.SerialException, OSError) as error:
                 self._log(f"Serial reconnect: {error}")
                 time.sleep(1)
-        if not sent:
+        if not header_sent:
             raise RuntimeError("The new firmware booted, but its serial provisioning channel did not become ready.")
+        if not sent:
+            raise RuntimeError("The target accepted the provisioning header but did not request the configuration payload.")
         if not applied:
             raise RuntimeError("The target did not confirm that cloned configuration was saved.")
         raise RuntimeError("Configuration was cloned, but the target did not report a Wi-Fi IP address within two minutes.")
