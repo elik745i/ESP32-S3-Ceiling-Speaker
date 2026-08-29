@@ -11,7 +11,8 @@ $versionHeader = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'include\
 if ($versionHeader -notmatch '#define APP_VERSION "(\d+\.\d+\.\d+)"') {
     throw 'Unable to read APP_VERSION from include/version.h.'
 }
-$releaseTag = "v$($Matches[1])"
+$releaseVersion = $Matches[1]
+$releaseTag = "v$releaseVersion"
 $assetName = "ELMA-Flasher-$releaseTag"
 $releaseRoot = Join-Path $projectRoot "release-assets\$releaseTag"
 
@@ -110,12 +111,21 @@ $env:PATH = @(
     (Join-Path $env:SystemRoot 'System32\Wbem')
 ) -join ';'
 try {
+    $coreName = 'ELMA-Flasher-Core'
+    $coreDistRoot = Join-Path $buildRoot 'core-dist'
+    $resolvedBuildRoot = [IO.Path]::GetFullPath($buildRoot).TrimEnd('\') + '\'
+    $resolvedCoreDistRoot = [IO.Path]::GetFullPath($coreDistRoot)
+    if (-not $resolvedCoreDistRoot.StartsWith($resolvedBuildRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Unsafe ELMA runtime build path: $resolvedCoreDistRoot"
+    }
+    if (Test-Path -LiteralPath $coreDistRoot) {
+        Remove-Item -LiteralPath $coreDistRoot -Recurse -Force
+    }
     & $python -m PyInstaller `
         --noconfirm `
         --clean `
-        --onefile `
         --windowed `
-        --name $assetName `
+        --name $coreName `
         --icon $iconPath `
         --add-data "$assetRoot;assets" `
         --add-data "$(Join-Path $projectRoot 'web');web" `
@@ -139,7 +149,7 @@ try {
         --hidden-import PySide6.QtWebEngineCore `
         --hidden-import PySide6.QtWebEngineWidgets `
         --hidden-import serial.tools.list_ports `
-        --distpath $releaseRoot `
+        --distpath $coreDistRoot `
         --workpath (Join-Path $buildRoot 'pyinstaller-work') `
         --specpath (Join-Path $buildRoot 'pyinstaller-spec') `
         (Join-Path $projectRoot 'tools\elma_flasher\elma_flasher.py')
@@ -148,12 +158,46 @@ try {
     $env:PATH = $inheritedPath
 }
 if ($packagingExitCode -ne 0) {
-    throw "ELMA Flasher packaging failed with exit code $packagingExitCode."
+    throw "ELMA Flasher runtime packaging failed with exit code $packagingExitCode."
+}
+
+$coreDirectory = Join-Path $coreDistRoot 'ELMA-Flasher-Core'
+$coreExe = Join-Path $coreDirectory 'ELMA-Flasher-Core.exe'
+if (-not (Test-Path -LiteralPath $coreExe)) {
+    throw 'PyInstaller completed without producing the cached ELMA runtime.'
+}
+$payloadZip = Join-Path $buildRoot 'ELMA-Flasher-payload.zip'
+& $python (Join-Path $projectRoot 'tools\elma_flasher\package_payload.py') $coreDirectory $payloadZip
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $payloadZip)) {
+    throw 'Packaging the cached ELMA runtime payload failed.'
+}
+$payloadFingerprint = (Get-FileHash -LiteralPath $payloadZip -Algorithm SHA256).Hash
+$payloadFingerprintPath = Join-Path $buildRoot 'ELMA-Flasher-payload.sha256'
+Set-Content -LiteralPath $payloadFingerprintPath -Value $payloadFingerprint -Encoding ascii -NoNewline
+
+$dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
+if (-not $dotnet) {
+    throw '.NET 8 SDK is required to build the fast portable ELMA launcher.'
+}
+$dotnetExe = $dotnet.Source
+$launcherProject = Join-Path $projectRoot 'tools\elma_flasher\launcher\ELMA.Flasher.Launcher.csproj'
+& $dotnetExe publish $launcherProject `
+    --configuration Release `
+    --runtime win-x64 `
+    --self-contained true `
+    --output $releaseRoot `
+    -p:AssemblyName=$assetName `
+    -p:Version=$releaseVersion `
+    -p:PayloadPath=$payloadZip `
+    -p:PayloadFingerprintPath=$payloadFingerprintPath `
+    -p:LauncherIcon=$iconPath
+if ($LASTEXITCODE -ne 0) {
+    throw "ELMA fast portable launcher build failed with exit code $LASTEXITCODE."
 }
 
 $exePath = Join-Path $releaseRoot "$assetName.exe"
 if (-not (Test-Path -LiteralPath $exePath)) {
-    throw "PyInstaller completed without producing $assetName.exe."
+    throw "The fast portable launcher did not produce $assetName.exe."
 }
 $hash = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash
 Write-Host "Built $exePath"

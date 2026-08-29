@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishAot>true</PublishAot>
+    <PublishTrimmed>true</PublishTrimmed>
+    <StripSymbols>true</StripSymbols>
+    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Nullable>enable</Nullable>
+    <ApplicationIcon>$(LauncherIcon)</ApplicationIcon>
+    <AssemblyName>ELMA-Flasher</AssemblyName>
+    <RootNamespace>Elma.IoT.Flasher.Launcher</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="$(PayloadPath)" LogicalName="ELMA.Flasher.Payload.zip" />
+    <EmbeddedResource Include="$(PayloadFingerprintPath)" LogicalName="ELMA.Flasher.Payload.sha256" />
+  </ItemGroup>
+</Project>

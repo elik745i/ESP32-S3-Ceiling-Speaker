@@ -37,7 +37,7 @@ import serial
 from serial.tools import list_ports
 
 
-APP_VERSION = "0.1.39"
+APP_VERSION = "0.1.40"
 WINDOWS_APP_USER_MODEL_ID = "ELMA.IoT.Flasher"
 FLASH_BAUD = 460800
 CONSOLE_BAUD = 115200
@@ -362,12 +362,17 @@ class DesignerServer:
         return pathlib.Path(__file__).resolve().parents[2] / "web"
 
     @staticmethod
-    def settings_path() -> pathlib.Path:
+    def portable_home() -> pathlib.Path:
+        launcher_home = os.environ.get("ELMA_PORTABLE_HOME", "").strip()
+        if launcher_home:
+            return pathlib.Path(launcher_home).resolve()
         if getattr(sys, "frozen", False):
-            base = pathlib.Path(sys.executable).resolve().parent
-        else:
-            base = pathlib.Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "ELMA IoT" / "Flasher"
-        return base / "ELMA-Flasher.config.json"
+            return pathlib.Path(sys.executable).resolve().parent
+        return pathlib.Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "ELMA IoT" / "Flasher"
+
+    @staticmethod
+    def settings_path() -> pathlib.Path:
+        return DesignerServer.portable_home() / "ELMA-Flasher.config.json"
 
     @staticmethod
     def settings_persistence_enabled() -> bool:
@@ -421,7 +426,7 @@ class DesignerServer:
     @staticmethod
     def generated_firmware_directory() -> pathlib.Path:
         if getattr(sys, "frozen", False):
-            return pathlib.Path(sys.executable).resolve().parent
+            return DesignerServer.portable_home()
         return pathlib.Path(__file__).resolve().parents[2] / "release-assets" / f"v{APP_VERSION}"
 
     @staticmethod

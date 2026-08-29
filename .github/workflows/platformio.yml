@@ -114,6 +114,19 @@ jobs:
         run: |
           $process = Start-Process -FilePath ".\release-assets\${{ github.event.release.tag_name }}\ELMA-Flasher-${{ github.event.release.tag_name }}.exe" -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "ELMA Flasher self-test failed with exit code $($process.ExitCode)." }
+          $watch = [Diagnostics.Stopwatch]::StartNew()
+          $warm = Start-Process -FilePath ".\release-assets\${{ github.event.release.tag_name }}\ELMA-Flasher-${{ github.event.release.tag_name }}.exe" -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru
+          $watch.Stop()
+          if ($warm.ExitCode -ne 0) { throw "Warm ELMA Flasher self-test failed with exit code $($warm.ExitCode)." }
+          if ($watch.Elapsed.TotalSeconds -gt 10) { throw "Warm ELMA Flasher startup took $([math]::Round($watch.Elapsed.TotalSeconds, 2)) seconds." }
+          $primary = Start-Process -FilePath ".\release-assets\${{ github.event.release.tag_name }}\ELMA-Flasher-${{ github.event.release.tag_name }}.exe" -ArgumentList '--launcher-instance-hold-test' -WindowStyle Hidden -PassThru
+          Start-Sleep -Milliseconds 400
+          $watch.Restart()
+          $secondary = Start-Process -FilePath ".\release-assets\${{ github.event.release.tag_name }}\ELMA-Flasher-${{ github.event.release.tag_name }}.exe" -ArgumentList '--launcher-instance-hold-test' -WindowStyle Hidden -Wait -PassThru
+          $watch.Stop()
+          if ($secondary.ExitCode -ne 0 -or $watch.Elapsed.TotalSeconds -gt 2 -or $primary.HasExited) { throw 'ELMA Flasher single-instance gate failed.' }
+          $primary.WaitForExit()
+          if ($primary.ExitCode -ne 0) { throw "ELMA Flasher instance hold test failed with exit code $($primary.ExitCode)." }
           $designer = Start-Process -FilePath ".\release-assets\${{ github.event.release.tag_name }}\ELMA-Flasher-${{ github.event.release.tag_name }}.exe" -ArgumentList '--native-designer-smoke-test' -WindowStyle Hidden -Wait -PassThru
           if ($designer.ExitCode -ne 0) { throw "Bundled ELMA Device Designer test failed with exit code $($designer.ExitCode)." }
           $builder = Start-Process -FilePath ".\release-assets\${{ github.event.release.tag_name }}\ELMA-Flasher-${{ github.event.release.tag_name }}.exe" -ArgumentList '--portable-builder-compile-test' -WindowStyle Hidden -Wait -PassThru
