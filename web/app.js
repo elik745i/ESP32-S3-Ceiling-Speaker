@@ -756,19 +756,21 @@ const GPIO_BOARD_LAYOUTS = {
     ],
   },
   "esp32-c3": {
-    left: [21, 20, 10, 9, 8, 7, 6, 5].map((pin) => ({
+    // Physical top-to-bottom order on the supplied ESP32-C3 Super Mini
+    // breadboard artwork (USB-C at the bottom).
+    left: [5, 6, 7, 8, 9, 10, 20, 21].map((pin) => ({
       pin,
       label: `GPIO${pin}`,
     })),
     right: [
-      { pin: 0, label: "GPIO0" },
-      { pin: 1, label: "GPIO1" },
-      { pin: 2, label: "GPIO2" },
-      { pin: 3, label: "GPIO3" },
-      { pin: 4, label: "GPIO4" },
-      { pin: null, label: "3.3V" },
-      { pin: null, label: "GND" },
       { pin: null, label: "5V" },
+      { pin: null, label: "GND" },
+      { pin: null, label: "3.3V" },
+      { pin: 4, label: "GPIO4" },
+      { pin: 3, label: "GPIO3" },
+      { pin: 2, label: "GPIO2" },
+      { pin: 1, label: "GPIO1" },
+      { pin: 0, label: "GPIO0" },
     ],
   },
 };

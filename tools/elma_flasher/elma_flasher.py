@@ -14,6 +14,9 @@ import pathlib
 import queue
 import re
 import shutil
+import socket
+import ssl
+import struct
 import subprocess
 import sys
 import tempfile
@@ -25,6 +28,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import webbrowser
+from xml.sax.saxutils import escape as xml_escape
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from tkinter import filedialog, messagebox, ttk
 
@@ -33,7 +37,7 @@ import serial
 from serial.tools import list_ports
 
 
-APP_VERSION = "0.1.38"
+APP_VERSION = "0.1.39"
 WINDOWS_APP_USER_MODEL_ID = "ELMA.IoT.Flasher"
 FLASH_BAUD = 460800
 CONSOLE_BAUD = 115200
@@ -311,6 +315,12 @@ class DesignerJob:
         self.ip_address = ""
         self.cancelled = False
         self.process: subprocess.Popen | None = None
+        self.profile = ""
+        self.application_bytes = 0
+        self.flash_capacity_bytes = 0
+        self.ram_used_bytes = 0
+        self.ram_total_bytes = 0
+        self.firmware_file = ""
 
     def append(self, value: str) -> None:
         line = str(value).strip()
@@ -323,6 +333,10 @@ class DesignerJob:
             "jobId": self.id, "state": self.state, "progress": self.progress,
             "status": self.status, "compatibility": self.compatibility,
             "log": self.log, "error": self.error, "ipAddress": self.ip_address,
+            "profile": self.profile, "applicationBytes": self.application_bytes,
+            "flashCapacityBytes": self.flash_capacity_bytes,
+            "ramUsedBytes": self.ram_used_bytes, "ramTotalBytes": self.ram_total_bytes,
+            "firmwareFile": self.firmware_file,
         }
 
 
@@ -333,15 +347,89 @@ class DesignerServer:
         self.httpd: ThreadingHTTPServer | None = None
         self.thread: threading.Thread | None = None
         self.url = ""
-        self.settings = default_designer_settings()
+        self.settings = self.load_designer_settings()
         self.jobs: dict[str, DesignerJob] = {}
         self.lock = threading.Lock()
+        self.pc_wifi_connected = False
+        self.pc_wifi_ssid = ""
+        self.pc_mqtt_connected = False
+        self.settings_save_revision = 0
 
     def web_root(self) -> pathlib.Path:
         bundled = resource_path("web")
         if bundled.is_dir():
             return bundled
         return pathlib.Path(__file__).resolve().parents[2] / "web"
+
+    @staticmethod
+    def settings_path() -> pathlib.Path:
+        if getattr(sys, "frozen", False):
+            base = pathlib.Path(sys.executable).resolve().parent
+        else:
+            base = pathlib.Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "ELMA IoT" / "Flasher"
+        return base / "ELMA-Flasher.config.json"
+
+    @staticmethod
+    def settings_persistence_enabled() -> bool:
+        return not any(argument.endswith("-test") for argument in sys.argv[1:])
+
+    def load_designer_settings(self) -> dict:
+        defaults = default_designer_settings()
+        if not self.settings_persistence_enabled():
+            return defaults
+        path = self.settings_path()
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(saved, dict):
+                return defaults
+        except (OSError, json.JSONDecodeError):
+            return defaults
+
+        def merge(target: dict, source: dict) -> None:
+            for key, value in source.items():
+                if isinstance(value, dict) and isinstance(target.get(key), dict):
+                    merge(target[key], value)
+                else:
+                    target[key] = value
+
+        merge(defaults, saved)
+        return defaults
+
+    def save_designer_settings(self) -> None:
+        if not self.settings_persistence_enabled():
+            return
+        path = self.settings_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(self.settings, indent=2), encoding="utf-8")
+        temporary.replace(path)
+
+    def save_designer_settings_async(self) -> None:
+        """Coalesce edits and write away from the HTTP/UI response thread."""
+        self.settings_save_revision += 1
+        revision = self.settings_save_revision
+
+        def save_latest() -> None:
+            time.sleep(0.12)
+            if revision != self.settings_save_revision:
+                return
+            with contextlib.suppress(OSError, TypeError):
+                self.save_designer_settings()
+
+        threading.Thread(target=save_latest, daemon=True, name="ELMA config autosave").start()
+
+    @staticmethod
+    def generated_firmware_directory() -> pathlib.Path:
+        if getattr(sys, "frozen", False):
+            return pathlib.Path(sys.executable).resolve().parent
+        return pathlib.Path(__file__).resolve().parents[2] / "release-assets" / f"v{APP_VERSION}"
+
+    @staticmethod
+    def generated_firmware_name(family: str, capabilities: dict) -> str:
+        suffix = "-hacs" if bool(capabilities.get("hacs", True)) else ""
+        if not bool(capabilities.get("webUi", True)):
+            suffix += "-slim"
+        return f"{family}-notifier{suffix}-v{APP_VERSION}.bin"
 
     def project_root(self) -> pathlib.Path:
         if not getattr(sys, "frozen", False):
@@ -398,7 +486,7 @@ class DesignerServer:
             def do_GET(handler_self):
                 path = urllib.parse.urlparse(handler_self.path).path
                 if path == "/api/builder/status":
-                    handler_self.json_response({"active": True, "version": APP_VERSION})
+                    handler_self.json_response({"active": True, "version": APP_VERSION, "runtime": "pc-designer"})
                 elif path == "/api/builder/ports":
                     ports = [{"device": p.device, "description": p.description, "hwid": p.hwid} for p in list_ports.comports()]
                     handler_self.json_response({"ports": ports})
@@ -408,6 +496,11 @@ class DesignerServer:
                     handler_self.json_response(job.public() if job else {"error": "Unknown builder job"}, 200 if job else 404)
                 elif path == "/api/settings":
                     handler_self.json_response(owner.settings)
+                elif path == "/api/wifi/scan":
+                    try:
+                        handler_self.json_response({"started": True, "scanning": False, "networks": owner.scan_pc_wifi()})
+                    except RuntimeError as error:
+                        handler_self.json_response({"error": str(error)}, 409)
                 elif path == "/api/status":
                     handler_self.json_response(owner.mock_status())
                 elif path.startswith("/api/"):
@@ -423,7 +516,20 @@ class DesignerServer:
                         if not isinstance(body, dict):
                             raise ValueError("Settings must be a JSON object")
                         owner.settings = body
+                        owner.save_designer_settings_async()
                         handler_self.json_response({"ok": True})
+                    elif path == "/api/pc/wifi/test":
+                        handler_self.json_response(owner.test_pc_wifi(body))
+                    elif path == "/api/mqtt":
+                        action = str(body.get("action", "connect"))
+                        if action == "disconnect":
+                            owner.pc_mqtt_connected = False
+                            handler_self.json_response({"ok": True, "connected": False})
+                        elif action == "connect":
+                            owner.test_pc_mqtt()
+                            handler_self.json_response({"ok": True, "connected": True})
+                        else:
+                            handler_self.json_response({"error": "This MQTT runtime action is unavailable in the PC designer."}, 409)
                     elif path == "/api/builder/jobs":
                         job = owner.create_job(body)
                         handler_self.json_response({"jobId": job.id}, 202)
@@ -441,6 +547,8 @@ class DesignerServer:
                         handler_self.json_response({"error": "Unsupported local builder action"}, 404)
                 except (ValueError, json.JSONDecodeError) as error:
                     handler_self.json_response({"error": str(error)}, 400)
+                except (RuntimeError, OSError) as error:
+                    handler_self.json_response({"error": str(error)}, 409)
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.httpd.server_port}/"
@@ -454,6 +562,8 @@ class DesignerServer:
         self.httpd = None
         self.thread = None
         self.url = ""
+        with contextlib.suppress(OSError, TypeError):
+            self.save_designer_settings()
         if server is not None:
             server.shutdown()
             server.server_close()
@@ -465,8 +575,8 @@ class DesignerServer:
         chip = "esp32s3" if "s3" in selected else ("esp32c3" if "c3" in selected else "esp32")
         return {
             "firmware": {"version": APP_VERSION, "channel": "designer", "chipFamily": chip, "audioEnabled": True},
-            "device": {"friendlyName": self.settings.get("device", {}).get("friendlyName", "Future ELMA Device"), "deviceName": "hardware-id-assigned-after-flash", "ipAddress": "Not flashed", "connected": False},
-            "network": {"wifiConnected": False, "mqttConnected": False, "wifiRssi": 0, "ip": "", "apMode": False},
+            "device": {"friendlyName": "ELMA Device Designer", "deviceName": "hardware-id-assigned-after-flash", "ipAddress": "PC configuration", "connected": False},
+            "network": {"wifiConnected": self.pc_wifi_connected, "mqttConnected": self.pc_mqtt_connected, "wifiRssi": 0, "ssid": self.pc_wifi_ssid, "ip": "PC", "apMode": False},
             "battery": {"voltage": 0, "raw": 0, "charging": False},
             "playback": {"state": "idle", "type": "idle", "title": "Not flashed", "url": "", "source": "designer", "volumePercent": 0},
             "otaManager": {"busy": False, "message": "Local device designer", "updateAvailable": False},
@@ -477,6 +587,168 @@ class DesignerServer:
             "storage": {"flash": {"available": False}, "sd": {"available": False}},
             "display": {"enabled": False},
         }
+
+    @staticmethod
+    def _run_netsh(*arguments: str, timeout: int = 15) -> str:
+        if sys.platform != "win32" or not shutil.which("netsh"):
+            raise RuntimeError("No Wi-Fi is available on this PC.")
+        completed = subprocess.run(
+            ["netsh", *arguments], capture_output=True, text=True, errors="replace",
+            timeout=timeout, creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        output = (completed.stdout or "") + (completed.stderr or "")
+        if completed.returncode:
+            raise RuntimeError(output.strip() or "Windows could not access a Wi-Fi adapter.")
+        return output
+
+    def scan_pc_wifi(self) -> list[dict]:
+        interfaces = self._run_netsh("wlan", "show", "interfaces")
+        if re.search(r"(?im)^\s*(?:name|description|state)\s*:", interfaces) is None:
+            raise RuntimeError("No Wi-Fi is available on this PC.")
+        output = self._run_netsh("wlan", "show", "networks", "mode=bssid", timeout=25)
+        networks: list[dict] = []
+        current: dict | None = None
+        for line in output.splitlines():
+            ssid_match = re.match(r"\s*SSID\s+\d+\s*:\s*(.*)$", line, re.IGNORECASE)
+            if ssid_match:
+                ssid = ssid_match.group(1).strip()
+                current = {"ssid": ssid, "rssi": -100, "encrypted": True, "authentication": ""}
+                if ssid:
+                    networks.append(current)
+                continue
+            if current is None:
+                continue
+            auth_match = re.match(r"\s*Authentication\s*:\s*(.*)$", line, re.IGNORECASE)
+            signal_match = re.match(r"\s*Signal\s*:\s*(\d+)%", line, re.IGNORECASE)
+            if auth_match:
+                authentication = auth_match.group(1).strip()
+                current["authentication"] = authentication
+                current["encrypted"] = "open" not in authentication.lower()
+            elif signal_match:
+                current["rssi"] = max(-100, min(-50, int(signal_match.group(1)) // 2 - 100))
+        return networks
+
+    @staticmethod
+    def _wifi_profile_xml(ssid: str, password: str, authentication: str) -> str:
+        ssid_xml = xml_escape(ssid)
+        auth_lower = authentication.lower()
+        if "open" in auth_lower:
+            security = "<security><authEncryption><authentication>open</authentication><encryption>none</encryption><useOneX>false</useOneX></authEncryption></security>"
+        else:
+            auth = "WPA3SAE" if "wpa3" in auth_lower else "WPA2PSK"
+            security = (
+                f"<security><authEncryption><authentication>{auth}</authentication><encryption>AES</encryption>"
+                "<useOneX>false</useOneX></authEncryption><sharedKey><keyType>passPhrase</keyType>"
+                f"<protected>false</protected><keyMaterial>{xml_escape(password)}</keyMaterial></sharedKey></security>"
+            )
+        return (
+            '<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">'
+            f"<name>{ssid_xml}</name><SSIDConfig><SSID><name>{ssid_xml}</name></SSID></SSIDConfig>"
+            f"<connectionType>ESS</connectionType><connectionMode>manual</connectionMode><MSM>{security}</MSM></WLANProfile>"
+        )
+
+    def test_pc_wifi(self, payload: dict) -> dict:
+        ssid = str(payload.get("ssid", "")).strip()
+        password = str(payload.get("password", ""))
+        authentication = str(payload.get("authentication", "WPA2-Personal"))
+        if not ssid:
+            raise ValueError("Select or enter a Wi-Fi network first.")
+        if "enterprise" in authentication.lower() or "802.1x" in authentication.lower():
+            raise RuntimeError("Enterprise Wi-Fi credential testing is not supported by this portable application.")
+        if "open" not in authentication.lower() and len(password) < 8:
+            raise ValueError("The Wi-Fi password must contain at least 8 characters.")
+        self.scan_pc_wifi()
+        interfaces_before = self._run_netsh("wlan", "show", "interfaces")
+        current_match = re.search(r"(?im)^\s*SSID\s*:\s*(.+?)\s*$", interfaces_before)
+        previous_ssid = current_match.group(1).strip() if current_match else ""
+        with tempfile.TemporaryDirectory(prefix="elma-wifi-") as temp_dir:
+            backup_dir = pathlib.Path(temp_dir) / "backup"
+            backup_dir.mkdir()
+            with contextlib.suppress(RuntimeError):
+                self._run_netsh("wlan", "export", "profile", f"name={ssid}", f"folder={backup_dir}", "key=clear")
+            backup_profiles = list(backup_dir.glob("*.xml"))
+            profile = pathlib.Path(temp_dir) / "elma-wifi-profile.xml"
+            profile.write_text(self._wifi_profile_xml(ssid, password, authentication), encoding="utf-8")
+            try:
+                self._run_netsh("wlan", "add", "profile", f"filename={profile}", "user=current")
+                self._run_netsh("wlan", "connect", f"name={ssid}", f"ssid={ssid}")
+                deadline = time.monotonic() + 25
+                while time.monotonic() < deadline:
+                    interfaces = self._run_netsh("wlan", "show", "interfaces")
+                    connected = re.search(r"(?im)^\s*state\s*:\s*connected\s*$", interfaces)
+                    selected = re.search(r"(?im)^\s*SSID\s*:\s*(.+?)\s*$", interfaces)
+                    if connected and selected and selected.group(1).strip() == ssid:
+                        self.pc_wifi_connected = True
+                        self.pc_wifi_ssid = ssid
+                        wifi = self.settings.setdefault("wifi", {})
+                        wifi["ssid"] = ssid
+                        wifi["password"] = password
+                        self.save_designer_settings_async()
+                        return {"ok": True, "connected": True, "ssid": ssid}
+                    time.sleep(0.75)
+            except (RuntimeError, subprocess.TimeoutExpired):
+                pass
+            for backup in backup_profiles:
+                with contextlib.suppress(RuntimeError):
+                    self._run_netsh("wlan", "add", "profile", f"filename={backup}", "user=current")
+            if previous_ssid:
+                with contextlib.suppress(RuntimeError):
+                    self._run_netsh("wlan", "connect", f"name={previous_ssid}", f"ssid={previous_ssid}")
+        self.pc_wifi_connected = False
+        raise RuntimeError(f"Could not connect the PC to {ssid}. Check the Wi-Fi password and signal, then retry.")
+
+    @staticmethod
+    def _mqtt_remaining_length(value: int) -> bytes:
+        encoded = bytearray()
+        while True:
+            digit = value % 128
+            value //= 128
+            if value:
+                digit |= 0x80
+            encoded.append(digit)
+            if not value:
+                return bytes(encoded)
+
+    def test_pc_mqtt(self) -> None:
+        mqtt = self.settings.get("mqtt", {})
+        host = str(mqtt.get("host", "")).strip()
+        port = int(mqtt.get("port", 1883) or 1883)
+        username = str(mqtt.get("username", ""))
+        password = str(mqtt.get("password", ""))
+        if not host:
+            raise ValueError("Enter an MQTT broker host first.")
+        mqtt_string = lambda value: struct.pack("!H", len(value)) + value
+        flags = 0x02 | (0x80 if username else 0) | (0x40 if password else 0)
+        payload = mqtt_string(f"elma-flasher-test-{uuid.uuid4().hex[:10]}".encode())
+        if username:
+            payload += mqtt_string(username.encode())
+        if password:
+            payload += mqtt_string(password.encode())
+        variable = mqtt_string(b"MQTT") + bytes((4, flags)) + struct.pack("!H", 15)
+        packet = b"\x10" + self._mqtt_remaining_length(len(variable) + len(payload)) + variable + payload
+        try:
+            connection = socket.create_connection((host, port), timeout=8)
+            if bool(mqtt.get("tls", False)):
+                connection = ssl.create_default_context().wrap_socket(connection, server_hostname=host)
+            with connection:
+                connection.settimeout(8)
+                connection.sendall(packet)
+                reply = b""
+                while len(reply) < 4:
+                    chunk = connection.recv(4 - len(reply))
+                    if not chunk:
+                        break
+                    reply += chunk
+                if len(reply) < 4 or reply[:2] != b"\x20\x02":
+                    raise RuntimeError("The broker returned an invalid MQTT response.")
+                if reply[3] != 0:
+                    reasons = {1: "protocol rejected", 2: "client ID rejected", 3: "broker unavailable", 4: "username/password rejected", 5: "not authorized"}
+                    raise RuntimeError(f"MQTT connection failed: {reasons.get(reply[3], f'broker code {reply[3]}')}.")
+                connection.sendall(b"\xe0\x00")
+        except (OSError, ssl.SSLError) as error:
+            self.pc_mqtt_connected = False
+            raise RuntimeError(f"MQTT connection failed: {error}") from error
+        self.pc_mqtt_connected = True
 
     def create_job(self, payload: dict) -> DesignerJob:
         if not isinstance(payload, dict) or not str(payload.get("port", "")).strip():
@@ -542,6 +814,7 @@ class DesignerServer:
                 raise RuntimeError(f"Manual target {requested_chip.upper()} does not match detected {detected.upper()}. Nothing was erased.")
             job.append(f"Detected {CHIP_FAMILIES.get(detected, detected)}; flash {flash_size or 'size reported by loader'}")
             profile = self.resolve_profile(detected, payload.get("capabilities", {}), payload.get("settings", {}), job)
+            job.profile = profile
             if job.cancelled:
                 raise InterruptedError("Build cancelled")
             project = self.project_root()
@@ -570,9 +843,27 @@ class DesignerServer:
             if family != detected:
                 raise RuntimeError("Compiler output chip family does not match the connected target")
             flash_mb = int(re.search(r"(\d+)", flash_size).group(1)) if re.search(r"(\d+)", flash_size) else 4
+            job.application_bytes = len(application)
+            job.flash_capacity_bytes = min(MAX_APPLICATION_SIZE, flash_mb * 1024 * 1024)
+            ram_match = re.search(
+                r"RAM:\s*\[[^\]]+\]\s*[\d.]+%\s*\(used\s+(\d+)\s+bytes\s+from\s+(\d+)\s+bytes\)",
+                "\n".join(job.log), re.IGNORECASE,
+            )
+            if ram_match:
+                job.ram_used_bytes = int(ram_match.group(1))
+                job.ram_total_bytes = int(ram_match.group(2))
             if len(application) > min(MAX_APPLICATION_SIZE, flash_mb * 1024 * 1024):
                 raise RuntimeError(f"Generated application is {len(application):,} bytes and does not fit this target safely.")
             job.append(f"Generated application: {len(application):,} bytes")
+            output_directory = self.generated_firmware_directory()
+            output_directory.mkdir(parents=True, exist_ok=True)
+            output_name = self.generated_firmware_name(family, payload.get("capabilities", {}))
+            output_path = output_directory / output_name
+            temporary_output = output_path.with_suffix(".tmp")
+            temporary_output.write_bytes(application)
+            temporary_output.replace(output_path)
+            job.firmware_file = str(output_path)
+            job.append(f"Saved generated firmware beside ELMA Flasher: {output_name}")
             if job.cancelled:
                 raise InterruptedError("Build cancelled before erase")
             boot_address = 0 if family in ("esp32s3", "esp32c3") else 0x1000
@@ -600,12 +891,12 @@ class DesignerServer:
 
 
 def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bool = False) -> bool:
-    """Render the designer and USB flasher as tabs in one native ELMA window."""
+    """Render the PC designer, compiler and USB flasher in one native ELMA window."""
     from PySide6.QtCore import QTimer, QUrl
     from PySide6.QtGui import QIcon
     from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
     from PySide6.QtWebEngineWidgets import QWebEngineView
-    from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget
+    from PySide6.QtWidgets import QApplication, QMainWindow
 
     origin = urllib.parse.urlparse(url)
 
@@ -614,7 +905,10 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
             if not is_main_frame:
                 return True
             parsed = urllib.parse.urlparse(target.toString())
-            return parsed.scheme in ("http", "https") and parsed.hostname == origin.hostname and parsed.port == origin.port
+            is_local = parsed.scheme in ("http", "https") and parsed.hostname == origin.hostname and parsed.port == origin.port
+            if not is_local and parsed.scheme in ("http", "https"):
+                webbrowser.open(target.toString())
+            return is_local
 
         def createWindow(self, _window_type):
             return None
@@ -669,36 +963,17 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
     window.setWindowIcon(icon)
     window.resize(1280, 900)
     window.setMinimumSize(420, 420)
-    tabs = QTabWidget(window)
-    tabs.setDocumentMode(True)
-    tabs.setTabPosition(QTabWidget.TabPosition.North)
-    tabs.setStyleSheet(
-        "QTabWidget::pane { border: 0; background: #f7f5ef; }"
-        "QTabBar::tab { background: #e8e5de; color: #2a2926; padding: 12px 28px; "
-        "font: 600 11pt 'Segoe UI'; border: 1px solid #d2cec4; border-bottom: 0; }"
-        "QTabBar::tab:selected { background: #f39200; color: white; }"
-        "QTabBar::tab:hover:!selected { background: #dcd8cf; }"
-    )
-    designer_view = ResponsiveWebView(tabs)
+    designer_view = ResponsiveWebView(window)
     designer_page = LocalDesignerPage(profile, designer_view)
     designer_view.setPage(designer_page)
-    flash_view = ResponsiveWebView(tabs)
-    flash_page = LocalDesignerPage(profile, flash_view)
-    flash_view.setPage(flash_page)
-    tabs.addTab(designer_view, "Device Designer")
-    tabs.addTab(flash_view, "Flash USB Device")
-    tabs.setCurrentIndex(0)
-    window.setCentralWidget(tabs)
+    window.setCentralWidget(designer_view)
 
     result = {
         "designer_loaded": False,
-        "flash_loaded": False,
         "responsive_ok": not smoke_test,
+        "pc_interface_ok": not smoke_test,
         "responsive_test_started": False,
-        "tabs_ok": tabs.count() == 2
-        and tabs.tabText(0) == "Device Designer"
-        and tabs.tabText(1) == "Flash USB Device"
-        and tabs.currentIndex() == 0,
+        "interface_attempts": 0,
     }
 
     def finish_smoke_test() -> None:
@@ -708,34 +983,59 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
     def maybe_finish_smoke_test() -> None:
         if not smoke_test or result["responsive_test_started"]:
             return
-        if not (result["designer_loaded"] and result["flash_loaded"] and result["tabs_ok"]):
+        if not result["designer_loaded"]:
             return
         result["responsive_test_started"] = True
-        window.resize(700, 680)
+
+        def verify_pc_interface(value) -> None:
+            try:
+                value = json.loads(value) if isinstance(value, str) else value
+            except json.JSONDecodeError:
+                value = None
+            result["pc_interface_ok"] = bool(
+                isinstance(value, dict)
+                and value.get("mode")
+                and value.get("powerHidden")
+                and value.get("hardwareEstimate")
+                and value.get("storageHidden")
+                and value.get("builderVisible")
+                and value.get("designerTitle")
+            )
+            if not result["pc_interface_ok"] and result["interface_attempts"] < 20:
+                QTimer.singleShot(300, check_pc_interface)
+                return
+            if not result["pc_interface_ok"]:
+                print(f"PC Designer adaptation smoke test failed: {value}")
+            window.resize(700, 680)
+            QTimer.singleShot(150, verify_responsive_zoom)
 
         def verify_responsive_zoom() -> None:
             designer_view.applyResponsiveZoom()
             designer_zoom = designer_view.zoomFactor()
-            tabs.setCurrentIndex(1)
-
-            def verify_flash_zoom() -> None:
-                flash_view.applyResponsiveZoom()
-                flash_zoom = flash_view.zoomFactor()
-                result["responsive_ok"] = (
-                    ResponsiveWebView.MINIMUM_ZOOM <= designer_zoom < 0.85
-                    and ResponsiveWebView.MINIMUM_ZOOM <= flash_zoom < 0.85
-                    and abs(designer_zoom - flash_zoom) < 0.02
-                )
+            def verify_designer_zoom() -> None:
+                result["responsive_ok"] = ResponsiveWebView.MINIMUM_ZOOM <= designer_zoom < 0.85
                 if not result["responsive_ok"]:
-                    print(
-                        f"Responsive zoom smoke test failed: designer={designer_zoom:.3f}, "
-                        f"flash={flash_zoom:.3f}, window={window.width()}"
-                    )
+                    print(f"Responsive zoom smoke test failed: designer={designer_zoom:.3f}, window={window.width()}")
                 finish_smoke_test()
 
-            QTimer.singleShot(150, verify_flash_zoom)
+            QTimer.singleShot(150, verify_designer_zoom)
 
-        QTimer.singleShot(150, verify_responsive_zoom)
+        def check_pc_interface() -> None:
+            result["interface_attempts"] += 1
+            designer_view.page().runJavaScript(
+                "JSON.stringify({"
+                "mode:document.body.classList.contains('local-builder-mode'),"
+                "powerHidden:getComputedStyle(document.querySelector('.hero-actions')).display==='none',"
+                "hardwareEstimate:getComputedStyle(document.querySelector('[data-tab=hardware]')).display!=='none'&&document.querySelector('#tab-hardware h2')?.textContent.includes('Estimate'),"
+                "storageHidden:getComputedStyle(document.querySelector('[data-tab=storage-internal]')).display==='none',"
+                "builderVisible:getComputedStyle(document.getElementById('localBuilderPanel')).display!=='none',"
+                "designerTitle:document.getElementById('deviceTitle')?.textContent.includes('Designer')"
+                "})",
+                0,
+                verify_pc_interface,
+            )
+
+        QTimer.singleShot(300, check_pc_interface)
 
     def designer_loaded(ok: bool) -> None:
         result["designer_loaded"] = bool(ok)
@@ -750,41 +1050,18 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
                 "</body></html>"
             )
 
-    def flash_loaded(ok: bool) -> None:
-        result["flash_loaded"] = bool(ok)
-        if ok:
-            flash_view.applyResponsiveZoom()
-        maybe_finish_smoke_test()
-
-    def tab_changed(index: int) -> None:
-        if index != 1:
-            return
-        # Save every live form value, including Wi-Fi fields that normally wait
-        # for an explicit Connect action on a running device. The Flash tab
-        # reads this shared backend object when its button is pressed.
-        flash_view.page().runJavaScript("window.elmaBeginFlashSync?.()")
-        designer_view.page().runJavaScript("window.elmaSaveDesignerSettings?.()")
-        QTimer.singleShot(
-            400,
-            lambda: flash_view.page().runJavaScript("window.elmaRefreshFlashSettings?.()"),
-        )
-
     designer_view.loadFinished.connect(designer_loaded)
-    flash_view.loadFinished.connect(flash_loaded)
-    tabs.currentChanged.connect(tab_changed)
     if smoke_test:
         QTimer.singleShot(15000, finish_smoke_test)
     else:
         window.showMaximized()
     designer_view.setUrl(QUrl(url))
-    flash_view.setUrl(QUrl(f"{url}?elmaView=flash"))
     window.show() if smoke_test else None
     qt_app.exec()
     designer_view.deleteLater()
-    flash_view.deleteLater()
     window.deleteLater()
     qt_app.processEvents()
-    return result["designer_loaded"] and result["flash_loaded"] and result["tabs_ok"] and result["responsive_ok"]
+    return result["designer_loaded"] and result["pc_interface_ok"] and result["responsive_ok"]
 
 
 class FlasherApplication:

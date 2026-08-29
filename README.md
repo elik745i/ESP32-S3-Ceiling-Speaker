@@ -11,18 +11,20 @@ Project story and current device write-up:
 
 ## Current Release
 
-- Firmware version: `v0.1.38`
+- Firmware version: `v0.1.39`
 - Primary release repository: `elma-iot/ELMA-IoT`
 - GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.38.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.39.bin`
 
 This is the active development version for the next standard GitHub release.
 
-### v0.1.38 development highlights
+### v0.1.39 development highlights
 
-- The native ELMA Flasher keeps Device Designer and Flash USB Device centered at normal window widths, then proportionally zooms the complete interface when horizontal space becomes tight.
-- Text, controls, illustrations, frames, spacing, and relative positions now scale together, while vertical overflow remains scrollable and accidental document-level horizontal overflow is suppressed.
-- The packaged native smoke test resizes both application tabs and verifies that they receive the same responsive zoom factor.
+- ELMA Flasher now presents one PC-focused Device Designer; compile, target selection, erase, USB flash, verification and provisioning are consolidated in its Firmware page.
+- Wi-Fi scanning and credential validation use the Windows Wi-Fi adapter, MQTT Connect performs a real broker handshake, and successful settings persist for later firmware builds.
+- Device-only power, storage and runtime controls are removed from Designer mode; Hardware instead shows estimated and compiler-confirmed memory use, while Info documents the portable application and project.
+- Designer edits autosave beside the portable EXE, generated firmware binaries remain there under standard release names, and the C3 Super Mini view uses the optimized supplied board SVG with its physical pin order.
+- The complete native interface remains centered at normal widths and proportionally scales text, controls, illustrations and spacing together when horizontal space becomes tight.
 
 ### v0.1.37 development highlights
 
@@ -577,16 +579,16 @@ Current OTA and rollback behavior:
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.38`:
+Release asset names for `v0.1.39`:
 
-- `esp32-notifier-v0.1.38.bin`
-- `esp32-notifier-hacs-v0.1.38.bin`
-- `esp32-notifier-hacs-slim-v0.1.38.bin`
-- `esp32s3-notifier-v0.1.38.bin`
-- `esp32s3-notifier-hacs-v0.1.38.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.38.bin`
-- `esp32c3-notifier-hacs-v0.1.38.bin`
-- `ELMA-Flasher-v0.1.38.exe`
+- `esp32-notifier-v0.1.39.bin`
+- `esp32-notifier-hacs-v0.1.39.bin`
+- `esp32-notifier-hacs-slim-v0.1.39.bin`
+- `esp32s3-notifier-v0.1.39.bin`
+- `esp32s3-notifier-hacs-v0.1.39.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.39.bin`
+- `esp32c3-notifier-hacs-v0.1.39.bin`
+- `ELMA-Flasher-v0.1.39.exe`
 
 GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the seven supported firmware variants plus the standalone Windows ELMA Flasher and upload all matching assets to that release.
 
@@ -667,6 +669,7 @@ Key files and directories:
 
 Current release notes live here:
 
+- [release-assets/v0.1.39/release-notes.md](release-assets/v0.1.39/release-notes.md)
 - [release-assets/v0.1.38/release-notes.md](release-assets/v0.1.38/release-notes.md)
 - [release-assets/v0.1.37/release-notes.md](release-assets/v0.1.37/release-notes.md)
 - [release-assets/v0.1.36/release-notes.md](release-assets/v0.1.36/release-notes.md)

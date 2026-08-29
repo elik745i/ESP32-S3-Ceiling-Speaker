@@ -28,6 +28,7 @@ export function createWifiTab({
           ssid,
           rssi,
           encrypted,
+          authentication: String(network?.authentication || ""),
           nodeCount: 1,
         });
         continue;
@@ -64,6 +65,7 @@ export function createWifiTab({
       option.dataset.encrypted = network.encrypted ? "true" : "false";
       option.dataset.nodeCount = String(network.nodeCount);
       option.dataset.rssi = String(network.rssi);
+      option.dataset.authentication = network.authentication || "";
       option.textContent = `${network.ssid} (${network.rssi} dBm${network.nodeCount > 1 ? `, ${network.nodeCount} mesh nodes` : ""}${network.encrypted ? ", locked" : ", open"})`;
       elements.wifiNetworkList.appendChild(option);
     }
@@ -201,6 +203,26 @@ export function createWifiTab({
       await waitForSettingsIdle();
       await saveSettings({ silent: true });
       setMessage(`Wi-Fi settings saved for ${ssid}`);
+
+      if (document.body.classList.contains("local-builder-mode")) {
+        setScanStatus(`Testing ${ssid} through this PC's Wi-Fi adapter...`);
+        const selectedOption = elements.wifiNetworkList?.selectedOptions?.[0];
+        const result = await request("/api/pc/wifi/test", {
+          method: "POST",
+          body: JSON.stringify({
+            ssid,
+            password: String(namedField("wifi.password")?.value || ""),
+            authentication: selectedOption?.dataset.authentication || "WPA2-Personal",
+          }),
+        });
+        if (!result?.connected) {
+          throw new Error(`Could not verify Wi-Fi credentials for ${ssid}.`);
+        }
+        setScanStatus(`Wi-Fi Connected to ${ssid}. Credentials saved for the firmware build.`);
+        setMessage(`Wi-Fi Connected — ${ssid}`);
+        return;
+      }
+
       setScanStatus(`Connecting to ${ssid}...`);
 
       const connected = await pollStatusUntil(

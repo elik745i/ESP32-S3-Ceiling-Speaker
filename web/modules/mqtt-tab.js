@@ -122,6 +122,13 @@ export function createMqttTab({
         body: JSON.stringify({ action: "connect" }),
       });
 
+      if (document.body.classList.contains("local-builder-mode")) {
+        await loadStatus();
+        setMqttConnectStatus(`MQTT Connected to ${host}. Credentials saved for the firmware build.`);
+        setMessage(`MQTT Connected — ${host}`);
+        return;
+      }
+
       if (!state.status?.network?.wifiConnected) {
         setMqttConnectStatus("MQTT connect requested. Waiting for Wi-Fi first.");
         return;

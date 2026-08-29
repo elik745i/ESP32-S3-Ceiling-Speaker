@@ -4940,3 +4940,37 @@ body.desktop-flash-view .wrap {
 body.desktop-flash-view .panel-wide {
   min-height: calc(100vh - 40px);
 }
+
+/* The portable Designer configures a future ESP; it is not a running device. */
+body.local-builder-mode .hero-actions,
+body.local-builder-mode #motorHeroStat,
+body.local-builder-mode .tab-button[data-tab="motor"],
+body.local-builder-mode .tab-button[data-tab="playback"],
+body.local-builder-mode .tab-button[data-tab="effects"],
+body.local-builder-mode .tab-button[data-tab="battery"],
+body.local-builder-mode .tab-button[data-tab="storage-internal"],
+body.local-builder-mode .tab-button[data-tab="storage-external"],
+body.local-builder-mode #tab-motor,
+body.local-builder-mode #tab-playback,
+body.local-builder-mode #tab-effects,
+body.local-builder-mode #tab-battery,
+body.local-builder-mode #tab-storage-internal,
+body.local-builder-mode #tab-storage-external {
+  display: none !important;
+}
+
+body.local-builder-mode .button-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 0 18px;
+  border-radius: 10px;
+  color: #fff;
+  background: var(--accent);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+body.local-builder-mode .tab-button[data-tab="hardware"] {
+  display: inline-flex !important;
+}
