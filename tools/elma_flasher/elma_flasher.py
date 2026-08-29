@@ -33,7 +33,7 @@ import serial
 from serial.tools import list_ports
 
 
-APP_VERSION = "0.1.37"
+APP_VERSION = "0.1.38"
 WINDOWS_APP_USER_MODEL_ID = "ELMA.IoT.Flasher"
 FLASH_BAUD = 460800
 CONSOLE_BAUD = 115200
@@ -619,6 +619,39 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
         def createWindow(self, _window_type):
             return None
 
+    class ResponsiveWebView(QWebEngineView):
+        """Keep the full desktop layout intact and scale it as one unit."""
+
+        DESIGN_WIDTH = 1020
+        MINIMUM_ZOOM = 0.32
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._resize_pending = False
+
+        def resizeEvent(self, event) -> None:
+            super().resizeEvent(event)
+            if self._resize_pending:
+                return
+            self._resize_pending = True
+            QTimer.singleShot(0, self.applyResponsiveZoom)
+
+        def applyResponsiveZoom(self) -> None:
+            self._resize_pending = False
+            available_width = max(1, self.width())
+            zoom = min(1.0, max(self.MINIMUM_ZOOM, available_width / self.DESIGN_WIDTH))
+            if abs(self.zoomFactor() - zoom) > 0.005:
+                self.setZoomFactor(zoom)
+            # A wide diagram or transient menu must never expand the document
+            # canvas and push the centered application out of view. Vertical
+            # overflow remains untouched so the page continues to scroll.
+            self.page().runJavaScript(
+                "document.documentElement.style.overflowX='hidden';"
+                "document.body.style.overflowX='hidden';"
+                "document.querySelector('.wrap')?.style.setProperty('margin-inline','auto');"
+                "window.scrollTo(0, window.scrollY);"
+            )
+
     qt_app = QApplication.instance() or QApplication(["ELMA Flasher"])
     qt_app.setApplicationName("ELMA Flasher")
     qt_app.setOrganizationName("ELMA IoT")
@@ -635,7 +668,7 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
     window.setWindowTitle(f"ELMA Flasher v{APP_VERSION}")
     window.setWindowIcon(icon)
     window.resize(1280, 900)
-    window.setMinimumSize(960, 680)
+    window.setMinimumSize(420, 420)
     tabs = QTabWidget(window)
     tabs.setDocumentMode(True)
     tabs.setTabPosition(QTabWidget.TabPosition.North)
@@ -646,10 +679,10 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
         "QTabBar::tab:selected { background: #f39200; color: white; }"
         "QTabBar::tab:hover:!selected { background: #dcd8cf; }"
     )
-    designer_view = QWebEngineView(tabs)
+    designer_view = ResponsiveWebView(tabs)
     designer_page = LocalDesignerPage(profile, designer_view)
     designer_view.setPage(designer_page)
-    flash_view = QWebEngineView(tabs)
+    flash_view = ResponsiveWebView(tabs)
     flash_page = LocalDesignerPage(profile, flash_view)
     flash_view.setPage(flash_page)
     tabs.addTab(designer_view, "Device Designer")
@@ -660,6 +693,8 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
     result = {
         "designer_loaded": False,
         "flash_loaded": False,
+        "responsive_ok": not smoke_test,
+        "responsive_test_started": False,
         "tabs_ok": tabs.count() == 2
         and tabs.tabText(0) == "Device Designer"
         and tabs.tabText(1) == "Flash USB Device"
@@ -671,11 +706,41 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
         qt_app.quit()
 
     def maybe_finish_smoke_test() -> None:
-        if smoke_test and result["designer_loaded"] and result["flash_loaded"] and result["tabs_ok"]:
-            QTimer.singleShot(100, finish_smoke_test)
+        if not smoke_test or result["responsive_test_started"]:
+            return
+        if not (result["designer_loaded"] and result["flash_loaded"] and result["tabs_ok"]):
+            return
+        result["responsive_test_started"] = True
+        window.resize(700, 680)
+
+        def verify_responsive_zoom() -> None:
+            designer_view.applyResponsiveZoom()
+            designer_zoom = designer_view.zoomFactor()
+            tabs.setCurrentIndex(1)
+
+            def verify_flash_zoom() -> None:
+                flash_view.applyResponsiveZoom()
+                flash_zoom = flash_view.zoomFactor()
+                result["responsive_ok"] = (
+                    ResponsiveWebView.MINIMUM_ZOOM <= designer_zoom < 0.85
+                    and ResponsiveWebView.MINIMUM_ZOOM <= flash_zoom < 0.85
+                    and abs(designer_zoom - flash_zoom) < 0.02
+                )
+                if not result["responsive_ok"]:
+                    print(
+                        f"Responsive zoom smoke test failed: designer={designer_zoom:.3f}, "
+                        f"flash={flash_zoom:.3f}, window={window.width()}"
+                    )
+                finish_smoke_test()
+
+            QTimer.singleShot(150, verify_flash_zoom)
+
+        QTimer.singleShot(150, verify_responsive_zoom)
 
     def designer_loaded(ok: bool) -> None:
         result["designer_loaded"] = bool(ok)
+        if ok:
+            designer_view.applyResponsiveZoom()
         maybe_finish_smoke_test()
         if not ok and not smoke_test:
             designer_view.setHtml(
@@ -687,6 +752,8 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
 
     def flash_loaded(ok: bool) -> None:
         result["flash_loaded"] = bool(ok)
+        if ok:
+            flash_view.applyResponsiveZoom()
         maybe_finish_smoke_test()
 
     def tab_changed(index: int) -> None:
@@ -717,7 +784,7 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
     flash_view.deleteLater()
     window.deleteLater()
     qt_app.processEvents()
-    return result["designer_loaded"] and result["flash_loaded"] and result["tabs_ok"]
+    return result["designer_loaded"] and result["flash_loaded"] and result["tabs_ok"] and result["responsive_ok"]
 
 
 class FlasherApplication:
