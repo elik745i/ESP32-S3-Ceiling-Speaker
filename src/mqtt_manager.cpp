@@ -1248,7 +1248,7 @@ void MqttManager::publishDiscovery() {
             HaBridge::discoveryPayloadSensor(settings_, (channelSuffix + String("_status")).c_str(), (channelName + " Status").c_str(), HaBridge::motorStateTopic(settings_).c_str(), channelStatusTemplate, nullptr, nullptr, nullptr, "mdi:garage-variant", -1, configurationUrl).c_str());
         client_.publish(
             HaBridge::discoveryTopic(settings_, "switch", (channelSuffix + String("_valve")).c_str()).c_str(), 1, true,
-            HaBridge::discoveryPayloadSwitch(settings_, (channelSuffix + String("_valve")).c_str(), (channelName + " Valve").c_str(), HaBridge::motorStateTopic(settings_).c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/switch").c_str()).c_str(), channelSwitchTemplate, "mdi:valve", configurationUrl, "OPEN", "CLOSE", true).c_str());
+            HaBridge::discoveryPayloadSwitch(settings_, (channelSuffix + String("_valve")).c_str(), (channelName + " Valve").c_str(), HaBridge::motorStateTopic(settings_).c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/switch").c_str()).c_str(), channelSwitchTemplate, "mdi:valve", configurationUrl, "OPEN", "CLOSE", false).c_str());
         client_.publish(
             HaBridge::discoveryTopic(settings_, "button", (channelSuffix + String("_open")).c_str()).c_str(), 1, true,
             HaBridge::discoveryPayloadButton(settings_, (channelSuffix + String("_open")).c_str(), (channelName + " Open").c_str(), HaBridge::commandTopic(settings_, (String("motor/") + channelSuffix + "/open").c_str()).c_str(), "OPEN", "mdi:arrow-expand-horizontal", configurationUrl).c_str());

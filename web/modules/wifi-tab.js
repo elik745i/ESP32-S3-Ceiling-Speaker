@@ -1,3 +1,5 @@
+import { createWifiPowerControls } from "./wifi-power-controls.js";
+
 export function createWifiTab({
   state,
   elements,
@@ -11,6 +13,7 @@ export function createWifiTab({
   setMessage,
   handleError,
 }) {
+  const powerControls = createWifiPowerControls({ state, request, saveSettings, waitForSettingsIdle, setMessage, handleError });
   function aggregateWifiNetworks(networks) {
     const bySsid = new Map();
 
@@ -253,6 +256,7 @@ export function createWifiTab({
   }
 
   function bindEvents() {
+    powerControls.bindEvents();
     elements.scanWifiButton?.addEventListener("click", () => scanWifiNetworks().catch(handleError));
     elements.wifiConnectButton?.addEventListener("click", () => connectWifi().catch(handleError));
     elements.wifiNetworkList?.addEventListener("change", (event) => {
@@ -285,6 +289,7 @@ export function createWifiTab({
   }
 
   return {
+    renderPowerStatus: powerControls.renderStatus,
     setScanStatus,
     renderWifiNetworks,
     resetWifiNetworkList,

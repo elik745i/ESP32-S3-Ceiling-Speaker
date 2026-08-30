@@ -284,6 +284,7 @@ SoundEffectsManager* soundEffects = nullptr;
 
 struct DeferredActions {
     bool settingsApplyPending = false;
+    bool settingsApplyWifiPowerOnly = false;
     SettingsBundle pendingSettings;
     bool mqttConnectionChangePending = false;
     bool mqttConnectRequested = false;
@@ -427,6 +428,8 @@ String lastRolledBackVersion;
 String lastRollbackReason;
 uint32_t lastProcessedMotorStateVersion = 0;
 uint32_t lastPublishedMotorStateVersion = 0;
+uint32_t motorStateRepublishAt = 0;
+uint8_t motorStateRepublishRemaining = 0;
 uint32_t activeCpuFrequencyMhz = 0;
 uint8_t cpuGovernorHighSamples = 0;
 uint8_t cpuGovernorLowSamples = 0;
@@ -2772,6 +2775,13 @@ bool extractMotorRuntimeConfigFromJson(JsonVariantConst root, String& rawConfig)
 }
 
 bool saveSettingsFromJson(JsonVariantConst root, String& error) {
+    // The Wi-Fi power button sends exactly these two fields. Do not reinitialize
+    // motors, displays, storage or audio for a radio-power-only adjustment.
+    const JsonObjectConst object = root.as<JsonObjectConst>();
+    const JsonObjectConst wifi = root["wifi"].as<JsonObjectConst>();
+    const bool powerOnly = object.size() == 1 && wifi.size() > 0 &&
+        wifi.size() == static_cast<size_t>(wifi["staTxPowerDbm"].is<float>()) +
+                       static_cast<size_t>(wifi["apTxPowerDbm"].is<float>());
     String postedMotorRuntimeConfig;
     const bool hasPostedMotorRuntimeConfig = extractMotorRuntimeConfigFromJson(root, postedMotorRuntimeConfig);
     postedMotorRuntimeConfig.trim();
@@ -2799,6 +2809,8 @@ bool saveSettingsFromJson(JsonVariantConst root, String& error) {
     *settings = persisted;
     appState->setDevice(settings->device.deviceName, settings->device.friendlyName, true);
     deferredActions->pendingSettings = persisted;
+    deferredActions->settingsApplyWifiPowerOnly = powerOnly &&
+        (!deferredActions->settingsApplyPending || deferredActions->settingsApplyWifiPowerOnly);
     deferredActions->settingsApplyPending = true;
     return true;
 }
@@ -3212,6 +3224,24 @@ void publishMotorStateIfNeeded() {
 
     lastPublishedMotorStateVersion = currentVersion;
     mqttManager->publishState();
+    // Async MQTT can still have the first state packet in flight when a motor
+    // output changes at the exact end of its run. Repeat the retained settled
+    // state shortly afterward so Home Assistant reliably consumes open/closed.
+    motorStateRepublishRemaining = 2;
+    motorStateRepublishAt = millis() + 300UL;
+}
+
+void serviceMotorStateRepublish() {
+    if (motorStateRepublishRemaining == 0 || mqttManager == nullptr || !mqttManager->isConnected()) {
+        return;
+    }
+    const uint32_t now = millis();
+    if (static_cast<int32_t>(now - motorStateRepublishAt) < 0) {
+        return;
+    }
+    mqttManager->publishState();
+    --motorStateRepublishRemaining;
+    motorStateRepublishAt = now + 900UL;
 }
 
 void handleMqttCommand(const PlaybackCommand& command) {
@@ -3269,6 +3299,7 @@ void executePlaybackCommand(const PlaybackCommand& command) {
             deferredActions->pendingSettings.ota.autoCheck = true;
         }
         deferredActions->settingsApplyPending = true;
+        deferredActions->settingsApplyWifiPowerOnly = false;
         appState->setLastError("");
     } else if (command.action == "ota_install_latest") {
         if (otaManager != nullptr && otaManager->triggerCheck(true)) {
@@ -3622,6 +3653,7 @@ void setup() {
     activeWapeTriggerPin = settings->oled.displayType == "wape" ? settings->oled.wapeTriggerPin : 0;
 
     initializeButtons();
+    motorController.reclaimConfiguredPins();
 
     initializeStatusLed();
     writeStatusLed(false);
@@ -3785,8 +3817,13 @@ void flushPendingSettingsNow() {
     }
     settingsManager->save(deferredActions->pendingSettings);
     *settings = settingsManager->load();
-    applyRuntimeSettings();
+    if (deferredActions->settingsApplyWifiPowerOnly) {
+        wifiManager->applySettings(*settings);
+    } else {
+        applyRuntimeSettings();
+    }
     deferredActions->settingsApplyPending = false;
+    deferredActions->settingsApplyWifiPowerOnly = false;
     mqttManager->publishState();
 }
 }
@@ -4135,6 +4172,7 @@ void loop() {
     }
     motorController.loop();
     publishMotorStateIfNeeded();
+    serviceMotorStateRepublish();
     wifiManager->loop();
     serviceAudioDiagnosticTest();
     if (activeAudioOutputEnabled) {
@@ -4200,7 +4238,9 @@ void loop() {
 
     serviceStatusLedOverrides(millis());
 
-    if (!recoveryRebootScheduled && wifiManager->shouldRebootForRecovery()) {
+    const bool otaTransferActive = otaManager != nullptr && otaManager->isBusy();
+
+    if (!otaTransferActive && !recoveryRebootScheduled && wifiManager->shouldRebootForRecovery()) {
         recoveryRebootScheduled = true;
         Serial.printf("[recovery] scheduling reboot after %u failed Wi-Fi attempts\n",
                       static_cast<unsigned>(wifiManager->consecutiveFailureCount()));
@@ -4208,7 +4248,7 @@ void loop() {
         requestRestartSequence("wifi_recovery", false);
     }
 
-    if (!recoveryRebootScheduled && mqttManager->shouldRebootForRecovery()) {
+    if (!otaTransferActive && !recoveryRebootScheduled && mqttManager->shouldRebootForRecovery()) {
         recoveryRebootScheduled = true;
         Serial.printf("[recovery] scheduling reboot after %u failed MQTT attempts\n",
                       static_cast<unsigned>(mqttManager->consecutiveFailureCount()));
@@ -4216,7 +4256,9 @@ void loop() {
         requestRestartSequence("mqtt_recovery", false);
     }
 
-    if (rebootRequested && static_cast<long>(millis() - rebootAt) >= 0) {
+    // Never interrupt an inactive-partition write. A restart queued by another
+    // subsystem waits until OTA has completed or aborted.
+    if (!otaTransferActive && rebootRequested && static_cast<long>(millis() - rebootAt) >= 0) {
         motorController.prepareForRestart();
         ESP.restart();
     }

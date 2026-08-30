@@ -16,6 +16,13 @@
 #define APP_STATUS_LED_IS_NEOPIXEL 0
 #endif
 
+#ifndef APP_DEFAULT_WIFI_STA_TX_DBM
+#define APP_DEFAULT_WIFI_STA_TX_DBM 15.0f
+#endif
+#ifndef APP_DEFAULT_WIFI_AP_TX_DBM
+#define APP_DEFAULT_WIFI_AP_TX_DBM 15.0f
+#endif
+
 struct WiFiSettings {
     String ssid;
     String password;
@@ -23,6 +30,8 @@ struct WiFiSettings {
     String apPassword;
     bool apFallbackEnabled = true;
     bool useStaticIp = false;
+    float staTxPowerDbm = APP_DEFAULT_WIFI_STA_TX_DBM;
+    float apTxPowerDbm = APP_DEFAULT_WIFI_AP_TX_DBM;
     String staticIp;
     String gateway;
     String subnet;

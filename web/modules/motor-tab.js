@@ -229,7 +229,7 @@ export function createMotorTab({
   }
 
   function syncUiStateFromSettings() {
-    if (state.settingsLoading || state.settingsSaving || state.settingsDirty) {
+    if (state.settingsLoading || ((state.settingsSaving || state.settingsDirty) && lastHydratedSettingsKey)) {
       return;
     }
     const settingsUiState = state.settings?.ui?.motorRuntimeConfig;
@@ -344,10 +344,27 @@ export function createMotorTab({
   }
 
   function configuredTouchButtons() {
-    return [
-      { key: "button1", label: "Touch 1", runtime: state.status?.input?.button1 || null },
-      { key: "button2", label: "Touch 2", runtime: state.status?.input?.button2 || null },
-    ].filter((entry) => isTouchButtonStatus(entry.runtime));
+    const inputProfiles = normalizedPeripheralInputProfiles();
+    return [0, 1].map((index) => {
+      const key = index === 0 ? "button1" : "button2";
+      const runtime = state.status?.input?.[key] || null;
+      const configuredIndex = Number.isFinite(Number(runtime?.configuredIndex)) && Number(runtime.configuredIndex) >= 0
+        ? Number(runtime.configuredIndex)
+        : index;
+      const configuredProfile = String(inputProfiles[configuredIndex] || inputProfiles[index] || "none");
+      const profile = String(runtime?.profile || configuredProfile || "none");
+      const configuredPin = Number(runtime?.pin);
+      const fallbackPin = inputAssignedPin(configuredIndex);
+      return {
+        key,
+        label: `Touch ${index + 1}`,
+        runtime: {
+          configuredIndex,
+          pin: Number.isFinite(configuredPin) && configuredPin >= 0 ? configuredPin : fallbackPin,
+          profile,
+        },
+      };
+    }).filter((entry) => isTouchButtonStatus(entry.runtime));
   }
 
   function motorStatusFor(channelIndex) {
@@ -398,6 +415,20 @@ export function createMotorTab({
     }
   }
 
+  function syncChannelMovementControls(channel) {
+    const controls = channelElements(channel);
+    DIRECTION_KEYS.forEach((direction) => {
+      const directionControlSet = directionControls(controls, direction);
+      const role = normalizeMovementRole(uiState[channel.key][direction].movementRole, direction);
+      if (directionControlSet.roleSelect && document.activeElement !== directionControlSet.roleSelect) {
+        directionControlSet.roleSelect.value = role;
+      }
+      if (directionControlSet.button) {
+        directionControlSet.button.textContent = roleButtonLabel(role, direction);
+      }
+    });
+  }
+
   function syncLimitOptions(select, selectedValue, options) {
     if (!select) {
       return;
@@ -409,8 +440,14 @@ export function createMotorTab({
       '<option value="">No stop switch</option>',
       ...options.map((option) => `<option value="${option.value}">${option.label}</option>`),
     ].join("");
-    select.innerHTML = optionMarkup;
-    select.value = options.some((option) => option.value === normalizedSelectedValue) ? normalizedSelectedValue : "";
+    const optionsKey = JSON.stringify(options);
+    if (select.dataset.motorOptionsKey !== optionsKey && document.activeElement !== select) {
+      select.innerHTML = optionMarkup;
+      select.dataset.motorOptionsKey = optionsKey;
+    }
+    if (document.activeElement !== select) {
+      select.value = options.some((option) => option.value === normalizedSelectedValue) ? normalizedSelectedValue : "";
+    }
   }
 
   function formatStatusText(channel, status) {
@@ -496,6 +533,7 @@ export function createMotorTab({
       elements.motorHeroMeta.textContent = "No motor channels configured.";
       elements.motorHeroControls.hidden = true;
       elements.motorHeroControls.innerHTML = "";
+      delete elements.motorHeroControls.dataset.motorRenderKey;
       return;
     }
 
@@ -532,6 +570,7 @@ export function createMotorTab({
       elements.motorHeroMeta.textContent = "No motor channels wired yet.";
       elements.motorHeroControls.hidden = true;
       elements.motorHeroControls.innerHTML = "";
+      delete elements.motorHeroControls.dataset.motorRenderKey;
       return;
     }
 
@@ -540,7 +579,7 @@ export function createMotorTab({
       .join(" | ");
 
     elements.motorHeroControls.hidden = false;
-    elements.motorHeroControls.innerHTML = configuredChannels.map(({ channel, channelIndex, status }) => {
+    const heroMarkup = configuredChannels.map(({ channel, channelIndex, status }) => {
       const active = Boolean(status?.active);
       const pending = pendingChannels.has(channelIndex);
       const disabled = active || pending;
@@ -556,13 +595,25 @@ export function createMotorTab({
       `;
     }).join("");
 
-    elements.motorHeroControls.querySelectorAll("button[data-motor-channel]").forEach((button) => {
-      button.addEventListener("click", () => {
-        runChannel(Number(button.dataset.motorChannel), String(button.dataset.motorDirection || "forward")).catch((error) => {
-          toast(error?.message || "Motor command failed");
+    const heroKey = JSON.stringify(configuredChannels.map(({ channel, channelIndex, status }) => ({
+      channelIndex,
+      active: Boolean(status?.active),
+      pending: pendingChannels.has(channelIndex),
+      forwardRole: normalizeMovementRole(uiState[channel.key].forward?.movementRole, "forward"),
+      backwardRole: normalizeMovementRole(uiState[channel.key].backward?.movementRole, "backward"),
+      preferredDirection: preferredDirectionFor(channel.key, status),
+    })));
+    if (elements.motorHeroControls.dataset.motorRenderKey !== heroKey) {
+      elements.motorHeroControls.innerHTML = heroMarkup;
+      elements.motorHeroControls.dataset.motorRenderKey = heroKey;
+      elements.motorHeroControls.querySelectorAll("button[data-motor-channel]").forEach((button) => {
+        button.addEventListener("click", () => {
+          runChannel(Number(button.dataset.motorChannel), String(button.dataset.motorDirection || "forward")).catch((error) => {
+            toast(error?.message || "Motor command failed");
+          });
         });
       });
-    });
+    }
   }
 
   function renderTouchButtons(driver) {
@@ -570,15 +621,29 @@ export function createMotorTab({
       return;
     }
 
+    // A live status refresh must never close a native select popup while the
+    // user is choosing its motor action.
+    if (elements.motorTouchList.contains(document.activeElement)) {
+      return;
+    }
+
     const touchButtons = configuredTouchButtons();
     elements.motorTouchSection.hidden = !driver || touchButtons.length === 0;
     if (!driver || touchButtons.length === 0) {
       elements.motorTouchList.innerHTML = "";
+      delete elements.motorTouchList.dataset.motorStructureKey;
       elements.motorTouchSummary.textContent = "Assign motor actions to configured touch buttons.";
       return;
     }
 
-    elements.motorTouchList.innerHTML = touchButtons.map(({ key, label, runtime }) => {
+    const touchStructureKey = JSON.stringify(touchButtons.map(({ key, runtime }) => ({
+      key,
+      configuredIndex: Number(runtime?.configuredIndex),
+      pin: Number(runtime?.pin),
+    })));
+    if (elements.motorTouchList.dataset.motorStructureKey !== touchStructureKey
+        && !elements.motorTouchList.contains(document.activeElement)) {
+      elements.motorTouchList.innerHTML = touchButtons.map(({ key, label, runtime }) => {
       const configuredIndex = Number(runtime?.configuredIndex);
       const pin = Number(runtime?.pin);
       const detail = [
@@ -601,7 +666,15 @@ export function createMotorTab({
           </label>
         </div>
       `;
-    }).join("");
+      }).join("");
+      elements.motorTouchList.dataset.motorStructureKey = touchStructureKey;
+    }
+    elements.motorTouchList.querySelectorAll("select[data-motor-touch-action]").forEach((select) => {
+      const key = String(select.dataset.motorTouchAction || "");
+      if (document.activeElement !== select && uiState.touchButtons?.[key]) {
+        select.value = uiState.touchButtons[key].action || "none";
+      }
+    });
     elements.motorTouchSummary.textContent = "Touch actions are saved in preferences and Toggle Open/Close uses the learned valve state.";
   }
 
@@ -637,13 +710,19 @@ export function createMotorTab({
       DIRECTION_KEYS.forEach((direction) => {
         const directionUi = persisted[direction];
         const directionControlSet = directionControls(controls, direction);
-        if (directionControlSet.durationInput) {
+        if (directionControlSet.durationInput && document.activeElement !== directionControlSet.durationInput) {
           directionControlSet.durationInput.value = String(Math.max(100, Number(directionUi.durationMs || 5000)));
+          directionControlSet.durationInput.disabled = !channel.configured || pending;
+        } else if (directionControlSet.durationInput) {
           directionControlSet.durationInput.disabled = !channel.configured || pending;
         }
         if (directionControlSet.roleSelect) {
-          directionControlSet.roleSelect.innerHTML = MOVEMENT_ROLE_OPTIONS.map((option) => `<option value="${option.value}">${option.label}</option>`).join("");
-          directionControlSet.roleSelect.value = normalizeMovementRole(directionUi.movementRole, direction);
+          if (directionControlSet.roleSelect.options.length !== MOVEMENT_ROLE_OPTIONS.length) {
+            directionControlSet.roleSelect.innerHTML = MOVEMENT_ROLE_OPTIONS.map((option) => `<option value="${option.value}">${option.label}</option>`).join("");
+          }
+          if (document.activeElement !== directionControlSet.roleSelect) {
+            directionControlSet.roleSelect.value = normalizeMovementRole(directionUi.movementRole, direction);
+          }
           directionControlSet.roleSelect.disabled = !channel.configured || pending;
         }
         syncLimitOptions(directionControlSet.limitSelect, directionUi.limitInputIndex, limitOptions);
@@ -727,22 +806,29 @@ export function createMotorTab({
       });
       DIRECTION_KEYS.forEach((direction) => {
         const directionControlSet = directionControls(controls, direction);
+        directionControlSet.durationInput?.addEventListener("input", (event) => {
+          const durationMs = Number(event.target.value);
+          if (!Number.isFinite(durationMs) || durationMs < 100) {
+            return;
+          }
+          uiState[channel.key][direction].durationMs = durationMs;
+          queueMotorConfigSave(350);
+        });
         directionControlSet.durationInput?.addEventListener("change", (event) => {
-          uiState[channel.key][direction].durationMs = Math.max(100, Number(event.target.value || 5000));
-          queueMotorConfigSave();
-          render();
+          uiState[channel.key][direction].durationMs = Math.max(100, Number(event.target.value || uiState[channel.key][direction].durationMs || 5000));
+          event.target.value = String(uiState[channel.key][direction].durationMs);
+          queueMotorConfigSave(0);
         });
         directionControlSet.roleSelect?.addEventListener("change", (event) => {
           uiState[channel.key][direction].movementRole = normalizeMovementRole(event.target.value, direction);
           uiState[channel.key][direction].movementRoleExplicit = uiState[channel.key][direction].movementRole !== "none";
           syncOppositeMovementRole(channel.key, direction, uiState[channel.key][direction].movementRole);
           queueMotorConfigSave();
-          render();
+          syncChannelMovementControls(channel);
         });
         directionControlSet.limitSelect?.addEventListener("change", (event) => {
           uiState[channel.key][direction].limitInputIndex = String(event.target.value || "");
           queueMotorConfigSave();
-          render();
         });
       });
     });
@@ -758,7 +844,6 @@ export function createMotorTab({
       }
       uiState.touchButtons[key].action = TOUCH_BUTTON_ACTION_OPTIONS.some((option) => option.value === target.value) ? target.value : "none";
       queueMotorConfigSave();
-      render();
     });
   }
 

@@ -2,6 +2,21 @@ export function createLocalBuilder({ elements, currentSettingsSnapshot, setMessa
   let active = false;
   let jobId = "";
   let timer = null;
+  let cancelRequested = false;
+
+  function usesIpTransport() {
+    return elements.localBuilderTransport?.value === "ip";
+  }
+
+  function usesMinimalFirmware() {
+    return elements.localBuilderFirmwareMode?.value === "minimal";
+  }
+
+  function idleActionLabel() {
+    return usesIpTransport()
+      ? `Compile ${usesMinimalFirmware() ? "Minimal" : "Full"} Firmware & Flash IP Device`
+      : "Compile Firmware & Flash USB Device";
+  }
 
   function formatBytes(value) {
     const bytes = Number(value || 0);
@@ -40,7 +55,9 @@ export function createLocalBuilder({ elements, currentSettingsSnapshot, setMessa
       document.querySelector(`.tab-button[data-tab="${name}"]`)?.setAttribute("hidden", "");
       document.getElementById(`tab-${name}`)?.setAttribute("hidden", "");
     };
-    ["motor", "playback", "effects", "battery", "storage-internal", "storage-external"].forEach(hideTab);
+    // Configured feature tabs are controlled dynamically by app.js. Runtime
+    // storage browsers stay hidden because no device filesystem is mounted.
+    ["storage-internal", "storage-external"].forEach(hideTab);
     document.getElementById("motorHeroStat")?.setAttribute("hidden", "");
 
     const deviceTab = document.querySelector('.tab-button[data-tab="device"]');
@@ -119,9 +136,46 @@ export function createLocalBuilder({ elements, currentSettingsSnapshot, setMessa
   }
 
   function setBusy(busy) {
-    elements.localBuilderCompileFlash.disabled = busy;
+    elements.localBuilderCompileFlash.disabled = busy && cancelRequested;
+    elements.localBuilderCompileFlash.textContent = busy
+      ? (cancelRequested ? "Cancelling Safely…" : "Cancel")
+      : idleActionLabel();
+    elements.localBuilderCompileFlash.classList.toggle("danger", busy);
+    elements.localBuilderTransport.disabled = busy;
+    elements.localBuilderChip.disabled = busy;
+    elements.localBuilderFirmwareMode.disabled = busy;
+    elements.localBuilderPort.disabled = busy;
     elements.localBuilderRefreshPorts.disabled = busy;
-    elements.localBuilderCancel.hidden = !busy;
+    elements.localBuilderIpDevice.disabled = busy;
+    elements.localBuilderIpAddress.disabled = busy;
+    elements.localBuilderIpUsername.disabled = busy;
+    elements.localBuilderIpPassword.disabled = busy;
+    elements.localBuilderScanIpDevices.disabled = busy;
+    elements.localBuilderCancel.hidden = true;
+  }
+
+  function updateTransportUi() {
+    const ip = usesIpTransport();
+    elements.localBuilderUsbTarget.hidden = ip;
+    elements.localBuilderIpTarget.hidden = !ip;
+    elements.localBuilderErase.closest("label").hidden = ip;
+    if (!jobId) elements.localBuilderCompileFlash.textContent = idleActionLabel();
+    elements.localBuilderCompatibility.textContent = ip
+      ? "IP flashing uses the device's inactive OTA partition. Cancelling an upload aborts that partition and leaves the currently running firmware bootable."
+      : "USB flashing verifies the generated image. If cancellation is requested after erase/write begins, ELMA completes the critical write safely before stopping.";
+  }
+
+  function updateFirmwareModeUi() {
+    const minimal = usesMinimalFirmware();
+    if (minimal && !usesIpTransport()) {
+      elements.localBuilderTransport.value = "ip";
+      updateTransportUi();
+    }
+    elements.localBuilderMaximum.closest("fieldset").hidden = minimal;
+    elements.localBuilderCompatibility.textContent = minimal
+      ? "Minimal recovery firmware keeps the existing ELMA NVS configuration, removes peripherals and the full UI, disables Wi-Fi power saving, and provides only Wi-Fi plus a small OTA upload page. It is IP-flashed without erasing partitions."
+      : "The compiler resolves selected wiring against chip GPIO limits and reports forced exclusions before flash is erased.";
+    if (!jobId) elements.localBuilderCompileFlash.textContent = idleActionLabel();
   }
 
   async function refreshPorts() {
@@ -139,6 +193,36 @@ export function createLocalBuilder({ elements, currentSettingsSnapshot, setMessa
     }
     if (!elements.localBuilderPort.options.length) {
       elements.localBuilderPort.appendChild(new Option("No USB serial device detected", ""));
+    }
+  }
+
+  async function scanIpDevices() {
+    elements.localBuilderScanIpDevices.disabled = true;
+    elements.localBuilderScanIpDevices.textContent = "Scanning…";
+    try {
+      const payload = await api("/api/builder/network-devices/scan", {
+        method: "POST",
+        body: JSON.stringify({
+          username: elements.localBuilderIpUsername.value,
+          password: elements.localBuilderIpPassword.value,
+        }),
+      });
+      const previous = elements.localBuilderIpDevice.value;
+      elements.localBuilderIpDevice.innerHTML = "";
+      elements.localBuilderIpDevice.appendChild(new Option("Select a discovered ELMA device", ""));
+      for (const device of payload.devices || []) {
+        const detail = [device.name, device.version ? `v${device.version}` : "", device.chip || ""].filter(Boolean).join(" · ");
+        elements.localBuilderIpDevice.appendChild(new Option(`${device.ip}${detail ? ` — ${detail}` : ""}`, device.ip));
+      }
+      if (previous && [...elements.localBuilderIpDevice.options].some((option) => option.value === previous)) {
+        elements.localBuilderIpDevice.value = previous;
+      }
+      setMessage(payload.devices?.length
+        ? `Found ${payload.devices.length} compatible ELMA device${payload.devices.length === 1 ? "" : "s"} on this LAN.`
+        : "No compatible ELMA devices answered the LAN scan. You can enter an IP address manually.");
+    } finally {
+      elements.localBuilderScanIpDevices.disabled = false;
+      elements.localBuilderScanIpDevices.textContent = "Scan LAN";
     }
   }
 
@@ -186,6 +270,7 @@ export function createLocalBuilder({ elements, currentSettingsSnapshot, setMessa
       elements.localBuilderCompatibility.textContent = state.compatibility || elements.localBuilderCompatibility.textContent;
       if (state.state === "complete") {
         setBusy(false);
+        cancelRequested = false;
         jobId = "";
         setMessage(state.ipAddress
           ? `Device flashed at ${state.ipAddress}. Firmware saved as ${state.firmwareFile || "a standard release binary"}.`
@@ -195,6 +280,7 @@ export function createLocalBuilder({ elements, currentSettingsSnapshot, setMessa
       }
       if (state.state === "failed" || state.state === "cancelled") {
         setBusy(false);
+        cancelRequested = false;
         jobId = "";
         setMessage(state.error || state.status, state.state === "failed");
         return;
@@ -209,16 +295,58 @@ export function createLocalBuilder({ elements, currentSettingsSnapshot, setMessa
   }
 
   async function compileAndFlash() {
+    const transport = usesIpTransport() ? "ip" : "usb";
     const port = elements.localBuilderPort.value;
-    if (!port) throw new Error("Connect and select a USB ESP device first.");
+    const targetIp = elements.localBuilderIpAddress.value.trim() || elements.localBuilderIpDevice.value;
+    if (transport === "usb" && !port) throw new Error("Connect and select a USB ESP device first.");
+    if (transport === "ip" && !targetIp) throw new Error("Scan for a compatible device or enter its IP address first.");
+    let networkTarget = null;
+    if (transport === "ip") {
+      networkTarget = await api("/api/builder/network-devices/probe", {
+        method: "POST",
+        body: JSON.stringify({
+          ip: targetIp,
+          username: elements.localBuilderIpUsername.value,
+          password: elements.localBuilderIpPassword.value,
+        }),
+      });
+      if (!networkTarget.chip) {
+        window.alert("ELMA Flasher identified this device, but could not verify its ESP chip family. IP flashing has been stopped to prevent installing firmware for the wrong chip. Connect it by USB once or use firmware that reports its exact ESP family.");
+        return;
+      }
+      const selectedChip = elements.localBuilderChip.value;
+      if (selectedChip !== "auto" && selectedChip !== networkTarget.chip) {
+        window.alert(`Destination chip mismatch. The device reports ${networkTarget.chip.toUpperCase()}, but the configured firmware target is ${selectedChip.toUpperCase()}. Nothing was compiled or uploaded.`);
+        return;
+      }
+      const boardValue = document.getElementById("gpioBoardSelector")?.value || "";
+      const boardChip = boardValue.includes("c3") ? "esp32c3" : (boardValue.includes("s3") ? "esp32s3" : "esp32");
+      if (boardChip !== networkTarget.chip) {
+        window.alert(`Destination chip mismatch. The selected board (${boardValue}) targets ${boardChip.toUpperCase()}, while the device reports ${networkTarget.chip.toUpperCase()}. Select the correct board before flashing.`);
+        return;
+      }
+      elements.localBuilderChip.value = networkTarget.chip;
+      applyTargetPolicy();
+      if (networkTarget.kind !== "elma") {
+        const product = networkTarget.kind === "tasmota" ? "Tasmota" : "ESPHome";
+        const confirmed = window.confirm(`${product} firmware was detected on ${targetIp}. Continuing will replace it with ELMA firmware. Device settings from ${product} will not be converted.\n\nReplace ${product} firmware on this device?`);
+        if (!confirmed) return;
+      }
+    }
     // The standalone Flash tab deliberately reads the shared Designer backend
     // at click time so a second WebEngine view cannot flash a stale snapshot.
     const desktopFlashView = new URLSearchParams(window.location.search).get("elmaView") === "flash";
     const settings = desktopFlashView ? await api("/api/settings") : currentSettingsSnapshot();
     const payload = {
+      transport,
       port,
+      targetIp,
+      username: elements.localBuilderIpUsername.value,
+      password: elements.localBuilderIpPassword.value,
+      confirmedForeignFirmware: Boolean(networkTarget && networkTarget.kind !== "elma"),
+      targetKind: networkTarget?.kind || "",
       chip: elements.localBuilderChip.value,
-      erase: elements.localBuilderErase.checked,
+      erase: transport === "usb" && elements.localBuilderErase.checked,
       settings,
       capabilities: {
         maximum: elements.localBuilderMaximum.checked,
@@ -226,17 +354,30 @@ export function createLocalBuilder({ elements, currentSettingsSnapshot, setMessa
         hacs: elements.localBuilderHacs.checked,
         audio: elements.localBuilderAudio.checked,
       },
+      firmwareMode: usesMinimalFirmware() ? "minimal" : "full",
     };
     const response = await api("/api/builder/jobs", { method: "POST", body: JSON.stringify(payload) });
     jobId = response.jobId;
+    cancelRequested = false;
     setBusy(true);
     setProgress(1, "Build queued");
     poll();
   }
 
   async function cancel() {
-    if (!jobId) return;
+    if (!jobId || cancelRequested) return;
+    cancelRequested = true;
+    setBusy(true);
+    setProgress(Number.parseFloat(elements.localBuilderProgressFill.style.width) || 0, "Cancellation requested — stopping at a safe boundary");
     await api(`/api/builder/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST", body: "{}" });
+  }
+
+  async function primaryAction() {
+    if (jobId) {
+      await cancel();
+      return;
+    }
+    await compileAndFlash();
   }
 
   async function initialize() {
@@ -260,11 +401,28 @@ export function createLocalBuilder({ elements, currentSettingsSnapshot, setMessa
     }
     await refreshPorts();
     elements.localBuilderRefreshPorts.addEventListener("click", () => refreshPorts().catch((error) => setMessage(error.message, true)));
+    elements.localBuilderScanIpDevices.addEventListener("click", () => scanIpDevices().catch((error) => setMessage(error.message, true)));
+    elements.localBuilderIpDevice.addEventListener("change", () => {
+      if (elements.localBuilderIpDevice.value) elements.localBuilderIpAddress.value = elements.localBuilderIpDevice.value;
+    });
+    elements.localBuilderTransport.addEventListener("change", () => {
+      if (usesMinimalFirmware() && !usesIpTransport()) {
+        elements.localBuilderTransport.value = "ip";
+        setMessage("Minimal firmware is OTA-only so the existing partition table and NVS configuration cannot be erased.");
+      }
+      updateTransportUi();
+    });
+    elements.localBuilderFirmwareMode.addEventListener("change", updateFirmwareModeUi);
     elements.localBuilderChip.addEventListener("change", applyTargetPolicy);
     elements.localBuilderMaximum.addEventListener("change", applyTargetPolicy);
-    elements.localBuilderCompileFlash.addEventListener("click", () => compileAndFlash().catch((error) => setMessage(error.message, true)));
-    elements.localBuilderCancel.addEventListener("click", () => cancel().catch((error) => setMessage(error.message, true)));
+    elements.localBuilderCompileFlash.addEventListener("click", () => primaryAction().catch((error) => {
+      cancelRequested = false;
+      if (!jobId) setBusy(false);
+      setMessage(error.message, true);
+    }));
     applyTargetPolicy();
+    updateTransportUi();
+    updateFirmwareModeUi();
   }
 
   return { initialize, refreshPorts };

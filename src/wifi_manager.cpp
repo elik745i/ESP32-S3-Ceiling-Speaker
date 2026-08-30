@@ -1,6 +1,8 @@
 #include "wifi_manager.h"
 
 #include "default_config.h"
+#include "wifi_power_policy.h"
+#include <esp_wifi.h>
 
 namespace {
 String defaultApName() {
@@ -39,11 +41,34 @@ void WiFiManager::updateRadioModeAndSleep() {
 
     // Allow modem sleep whenever we are not actively hosting an AP.
     // AP mode is kept fully awake so the captive portal remains responsive.
-    // Use the same conservative 15 dBm ceiling for station and AP operation.
-    // The previous 8.5 dBm station limit made marginal mesh links unreliable;
-    // 15 dBm is still below the ESP32/ESP32-S3 supported maximum.
     WiFi.setSleep(!apMode_);
-    WiFi.setTxPower(WIFI_POWER_15dBm);
+    applyRadioTxPower();
+}
+
+void WiFiManager::applyRadioTxPower() {
+    const wifi_mode_t mode = WiFi.getMode();
+    if (mode == WIFI_MODE_NULL) return;
+    const int8_t requested = WifiPowerPolicy::requestedQuarterDbm(
+        settings_.wifi.staTxPowerDbm, settings_.wifi.apTxPowerDbm,
+        (mode & WIFI_MODE_STA) != 0, (mode & WIFI_MODE_AP) != 0);
+    // The ESP has one radio. AP+STA uses the higher configured limit; do not
+    // reconnect or change credentials merely to apply a power-only edit.
+    txPowerApplyError_ = esp_wifi_set_max_tx_power(requested);
+    if (txPowerApplyError_ != ESP_OK) {
+        Serial.printf("[wifi] transmit power apply failed: %d\n", txPowerApplyError_);
+    }
+}
+
+void WiFiManager::appendTxPowerStatus(JsonObject network) const {
+    const wifi_mode_t mode = WiFi.getMode();
+    int8_t activePower = 0;
+    const bool available = mode != WIFI_MODE_NULL && esp_wifi_get_max_tx_power(&activePower) == ESP_OK;
+    network["staTxPowerDbm"] = settings_.wifi.staTxPowerDbm;
+    network["apTxPowerDbm"] = settings_.wifi.apTxPowerDbm;
+    network["txPowerAvailable"] = available;
+    if (available) network["txPowerDbm"] = activePower / 4.0f;
+    network["txPowerMode"] = mode == WIFI_MODE_APSTA ? "AP+STA" : (mode == WIFI_MODE_AP ? "AP" : (mode == WIFI_MODE_STA ? "STA" : "Off"));
+    network["txPowerApplyError"] = txPowerApplyError_;
 }
 
 void WiFiManager::begin(const SettingsBundle& settings, AppState& appState) {
@@ -71,6 +96,7 @@ void WiFiManager::applySettings(const SettingsBundle& settings) {
     }
     apSsid_ = settings_.wifi.apSsid.isEmpty() ? defaultApName() : settings_.wifi.apSsid;
     if (!needsRestart) {
+        applyRadioTxPower();
         updateAppState();
         initialized_ = true;
         return;
@@ -137,6 +163,7 @@ void WiFiManager::startStation() {
                       settings_.wifi.ssid.c_str());
     }
     skipBssidSelectionForNextConnect_ = false;
+    applyRadioTxPower();
     stationAttemptActive_ = true;
     connectAttemptStartedAt_ = millis();
     lastConnectAttemptAt_ = connectAttemptStartedAt_;
@@ -155,6 +182,7 @@ void WiFiManager::startAccessPoint() {
     apMode_ = true;
     updateRadioModeAndSleep();
     WiFi.softAP(apSsid_.c_str(), settings_.wifi.apPassword.c_str());
+    applyRadioTxPower();
     dnsServer_.start(DNS_PORT, "*", WiFi.softAPIP());
     dnsStarted_ = true;
     apShutdownPending_ = false;
@@ -185,6 +213,7 @@ void WiFiManager::loop() {
     const bool connected = WiFi.status() == WL_CONNECTED;
     if (connected) {
         if (!hadConnection_) {
+            applyRadioTxPower();
             if (consecutiveFailureCount_ > 0) {
                 Serial.printf("[wifi] connected after %u failed attempt(s)\n", static_cast<unsigned>(consecutiveFailureCount_));
             }

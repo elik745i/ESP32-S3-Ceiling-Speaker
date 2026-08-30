@@ -7,21 +7,25 @@
 #include <esp_ota_ops.h>
 #include <mbedtls/sha256.h>
 
+#include "github_release_client.h"
 #include "version.h"
 
 namespace {
 constexpr unsigned long RELEASE_CACHE_TTL_MS = 5UL * 60UL * 1000UL;
-constexpr uint8_t RELEASE_REFRESH_MAX_ATTEMPTS = 4;
+constexpr uint8_t RELEASE_REFRESH_MAX_ATTEMPTS = 1;
 constexpr unsigned long RELEASE_REFRESH_RETRY_DELAY_MS = 1500UL;
 constexpr unsigned long OTA_DOWNLOAD_STALL_TIMEOUT_MS = 15000UL;
 constexpr uint8_t OTA_DOWNLOAD_MAX_RESUME_ATTEMPTS = 3;
+// TLS handshakes and filtered GitHub JSON parsing exceed the Arduino loop
+// task's stack on ESP32-S3. Every network-backed OTA operation uses its own
+// generously sized task instead of ever running on loopTask.
+constexpr uint32_t OTA_NETWORK_TASK_STACK_BYTES = 24576;
 
-String githubApiLatestUrl(const SettingsBundle& settings) {
-    return String("https://api.github.com/repos/") + settings.ota.owner + "/" + settings.ota.repository + "/releases/latest";
-}
-
-String githubApiReleasesUrl(const SettingsBundle& settings) {
-    return String("https://api.github.com/repos/") + settings.ota.owner + "/" + settings.ota.repository + "/releases?per_page=10";
+void logOtaTaskStack(const char* taskName) {
+    const UBaseType_t minimumFreeWords = uxTaskGetStackHighWaterMark(nullptr);
+    Serial.printf("[ota] %s minimum free stack=%u bytes\n",
+                  taskName,
+                  static_cast<unsigned>(minimumFreeWords * sizeof(StackType_t)));
 }
 
 String githubReleaseAssetUrl(const SettingsBundle& settings, const String& version, const String& assetName) {
@@ -115,6 +119,9 @@ String normalizeChipFamilyToken(String value) {
 
 String chipFamilyDisplayName(const String& chipFamily) {
     const String normalized = normalizeChipFamilyToken(chipFamily);
+    if (normalized == "esp32c3") {
+        return "ESP32-C3";
+    }
     if (normalized == "esp32s3") {
         return "ESP32-S3";
     }
@@ -128,6 +135,8 @@ String chipFamilyFromChipId(esp_chip_id_t chipId) {
     switch (chipId) {
         case ESP_CHIP_ID_ESP32:
             return "esp32";
+        case ESP_CHIP_ID_ESP32C3:
+            return "esp32c3";
         case ESP_CHIP_ID_ESP32S3:
             return "esp32s3";
         default:
@@ -137,6 +146,9 @@ String chipFamilyFromChipId(esp_chip_id_t chipId) {
 
 String chipFamilyForAssetName(const String& assetName) {
     const String lowered = normalizeChipFamilyToken(assetName);
+    if (lowered.indexOf("esp32c3") >= 0) {
+        return "esp32c3";
+    }
     if (lowered.indexOf("esp32s3") >= 0) {
         return "esp32s3";
     }
@@ -147,12 +159,17 @@ String chipFamilyForAssetName(const String& assetName) {
 }
 
 String currentChipFamily() {
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
+#if defined(CONFIG_IDF_TARGET_ESP32C3)
+    return "esp32c3";
+#elif defined(CONFIG_IDF_TARGET_ESP32S3)
     return "esp32s3";
 #elif defined(CONFIG_IDF_TARGET_ESP32)
     return "esp32";
 #else
     String model = normalizeChipFamilyToken(ESP.getChipModel());
+    if (model.indexOf("esp32c3") >= 0) {
+        return "esp32c3";
+    }
     if (model.indexOf("esp32s3") >= 0) {
         return "esp32s3";
     }
@@ -408,20 +425,24 @@ void OtaManager::loop() {
     if (!pendingInstallVersion_.isEmpty() && !busy_ && !releaseRefreshInProgress_) {
         pendingReleaseRefresh_ = false;
         releaseRefreshAttemptsRemaining_ = 0;
-        const String version = pendingInstallVersion_;
-        const String assetName = pendingInstallAssetName_;
-        const String assetUrl = pendingInstallAssetUrl_;
-        pendingInstallVersion_ = "";
-        pendingInstallAssetName_ = "";
-        pendingInstallAssetUrl_ = "";
-        runVersionTask(version, assetName, assetUrl);
+        busy_ = true;
+        const BaseType_t created = xTaskCreatePinnedToCore(
+            installTaskEntry, "ota-install", OTA_NETWORK_TASK_STACK_BYTES, this, 1, &installTaskHandle_, 0);
+        if (created != pdPASS) {
+            busy_ = false;
+            pendingInstallVersion_ = "";
+            pendingInstallAssetName_ = "";
+            pendingInstallAssetUrl_ = "";
+            lastMessage_ = "Unable to start background firmware install.";
+            syncAppState("error", lastMessage_);
+        }
         return;
     }
     if (pendingReleaseRefresh_ && !busy_ && !releaseRefreshInProgress_ &&
         static_cast<long>(millis() - releaseRefreshNextAttemptAtMs_) >= 0) {
         releaseRefreshInProgress_ = true;
         const BaseType_t created = xTaskCreatePinnedToCore(
-            releaseRefreshTaskEntry, "ota-release-check", 12288, this, 1, &releaseRefreshTaskHandle_, 0);
+            releaseRefreshTaskEntry, "ota-release-check", OTA_NETWORK_TASK_STACK_BYTES, this, 1, &releaseRefreshTaskHandle_, 0);
         if (created != pdPASS) {
             releaseRefreshInProgress_ = false;
             pendingReleaseRefresh_ = false;
@@ -435,15 +456,13 @@ void OtaManager::loop() {
         const bool applyAfterCheck = pendingApply_;
         pendingCheck_ = false;
         pendingApply_ = false;
-        if (applyAfterCheck) {
-            runTask(true);
-            return;
-        }
         busy_ = true;
+        checkTaskApplyAfterCheck_ = applyAfterCheck;
         const BaseType_t created = xTaskCreatePinnedToCore(
-            checkTaskEntry, "ota-version-check", 12288, this, 1, &checkTaskHandle_, 0);
+            checkTaskEntry, "ota-version-check", OTA_NETWORK_TASK_STACK_BYTES, this, 1, &checkTaskHandle_, 0);
         if (created != pdPASS) {
             busy_ = false;
+            checkTaskApplyAfterCheck_ = false;
             lastMessage_ = "Unable to start background firmware check.";
             syncAppState("error", lastMessage_);
         }
@@ -453,14 +472,32 @@ void OtaManager::loop() {
 void OtaManager::releaseRefreshTaskEntry(void* context) {
     OtaManager* manager = static_cast<OtaManager*>(context);
     manager->runReleaseRefreshTask();
+    logOtaTaskStack("release refresh");
     manager->releaseRefreshTaskHandle_ = nullptr;
     vTaskDelete(nullptr);
 }
 
 void OtaManager::checkTaskEntry(void* context) {
     OtaManager* manager = static_cast<OtaManager*>(context);
-    manager->runTask(false);
+    const bool applyAfterCheck = manager->checkTaskApplyAfterCheck_;
+    manager->checkTaskApplyAfterCheck_ = false;
+    manager->runTask(applyAfterCheck);
+    logOtaTaskStack(applyAfterCheck ? "check and install" : "version check");
     manager->checkTaskHandle_ = nullptr;
+    vTaskDelete(nullptr);
+}
+
+void OtaManager::installTaskEntry(void* context) {
+    OtaManager* manager = static_cast<OtaManager*>(context);
+    const String version = manager->pendingInstallVersion_;
+    const String assetName = manager->pendingInstallAssetName_;
+    const String assetUrl = manager->pendingInstallAssetUrl_;
+    manager->pendingInstallVersion_ = "";
+    manager->pendingInstallAssetName_ = "";
+    manager->pendingInstallAssetUrl_ = "";
+    manager->runVersionTask(version, assetName, assetUrl);
+    logOtaTaskStack("selected install");
+    manager->installTaskHandle_ = nullptr;
     vTaskDelete(nullptr);
 }
 
@@ -886,7 +923,11 @@ bool OtaManager::selectReleaseOption(const String& optionLabel, String& error) {
         error = "Select a firmware release first.";
         return false;
     }
-    if (!fetchAvailableReleases(false, error)) {
+    // Selection is called from the main loop's deferred-action service. Never
+    // perform HTTPS here; require the already-backgrounded refresh to populate
+    // a current cache first.
+    if (releaseCache_.empty() || (millis() - releasesFetchedAtMs_) >= RELEASE_CACHE_TTL_MS) {
+        error = "Firmware release list is not ready. Run Check Firmware Releases first.";
         return false;
     }
 
@@ -1057,6 +1098,10 @@ String OtaManager::pendingInstallVersion() const {
     return selectedVersion_;
 }
 
+bool OtaManager::isBusy() const {
+    return busy_ || localUploadStarted_ || pendingApply_ || installTaskHandle_ != nullptr;
+}
+
 void OtaManager::runVersionTask(const String& version, const String& assetName, const String& assetUrl) {
     busy_ = true;
     selectedVersion_ = version;
@@ -1154,49 +1199,14 @@ bool OtaManager::fetchAvailableReleases(bool refresh, String& error) {
         return false;
     }
 
-    WiFiClientSecure client;
-    HTTPClient http;
-    const int code = beginAndGet(
-        http,
-        client,
-        githubApiReleasesUrl(settings_),
-        settings_.ota.allowInsecureTls,
-        10000,
-        [](HTTPClient& request) {
-            request.addHeader("Accept", "application/vnd.github+json");
-            request.addHeader("User-Agent", String(APP_NAME "/" APP_VERSION));
-            request.addHeader("X-GitHub-Api-Version", "2022-11-28");
-        });
-    if (code == HTTPC_ERROR_CONNECTION_REFUSED) {
-        error = "Could not open GitHub releases API.";
-        return false;
-    }
-    if (code != HTTP_CODE_OK) {
-        error = httpErrorWithDetail(http, "GitHub API error: HTTP ", code);
-        http.end();
-        return false;
-    }
-
-    JsonDocument filter;
-    JsonObject releaseFilter = filter[0].to<JsonObject>();
-    releaseFilter["tag_name"] = true;
-    releaseFilter["name"] = true;
-    releaseFilter["draft"] = true;
-    releaseFilter["prerelease"] = true;
-    releaseFilter["published_at"] = true;
-    JsonObject assetFilter = releaseFilter["assets"][0].to<JsonObject>();
-    assetFilter["name"] = true;
-    assetFilter["browser_download_url"] = true;
-
-    JsonDocument doc;
-    const DeserializationError parseError = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
-    http.end();
-    if (parseError != DeserializationError::Ok) {
-        error = String("GitHub response parse failed: ") + parseError.c_str();
-        return false;
-    }
-    if (!doc.is<JsonArray>()) {
-        error = "GitHub response format invalid.";
+    GithubReleaseClient releaseClient;
+    std::vector<GithubReleaseMetadata> githubReleases;
+    if (!releaseClient.fetch(
+            settings_.ota.owner,
+            settings_.ota.repository,
+            settings_.ota.allowInsecureTls,
+            githubReleases,
+            error)) {
         return false;
     }
 
@@ -1204,31 +1214,28 @@ bool OtaManager::fetchAvailableReleases(bool refresh, String& error) {
     latestVersion_ = "";
     const String currentVersion = normalizeVersion(APP_VERSION);
     const String installedAssetName = currentReleaseAssetName(settings_);
-    for (JsonObjectConst release : doc.as<JsonArrayConst>()) {
-        if (release["draft"] | false) {
-            continue;
-        }
-
-        const String releaseTag = normalizeVersion(String(static_cast<const char*>(release["tag_name"] | "")));
+    for (const GithubReleaseMetadata& release : githubReleases) {
+        const String releaseTag = normalizeVersion(release.tag);
         if (releaseTag.isEmpty()) {
             continue;
         }
-        const String releaseName = String(static_cast<const char*>(release["name"] | ""));
-        const String publishedAt = String(static_cast<const char*>(release["published_at"] | ""));
-        const bool prerelease = release["prerelease"] | false;
+        const String releaseName = release.name;
+        const String publishedAt = release.publishedAt;
+        const bool prerelease = release.prerelease;
         if (latestVersion_.isEmpty() && !prerelease) {
             latestVersion_ = releaseTag;
         }
 
         bool matchedAsset = false;
-        for (JsonObjectConst asset : release["assets"].as<JsonArrayConst>()) {
-            const String assetName = String(static_cast<const char*>(asset["name"] | ""));
+        for (const String& assetName : release.assetNames) {
             if (!hasBinExtension(assetName)) {
                 continue;
             }
 
             const String chipFamily = chipFamilyForAssetName(assetName);
-            if (!isCompatibleChipFamily(chipFamily)) {
+            // Release assets must identify their chip family in the filename.
+            // A generic firmware.bin cannot be proven safe for this device.
+            if (chipFamily.isEmpty() || !isCompatibleChipFamily(chipFamily)) {
                 continue;
             }
 
@@ -1237,10 +1244,7 @@ bool OtaManager::fetchAvailableReleases(bool refresh, String& error) {
             item.name = releaseName;
             item.publishedAt = publishedAt;
             item.assetName = assetName;
-            item.assetUrl = String(static_cast<const char*>(asset["browser_download_url"] | ""));
-            if (item.assetUrl.isEmpty()) {
-                item.assetUrl = githubReleaseAssetUrl(settings_, releaseTag, assetName);
-            }
+            item.assetUrl = githubReleaseAssetUrl(settings_, releaseTag, assetName);
             item.variantLabel = variantLabelForAssetName(assetName);
             item.chipFamily = chipFamily;
             item.prerelease = prerelease;
@@ -1280,7 +1284,7 @@ bool OtaManager::fetchAvailableReleases(bool refresh, String& error) {
 }
 
 bool OtaManager::resolveVersionResult(const String& version, const String& assetName, CheckResult& result, String& error) {
-    if (!fetchAvailableReleases(true, error)) {
+    if (!fetchAvailableReleases(false, error)) {
         return false;
     }
 
@@ -1390,43 +1394,30 @@ OtaManager::CheckResult OtaManager::checkNow() {
             return result;
         }
     } else {
-        const int code = beginAndGet(
-            http,
-            client,
-            githubApiLatestUrl(settings_),
-            settings_.ota.allowInsecureTls,
-            10000,
-            [](HTTPClient& request) {
-                request.addHeader("Accept", "application/vnd.github+json");
-                request.addHeader("User-Agent", String(APP_NAME "/" APP_VERSION));
-            });
-        if (code == HTTPC_ERROR_CONNECTION_REFUSED) {
-            result.message = "Failed to open GitHub releases API";
+        String error;
+        if (!fetchAvailableReleases(false, error)) {
+            result.message = error;
             return result;
         }
-        if (code != HTTP_CODE_OK) {
-            result.message = httpErrorWithDetail(http, "GitHub API HTTP ", code);
-            http.end();
-            return result;
-        }
-        JsonDocument doc;
-        if (deserializeJson(doc, http.getString()) != DeserializationError::Ok) {
-            result.message = "GitHub release parse failed";
-            http.end();
-            return result;
-        }
-        http.end();
-        result.latestVersion = normalizeVersion(String(static_cast<const char*>(doc["tag_name"] | "")));
-        result.assetName = releaseAssetNameForVersion(settings_, result.latestVersion);
-        for (JsonObject asset : doc["assets"].as<JsonArray>()) {
-            const String name = String(static_cast<const char*>(asset["name"] | ""));
-            if (name == result.assetName) {
-                result.assetUrl = String(static_cast<const char*>(asset["browser_download_url"] | ""));
+
+        result.latestVersion = latestVersion_;
+        const String preferredAsset = releaseAssetNameForVersion(settings_, result.latestVersion);
+        const ReleaseInfo* fallback = nullptr;
+        for (const ReleaseInfo& release : releaseCache_) {
+            if (release.tag != result.latestVersion) {
+                continue;
+            }
+            if (fallback == nullptr) {
+                fallback = &release;
+            }
+            if (release.assetName == preferredAsset) {
+                fallback = &release;
                 break;
             }
         }
-        if (result.assetUrl.isEmpty()) {
-            result.assetUrl = githubReleaseAssetUrl(settings_, result.latestVersion, result.assetName);
+        if (fallback != nullptr) {
+            result.assetName = fallback->assetName;
+            result.assetUrl = fallback->assetUrl;
         }
     }
 

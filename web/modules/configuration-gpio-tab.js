@@ -21,6 +21,7 @@ export function createConfigurationGpioTab({
   syncGpioMappingControls,
   loadStatus,
   handleError,
+  isPcDesignerRuntime = false,
 }) {
   const GPIO_LEGEND_ITEMS = {
     free: {
@@ -127,6 +128,49 @@ export function createConfigurationGpioTab({
       return;
     }
     const { force = false } = options;
+    const compiledBoard = String(status?.hardware?.boardProfile || "").trim();
+    if (isPcDesignerRuntime) {
+      // The EXE keeps the complete board catalog. Autodetect may temporarily
+      // disable manual selection, but unticking it must immediately expose the
+      // full list so one concrete board can be baked into the firmware.
+      const autodetectEnabled = Boolean(elements.gpioBoardAutodetect?.checked);
+      elements.gpioBoardSelector.disabled = autodetectEnabled;
+      elements.gpioBoardSelector.title = autodetectEnabled
+        ? "Board autodetect is on. Untick Board Autodetect to choose a board manually."
+        : "Choose the concrete board to include in the generated firmware.";
+      if (elements.gpioBoardAutodetect) {
+        elements.gpioBoardAutodetect.disabled = false;
+        elements.gpioBoardAutodetect.title = "Automatically choose a compatible board from the detected target chip.";
+        const autodetectLabel = elements.gpioBoardAutodetect.closest("label");
+        autodetectLabel?.removeAttribute("hidden");
+        if (autodetectLabel) {
+          autodetectLabel.title = "Automatically choose a compatible board from the detected target chip.";
+        }
+      }
+      const selectedBoard = String(elements.gpioBoardSelector.value || "");
+      if (!selectedBoard || !gpioBoardLayouts[selectedBoard]) {
+        elements.gpioBoardSelector.value = "esp32-s3-super-mini";
+      }
+      return;
+    }
+    if (!isPcDesignerRuntime && compiledBoard && gpioBoardLayouts[compiledBoard]) {
+      for (const option of [...elements.gpioBoardSelector.options]) {
+        if (option.value !== compiledBoard) {
+          option.remove();
+        }
+      }
+      elements.gpioBoardSelector.value = compiledBoard;
+      elements.gpioBoardSelector.disabled = true;
+      if (elements.gpioBoardAutodetect) {
+        elements.gpioBoardAutodetect.checked = false;
+        elements.gpioBoardAutodetect.disabled = true;
+        elements.gpioBoardAutodetect.closest("label")?.setAttribute("hidden", "");
+      }
+      const ui = ensureUiSettings();
+      ui.gpioBoardAutodetect = false;
+      ui.gpioBoardSelection = compiledBoard;
+      return;
+    }
     const autodetectEnabled = Boolean(elements.gpioBoardAutodetect?.checked ?? true);
     elements.gpioBoardSelector.disabled = autodetectEnabled;
     if (!autodetectEnabled) {

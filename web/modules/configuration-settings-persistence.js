@@ -1,3 +1,5 @@
+import { normalizeWifiPower, renderWifiPowerValues } from "./wifi-power-controls.js";
+
 export function createConfigurationSettingsPersistenceModule({
   state,
   elements,
@@ -60,6 +62,7 @@ export function createConfigurationSettingsPersistenceModule({
   savePeripheralHelperBindings,
   resetWifiNetworkList,
   restoreGpioBoardPreferences,
+  updateGpioBoardSelectorMode,
   applyBackupUiState,
 }) {
   function settingsSubsetMatches(actual, expected) {
@@ -135,6 +138,9 @@ export function createConfigurationSettingsPersistenceModule({
 
   function fillForm(data) {
     state.settingsLoading = true;
+    data.wifi ||= {};
+    data.wifi.staTxPowerDbm = normalizeWifiPower(data.wifi.staTxPowerDbm);
+    data.wifi.apTxPowerDbm = normalizeWifiPower(data.wifi.apTxPowerDbm);
     data.audio ||= {};
     data.audio.lastPlayback ||= {};
     if (data.audio.rememberLastPlayed === undefined) {
@@ -238,6 +244,7 @@ export function createConfigurationSettingsPersistenceModule({
     populateButtonActionSelects();
     syncPeripheralProfilesFromSettings(data);
     syncPageSections(data);
+    renderWifiPowerValues();
     state.settingsDirty = false;
     state.settingsLoading = false;
   }
@@ -261,6 +268,9 @@ export function createConfigurationSettingsPersistenceModule({
     payload.oled ||= {};
     payload.sd ||= {};
     payload.effects ||= {};
+    payload.wifi ||= {};
+    payload.wifi.staTxPowerDbm = normalizeWifiPower(payload.wifi.staTxPowerDbm);
+    payload.wifi.apTxPowerDbm = normalizeWifiPower(payload.wifi.apTxPowerDbm);
 
     payload.mqtt.port = Number(payload.mqtt.port || 1883);
     payload.device.savedVolumePercent = Number(elements.volumeSlider?.value || payload.device.savedVolumePercent || 5);
@@ -312,6 +322,7 @@ export function createConfigurationSettingsPersistenceModule({
       return;
     }
     state.settingsDirty = true;
+    state.settingsEditRevision = Number(state.settingsEditRevision || 0) + 1;
     if (state.settingsSaveTimer) {
       window.clearTimeout(state.settingsSaveTimer);
     }
@@ -335,6 +346,11 @@ export function createConfigurationSettingsPersistenceModule({
     } = options;
 
     const previousSettings = state.settings;
+    const submittedRevision = Number(state.settingsEditRevision || 0);
+    // The PC Designer already owns the authoritative in-memory form state.
+    // Rebuilding every control and polling the loopback backend after each
+    // keystroke/change interrupts open selects and makes clicks feel lost.
+    const lightweightAutosave = silent && document.body.classList.contains("local-builder-mode");
     submittedSettings.sd ||= {};
     applyPeripheralProfileSelections(submittedSettings);
     submittedSettings.ui = normalizeUiSettings(submittedSettings.ui);
@@ -356,32 +372,36 @@ export function createConfigurationSettingsPersistenceModule({
         state.batteryMeasuredVoltageInput = submittedSettings.battery?.measuredVoltage > 0
           ? Number(submittedSettings.battery.measuredVoltage).toFixed(3)
           : "";
-        fillForm(submittedSettings);
-        applyBackupUiState({
-          gpioBoard: {
-            autodetect: submittedSettings.ui.gpioBoardAutodetect,
-            selectedBoard: submittedSettings.ui.gpioBoardSelection,
-          },
-          peripheralDiagramPositions: submittedSettings.ui.peripheralDiagramPositions,
-        });
-        renderEffectFileOptions(submittedSettings);
-        state.settingsDirty = false;
-        setMessage(successMessage);
-        if (toastMessage) {
-          toast(toastMessage);
+        if (Number(state.settingsEditRevision || 0) === submittedRevision) {
+          state.settingsDirty = false;
         }
-
-        loadStatus().catch((error) => console.error(error));
-        refreshSettingsAfterSave(submittedSettings).catch((error) => console.error(error));
-        if (sdSettingsChanged(previousSettings, submittedSettings)) {
-          clearEffectFileOptionsCache();
+        if (!lightweightAutosave) {
+          fillForm(submittedSettings);
+          applyBackupUiState({
+            gpioBoard: {
+              autodetect: submittedSettings.ui.gpioBoardAutodetect,
+              selectedBoard: submittedSettings.ui.gpioBoardSelection,
+            },
+            peripheralDiagramPositions: submittedSettings.ui.peripheralDiagramPositions,
+          });
           renderEffectFileOptions(submittedSettings);
-        }
-        if (activeTabName() === "storage-external") {
-          if (state.activeStorageTarget === "sd") {
-            refreshExternalStorageTab(state.currentStoragePathByTarget.sd || "/").catch((error) => console.error(error));
-          } else {
-            rerenderStorageManager("sd");
+          setMessage(successMessage);
+          if (toastMessage) {
+            toast(toastMessage);
+          }
+
+          loadStatus().catch((error) => console.error(error));
+          refreshSettingsAfterSave(submittedSettings).catch((error) => console.error(error));
+          if (sdSettingsChanged(previousSettings, submittedSettings)) {
+            clearEffectFileOptionsCache();
+            renderEffectFileOptions(submittedSettings);
+          }
+          if (activeTabName() === "storage-external") {
+            if (state.activeStorageTarget === "sd") {
+              refreshExternalStorageTab(state.currentStoragePathByTarget.sd || "/").catch((error) => console.error(error));
+            } else {
+              rerenderStorageManager("sd");
+            }
           }
         }
       } finally {
@@ -411,6 +431,7 @@ export function createConfigurationSettingsPersistenceModule({
     state.settings = loadedSettings;
     state.peripheralDiagramPositions = cloneSettingsObject(state.settings.ui.peripheralDiagramPositions) || {};
     restoreGpioBoardPreferences();
+    updateGpioBoardSelectorMode(state.status, { force: true });
     state.batteryMeasuredVoltageInput = Number(state.settings?.battery?.measuredVoltage || 0) > 0
       ? Number(state.settings.battery.measuredVoltage).toFixed(3)
       : "";

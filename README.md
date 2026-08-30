@@ -11,12 +11,25 @@ Project story and current device write-up:
 
 ## Current Release
 
-- Firmware version: `v0.1.40`
+- Firmware version: `v0.1.41`
 - Primary release repository: `elma-iot/ELMA-IoT`
 - GitHub Releases feed: `https://api.github.com/repos/elma-iot/ELMA-IoT/releases`
-- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.40.bin`
+- Default ESP32-S3 HACS asset: `esp32s3-notifier-hacs-v0.1.41.bin`
 
-This is the active development version for the next standard GitHub release.
+The firmware images and portable Windows flasher are available from the [v0.1.41 release](https://github.com/elma-iot/ELMA-IoT/releases/tag/v0.1.41).
+
+### v0.1.41 highlights
+
+- The Wi-Fi tab in ELMA Flasher and Full device firmware has separate STA/AP transmit-power bars (2–19.5 dBm requested). Apply saves the two power values; the device reports the actual driver limit, which can be rounded/capped by the chip. This changes transmit power, not received RSSI. ESP32 uses one radio-wide limit: AP+STA uses the higher request. Lower power can disconnect a weak link.
+- Power selections are included in saved configuration, USB provisioning and compiled Full-image defaults. Existing saved device power values take precedence over OTA defaults; adjust them on the device's Wi-Fi page. Generic release images retain the previous 15 dBm default. Minimal recovery deliberately uses its maximum recovery-power request and does not overwrite the saved Full configuration.
+- Firmware recovery reboots wait while an OTA write is active. The PC flasher sends 8 KiB chunks, resumes after interrupted acknowledgements, and supports the older ELMA multipart upload endpoint used by v0.1.27.
+- Full/Minimal firmware selection is available beneath Flash connection and Target chip. Compile and Save honors the same selection. Unchanged IP-upload retries reuse a SHA-256-checked compiled image; configuration or source changes invalidate it.
+- Minimal recovery images for ESP32, ESP32-S3 and ESP32-C3 contain Wi-Fi and a small resumable OTA page, omit peripheral modules and board illustrations, disable Wi-Fi sleep, and remove the old STA transmit-power ceiling. They read existing ELMA Wi-Fi configuration without rewriting the saved `notifier` NVS namespace. Install Minimal over OTA, then replace it with Full firmware for the same chip; it is not a normal operating image.
+- The flasher supports non-blocking LAN discovery, target-chip checks, confirmation before replacing foreign firmware, and cancellation at safe transfer boundaries. Tasmota/ESPHome configuration import provides a reviewable migration path; ESPHome GPIO mapping requires its source YAML rather than guessing hidden configuration from the running device.
+- Configuration files have native Open, Save and Save As workflows; the board autodetect control is visible and manual selection remains available in the EXE. Device firmware includes only the selected board illustration while retaining compatible peripherals.
+- Motor/control assignment, state reporting and web-edit responsiveness fixes are included, together with separated GitHub release and firmware-web handlers.
+
+Recovery note: the smaller image helps weak links but cannot repair antenna, power-supply or access-point faults. Back up configuration before updating. These builds are compile/regression tested; a successful build is not a live-device OTA guarantee.
 
 ### v0.1.40 development highlights
 
@@ -586,18 +599,22 @@ Current OTA and rollback behavior:
 The Firmware tab checks GitHub Releases by default and matches the expected asset name to the running build variant.
 
 
-Release asset names for `v0.1.40`:
+Release asset names for `v0.1.41`:
 
-- `esp32-notifier-v0.1.40.bin`
-- `esp32-notifier-hacs-v0.1.40.bin`
-- `esp32-notifier-hacs-slim-v0.1.40.bin`
-- `esp32s3-notifier-v0.1.40.bin`
-- `esp32s3-notifier-hacs-v0.1.40.bin`
-- `esp32s3-notifier-hacs-slim-v0.1.40.bin`
-- `esp32c3-notifier-hacs-v0.1.40.bin`
-- `ELMA-Flasher-v0.1.40.exe`
+- `esp32-notifier-v0.1.41.bin`
+- `esp32-notifier-hacs-v0.1.41.bin`
+- `esp32-notifier-hacs-slim-v0.1.41.bin`
+- `esp32s3-notifier-v0.1.41.bin`
+- `esp32s3-notifier-hacs-v0.1.41.bin`
+- `esp32s3-notifier-hacs-slim-v0.1.41.bin`
+- `esp32c3-notifier-hacs-v0.1.41.bin`
+- `esp32-ota-bridge-v0.1.41.bin`
+- `esp32s3-ota-bridge-v0.1.41.bin`
+- `esp32c3-ota-bridge-v0.1.41.bin`
+- `ELMA-Flasher-v0.1.41.exe`
+- `SHA256SUMS.txt`
 
-GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build the seven supported firmware variants plus the standalone Windows ELMA Flasher and upload all matching assets to that release.
+GitHub release publishing is automated by [.github/workflows/platformio.yml](.github/workflows/platformio.yml): publishing a release triggers CI to build seven full firmware variants, three minimal recovery variants and the Windows flasher. Existing manually verified assets are not overwritten. Full release images use ESP32-WROOM, ESP32-S3 Super Mini and ESP32-C3 board defaults respectively; use the EXE to build for another supported board. Binaries and the EXE are release attachments, not Git source files.
 
 ## Battery Monitoring
 
@@ -676,7 +693,7 @@ Key files and directories:
 
 Current release notes live here:
 
-- [release-assets/v0.1.40/release-notes.md](release-assets/v0.1.40/release-notes.md)
+- [release-assets/v0.1.41/release-notes.md](release-assets/v0.1.41/release-notes.md)
 - [release-assets/v0.1.39/release-notes.md](release-assets/v0.1.39/release-notes.md)
 - [release-assets/v0.1.38/release-notes.md](release-assets/v0.1.38/release-notes.md)
 - [release-assets/v0.1.37/release-notes.md](release-assets/v0.1.37/release-notes.md)

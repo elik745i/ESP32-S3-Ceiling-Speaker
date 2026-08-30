@@ -19,6 +19,7 @@ class OtaManager {
     void setRestartHandler(RestartHandler handler);
     void setRollbackState(bool pendingVerify, const String& pendingVersion, const String& rolledBackVersion, const String& rollbackReason);
     String pendingInstallVersion() const;
+    bool isBusy() const;
     void loop();
     bool triggerCheck(bool applyAfterCheck);
     bool triggerReleaseRefresh(String& error);
@@ -77,6 +78,8 @@ class OtaManager {
     bool releaseRefreshInProgress_ = false;
     TaskHandle_t releaseRefreshTaskHandle_ = nullptr;
     TaskHandle_t checkTaskHandle_ = nullptr;
+    TaskHandle_t installTaskHandle_ = nullptr;
+    bool checkTaskApplyAfterCheck_ = false;
     String releaseRefreshError_;
     String lastMessage_ = "idle";
     String latestVersion_;
@@ -111,6 +114,7 @@ class OtaManager {
     void runReleaseRefreshTask();
     static void releaseRefreshTaskEntry(void* context);
     static void checkTaskEntry(void* context);
+    static void installTaskEntry(void* context);
     void runVersionTask(const String& version, const String& assetName, const String& assetUrl);
     CheckResult checkNow();
     bool fetchAvailableReleases(bool refresh, String& error);

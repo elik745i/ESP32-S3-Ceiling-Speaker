@@ -6,6 +6,7 @@ import { createConfigurationPeripheralsTab } from "./modules/configuration-perip
 import { createConfigurationSettingsPersistenceModule } from "./modules/configuration-settings-persistence.js";
 import { createConfigurationSettingsSnapshotModule } from "./modules/configuration-settings-snapshot.js";
 import { createDeviceTab } from "./modules/device-tab.js";
+import { createDeviceMigrationTab } from "./modules/device-migration-tab.js";
 import { createDisplayTab } from "./modules/display-tab.js";
 import { createFirmwareTab } from "./modules/firmware-tab.js";
 import { createUsbFlasher } from "./modules/usb-flasher.js";
@@ -32,6 +33,14 @@ import { createStorageTab } from "./modules/storage-tab.js";
 import { initTabNavigation } from "./modules/tab-navigation.js";
 import { createUiHistoryModule } from "./modules/ui-history.js";
 import { createWifiTab } from "./modules/wifi-tab.js";
+
+const PC_DESIGNER_RUNTIME = new URLSearchParams(window.location.search).get("elmaRuntime") === "pc-designer";
+if (PC_DESIGNER_RUNTIME) {
+  // Apply this before any status response can render. The PC application owns
+  // the full board catalog; only a firmware compiled for one board may prune
+  // and lock the selector.
+  document.body.classList.add("local-builder-mode");
+}
 
 const state = {
   status: null,
@@ -149,6 +158,7 @@ let configurationPeripheralsTab = null;
 let configurationSettingsPersistenceModule = null;
 let configurationSettingsSnapshotModule = null;
 let deviceTab = null;
+let deviceMigrationTab = null;
 let displayTab = null;
 let effectsTab = null;
 let firmwareTab = null;
@@ -877,6 +887,24 @@ const WS_STATUS_LED_BOARD_PROFILES = new Set(["esp32-s3-super-mini", "esp32-s3-z
 
 const elements = {
   deviceTitle: document.getElementById("deviceTitle"),
+  migrationTabButton: document.getElementById("migrationTabButton"),
+  migrationTab: document.getElementById("tab-migration"),
+  migrationDeviceSelect: document.getElementById("migrationDeviceSelect"),
+  migrationScanButton: document.getElementById("migrationScanButton"),
+  migrationIpAddress: document.getElementById("migrationIpAddress"),
+  migrationUsername: document.getElementById("migrationUsername"),
+  migrationPassword: document.getElementById("migrationPassword"),
+  migrationYamlRow: document.getElementById("migrationYamlRow"),
+  migrationYamlFile: document.getElementById("migrationYamlFile"),
+  migrationYamlLabel: document.getElementById("migrationYamlLabel"),
+  migrationInspectButton: document.getElementById("migrationInspectButton"),
+  migrationDownloadButton: document.getElementById("migrationDownloadButton"),
+  migrationStatus: document.getElementById("migrationStatus"),
+  migrationPreview: document.getElementById("migrationPreviewContent"),
+  migrationPreviewPanel: document.getElementById("migrationPreview"),
+  migrationBoardSelect: document.getElementById("migrationBoardSelect"),
+  migrationBoardReason: document.getElementById("migrationBoardReason"),
+  migrationApplyButton: document.getElementById("migrationApplyButton"),
   heroFirmwareVersion: document.getElementById("heroFirmwareVersion"),
   heroFirmwareChannel: document.getElementById("heroFirmwareChannel"),
   heroFirmwareAuthorLink: document.getElementById("heroFirmwareAuthorLink"),
@@ -1069,9 +1097,18 @@ const elements = {
   localBuilderPanel: document.getElementById("localBuilderPanel"),
   runtimeFirmwarePanel: document.getElementById("runtimeFirmwarePanel"),
   localBuilderBadge: document.getElementById("localBuilderBadge"),
+  localBuilderTransport: document.getElementById("localBuilderTransport"),
   localBuilderChip: document.getElementById("localBuilderChip"),
+  localBuilderFirmwareMode: document.getElementById("localBuilderFirmwareMode"),
   localBuilderPort: document.getElementById("localBuilderPort"),
   localBuilderRefreshPorts: document.getElementById("localBuilderRefreshPorts"),
+  localBuilderUsbTarget: document.getElementById("localBuilderUsbTarget"),
+  localBuilderIpTarget: document.getElementById("localBuilderIpTarget"),
+  localBuilderIpDevice: document.getElementById("localBuilderIpDevice"),
+  localBuilderScanIpDevices: document.getElementById("localBuilderScanIpDevices"),
+  localBuilderIpAddress: document.getElementById("localBuilderIpAddress"),
+  localBuilderIpUsername: document.getElementById("localBuilderIpUsername"),
+  localBuilderIpPassword: document.getElementById("localBuilderIpPassword"),
   localBuilderMaximum: document.getElementById("localBuilderMaximum"),
   localBuilderWebUi: document.getElementById("localBuilderWebUi"),
   localBuilderHacs: document.getElementById("localBuilderHacs"),
@@ -1388,7 +1425,9 @@ configurationPeripheralsTab = createConfigurationPeripheralsTab({
   syncPeripheralBindingGroups,
   syncGpioMappingControls,
   savePeripheralProfileSelections,
-  onPeripheralConfigurationChange: () => motorTab?.render(),
+  onPeripheralConfigurationChange: () => {
+    updateConfiguredFeatureVisibility();
+  },
   queueSettingsSave,
   gpioConfigRoleState,
   setPeripheralHelperBindingValue,
@@ -1419,6 +1458,7 @@ configurationGpioTab = createConfigurationGpioTab({
   syncGpioMappingControls,
   loadStatus,
   handleError,
+  isPcDesignerRuntime: PC_DESIGNER_RUNTIME,
 });
 
 peripheralDiagramWiringModule = createPeripheralDiagramWiringModule({
@@ -1572,6 +1612,7 @@ configurationSettingsPersistenceModule = createConfigurationSettingsPersistenceM
   savePeripheralHelperBindings,
   resetWifiNetworkList,
   restoreGpioBoardPreferences,
+  updateGpioBoardSelectorMode,
   applyBackupUiState,
 });
 
@@ -1592,6 +1633,20 @@ configurationSettingsSnapshotModule = createConfigurationSettingsSnapshotModule(
   normalizedPeripheralStorageProfiles,
   normalizedPeripheralCommunicationProfiles,
   normalizedPeripheralPowerProfiles,
+});
+
+deviceMigrationTab = createDeviceMigrationTab({
+  elements,
+  request,
+  currentSettingsSnapshot,
+  mergeSettingsObjects,
+  applyBackupUiState,
+  applySettingsPayload,
+  activateTabByName,
+  setMessage,
+  toast,
+  handleError,
+  isPcDesignerRuntime: PC_DESIGNER_RUNTIME,
 });
 
 hardwareTab = createHardwareTab({
@@ -1958,12 +2013,18 @@ function updateConfiguredFeatureVisibility() {
   const batteryConfigured = hasConfiguredBatterySensePeripheral();
   const displayConfigured = hasConfiguredDisplayPeripheral();
   const externalStorageConfigured = hasConfiguredExternalStoragePeripheral();
+  const motorConfigured = normalizedPeripheralControlProfiles().some((profile) =>
+    String(profile || "").trim().toLowerCase().includes("motor-driver")
+  );
 
+  setTabVisibility("motor", motorConfigured);
   setTabVisibility("playback", audioConfigured);
   setTabVisibility("effects", audioConfigured);
   setTabVisibility("battery", batteryConfigured);
   setTabVisibility("oled", displayConfigured);
-  setTabVisibility("storage-external", externalStorageConfigured);
+  // The external-storage page is a live device file manager. The PC Designer
+  // can configure SD hardware, but it has no mounted device filesystem.
+  setTabVisibility("storage-external", externalStorageConfigured && !document.body.classList.contains("local-builder-mode"));
 
   const audioStat = elements.audioPill?.closest(".stat");
   if (audioStat) {
@@ -8731,6 +8792,7 @@ function escapeHtml(value) {
 
 function renderStatus(status) {
   statusRenderModule?.renderStatus(status);
+  wifiTab?.renderPowerStatus(status);
   refreshVisibleNativeTouchDiagram(status);
   updateTouchLivePolling();
 }
@@ -8803,15 +8865,9 @@ function setupTabs() {
         syncEffectsPage(state.settings);
       }
 
-      if (resolvedTabName === "motor") {
-        motorTab?.render();
-      }
-
       if (resolvedTabName === "storage-external") {
         storageTab?.maybeRefreshVisibleStorageTab(true);
       }
-
-      uiHistoryModule?.scheduleCapture();
     },
   });
 }
@@ -8867,6 +8923,12 @@ function startStatusPolling(intervalMs = 2000) {
   }
 
   state.statusPollTimer = window.setInterval(() => {
+    // The PC Designer represents a future device and its loopback status is
+    // static. Polling it rebuilt GPIO diagrams, previews, and motor controls
+    // every two seconds, interrupting focused inputs and open dropdowns.
+    if (document.body.classList.contains("local-builder-mode")) {
+      return;
+    }
     loadStatus().catch((error) => console.error(error));
   }, intervalMs);
 }
@@ -9240,6 +9302,10 @@ for (const field of elements.settingsForm.elements) {
   if (!field || !field.name) {
     continue;
   }
+  if (field.hasAttribute("data-wifi-power")) {
+    // Dedicated power controls save only on Apply, never on each drag event.
+    continue;
+  }
 
   if (field.name === "device.savedVolumePercent") {
     continue;
@@ -9401,6 +9467,7 @@ Promise.allSettled([loadStatus(), loadSettings()])
   });
 localBuilder.initialize().catch(handleError);
 window.elmaSaveDesignerSettings = () => saveSettings({ silent: true });
+window.elmaCollectDesignerSettings = () => JSON.stringify(collectForm());
 window.elmaBeginFlashSync = () => {
   if (!desktopFlashView) return;
   elements.localBuilderCompileFlash.disabled = true;

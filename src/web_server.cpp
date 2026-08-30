@@ -1043,6 +1043,7 @@ void WebServerManager::registerApiRoutes() {
         JsonDocument doc;
         JsonObject root = doc.to<JsonObject>();
         appState_->toJson(root);
+        wifiManager_->appendTxPowerStatus(root["network"].as<JsonObject>());
         appendSystemMetricsJson(root);
         root["system"]["webUiLocked"] = webUiLocked_;
         JsonObject firmware = doc["firmware"].to<JsonObject>();
@@ -1456,16 +1457,7 @@ void WebServerManager::registerApiRoutes() {
             sendJson(request, response);
         });
 
-    server_.on("/api/firmware", HTTP_GET, [this](AsyncWebServerRequest* request) {
-        if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {
-            return;
-        }
-        JsonDocument response;
-        String error;
-        const bool refresh = request->hasParam("refresh") && request->getParam("refresh")->value() == "1";
-        otaManager_->appendFirmwareInfoJson(response.to<JsonObject>(), refresh, error);
-        sendJson(request, response);
-    });
+    registerFirmwareRoutes();
 
     server_.on("/api/usb-flasher/manifest", HTTP_GET, [this](AsyncWebServerRequest* request) {
         if (redirectCaptivePortalIfNeeded(request) || !ensureAuthorized(request)) {

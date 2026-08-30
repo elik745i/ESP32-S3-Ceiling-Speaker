@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import base64
 import binascii
+import concurrent.futures
 import contextlib
 import ctypes
+import gzip
+import hashlib
+import http.client
 import io
 import ipaddress
 import json
 import os
 import pathlib
 import queue
+import random
 import re
 import shutil
 import socket
@@ -31,13 +36,17 @@ import webbrowser
 from xml.sax.saxutils import escape as xml_escape
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from tkinter import filedialog, messagebox, ttk
+from typing import Callable
 
 import esptool
 import serial
 from serial.tools import list_ports
+from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
+
+from migration_importer import import_device
 
 
-APP_VERSION = "0.1.40"
+APP_VERSION = "0.1.41"
 WINDOWS_APP_USER_MODEL_ID = "ELMA.IoT.Flasher"
 FLASH_BAUD = 460800
 CONSOLE_BAUD = 115200
@@ -55,6 +64,37 @@ RED = "#b42318"
 GREEN = "#18864b"
 CHIP_FAMILIES = {"esp32": "ESP32", "esp32s3": "ESP32-S3", "esp32c3": "ESP32-C3"}
 CHIP_CHOICES = {"auto": "Auto-detect (recommended)", **CHIP_FAMILIES}
+BOARD_PROFILES = {
+    "esp32-s3-super-mini": (1, "esp32s3"),
+    "esp32-s3-zero": (2, "esp32s3"),
+    "esp32-s3-psram": (3, "esp32s3"),
+    "esp32-spk-n16r8": (4, "esp32s3"),
+    "esp32-s3-devkit-c1": (5, "esp32s3"),
+    "esp32-s3-cam-module": (6, "esp32s3"),
+    "esp32-wrover": (7, "esp32"),
+    "esp32-wroom": (8, "esp32"),
+    "esp32-mini": (9, "esp32"),
+    "wemos-lolin32-mini": (10, "esp32"),
+    "esp32-c3": (11, "esp32c3"),
+}
+DEFAULT_BOARD_PROFILE = {
+    "esp32s3": "esp32-s3-super-mini",
+    "esp32": "esp32-wroom",
+    "esp32c3": "esp32-c3",
+}
+BOARD_ASSET_FILES = {
+    "esp32-s3-super-mini": "esp32-s3-supermini-breadboard.svg",
+    "esp32-s3-zero": "esp32-s3-zero-breadboard.svg",
+    "esp32-s3-psram": "esp32-s3-psram-breadboard.svg",
+    "esp32-spk-n16r8": "esp32-spk-n16r8-breadboard.svg",
+    "esp32-s3-devkit-c1": "esp32-s3-devkit-c1-n8r8-v1-breadboard.svg",
+    "esp32-s3-cam-module": "esp32-s3-cam-module-breadboard.svg",
+    "esp32-wrover": "esp32-wrover-breadboard.svg",
+    "esp32-wroom": "esp32-wroom-breadboard.svg",
+    "esp32-mini": "esp32-mini-breadboard.svg",
+    "wemos-lolin32-mini": "wemos-lolin32-mini-breadboard.svg",
+    "esp32-c3": "esp32-c3-breadboard.svg",
+}
 KNOWN_CHIP_MODELS = {
     "esp32s3": "ESP32-S3",
     "esp32c3": "ESP32-C3",
@@ -196,7 +236,7 @@ def friendly_error(error: BaseException) -> str:
 
 
 class HttpDeviceClient:
-    def __init__(self, host: str, username: str = "", password: str = "") -> None:
+    def __init__(self, host: str, username: str = "", password: str = "", timeout: float = 45) -> None:
         value = host.strip().rstrip("/")
         if not value:
             raise ValueError("Enter the source device IP address.")
@@ -206,18 +246,27 @@ class HttpDeviceClient:
         if parsed.scheme != "http" or not parsed.hostname or parsed.path not in ("", "/"):
             raise ValueError("Use an HTTP device IP or hostname without a path, for example 192.168.1.41.")
         self.base_url = value
+        self.timeout = timeout
         self.authorization = ""
         if username or password:
             token = base64.b64encode(f"{username}:{password}".encode()).decode()
             self.authorization = f"Basic {token}"
 
-    def _request(self, path: str) -> bytes:
+    def _request(
+        self,
+        path: str,
+        method: str = "GET",
+        data: bytes | None = None,
+        content_type: str = "application/json",
+    ) -> bytes:
         headers = {"Accept": "application/json", "User-Agent": f"ELMA-Flasher/{APP_VERSION}"}
+        if data is not None:
+            headers["Content-Type"] = content_type
         if self.authorization:
             headers["Authorization"] = self.authorization
-        request = urllib.request.Request(f"{self.base_url}{path}", headers=headers)
+        request = urllib.request.Request(f"{self.base_url}{path}", headers=headers, data=data, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=45) as response:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 return response.read()
         except urllib.error.HTTPError as error:
             detail = error.read().decode("utf-8", "replace")
@@ -231,6 +280,25 @@ class HttpDeviceClient:
         if not isinstance(value, dict):
             raise RuntimeError(f"Source device returned an invalid object for {path}.")
         return value
+
+    def json_request(self, path: str, method: str = "POST", value: dict | None = None) -> dict:
+        data = json.dumps(value or {}, separators=(",", ":")).encode("utf-8")
+        try:
+            result = json.loads(self._request(path, method=method, data=data).decode("utf-8"))
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"Destination device returned invalid JSON for {path}.") from error
+        if not isinstance(result, dict):
+            raise RuntimeError(f"Destination device returned an invalid object for {path}.")
+        return result
+
+    def put_binary(self, path: str, data: bytes) -> dict:
+        try:
+            result = json.loads(self._request(path, method="PUT", data=data, content_type="application/octet-stream").decode("utf-8"))
+        except json.JSONDecodeError as error:
+            raise RuntimeError("Destination device returned an invalid OTA chunk acknowledgement.") from error
+        if not isinstance(result, dict):
+            raise RuntimeError("Destination device returned an invalid OTA chunk acknowledgement.")
+        return result
 
     def binary(self, path: str, expected_size: int = 0) -> bytes:
         data = self._request(path)
@@ -277,6 +345,7 @@ def default_designer_settings() -> dict:
         "wifi": {
             "ssid": "", "password": "", "apSsid": "", "apPassword": "",
             "apFallbackEnabled": True, "useStaticIp": False, "staticIp": "",
+            "staTxPowerDbm": 15.0, "apTxPowerDbm": 15.0,
             "gateway": "", "subnet": "255.255.255.0", "dns1": "", "dns2": "",
         },
         "mqtt": {
@@ -291,7 +360,7 @@ def default_designer_settings() -> dict:
         "webAuth": {"enabled": False, "username": "admin", "password": ""},
         "effects": {},
         "ui": {
-            "gpioBoardAutodetect": False, "gpioBoardSelection": "esp32-c3",
+            "gpioBoardAutodetect": True, "gpioBoardSelection": "esp32-c3",
             "peripheralDiagramPositions": {}, "peripheralHelperBindings": {},
             "peripheralProfiles": {
                 "audioProfile": "none", "audioProfiles": ["none"], "audioInProfile": "none",
@@ -314,6 +383,14 @@ class DesignerJob:
         self.error = ""
         self.ip_address = ""
         self.cancelled = False
+        self.cancel_deferred = False
+        self.phase = "queued"
+        self.transport = "usb"
+        self.target_kind = ""
+        self.target_version = ""
+        self.critical_flash = False
+        self.upload_session_id = ""
+        self.network_client: HttpDeviceClient | None = None
         self.process: subprocess.Popen | None = None
         self.profile = ""
         self.application_bytes = 0
@@ -337,6 +414,8 @@ class DesignerJob:
             "flashCapacityBytes": self.flash_capacity_bytes,
             "ramUsedBytes": self.ram_used_bytes, "ramTotalBytes": self.ram_total_bytes,
             "firmwareFile": self.firmware_file,
+            "phase": self.phase, "transport": self.transport,
+            "targetKind": self.target_kind, "cancelDeferred": self.cancel_deferred,
         }
 
 
@@ -347,13 +426,18 @@ class DesignerServer:
         self.httpd: ThreadingHTTPServer | None = None
         self.thread: threading.Thread | None = None
         self.url = ""
-        self.settings = self.load_designer_settings()
+        self.settings_lock = threading.RLock()
+        default_path = self.settings_path()
+        self.active_settings_path: pathlib.Path | None = default_path if default_path.is_file() else None
+        self.settings = self.load_designer_settings(self.active_settings_path)
         self.jobs: dict[str, DesignerJob] = {}
         self.lock = threading.Lock()
         self.pc_wifi_connected = False
         self.pc_wifi_ssid = ""
         self.pc_mqtt_connected = False
         self.settings_save_revision = 0
+        self.settings_saved_revision = 0
+        self.network_device_cache: dict[str, dict] = {}
 
     def web_root(self) -> pathlib.Path:
         bundled = resource_path("web")
@@ -375,53 +459,115 @@ class DesignerServer:
         return DesignerServer.portable_home() / "ELMA-Flasher.config.json"
 
     @staticmethod
+    def application_state_path() -> pathlib.Path:
+        return DesignerServer.portable_home() / "ELMA-Flasher.state.json"
+
+    @staticmethod
     def settings_persistence_enabled() -> bool:
         return not any(argument.endswith("-test") for argument in sys.argv[1:])
 
-    def load_designer_settings(self) -> dict:
+    @staticmethod
+    def merge_settings(target: dict, source: dict) -> None:
+        for key, value in source.items():
+            if isinstance(value, dict) and isinstance(target.get(key), dict):
+                DesignerServer.merge_settings(target[key], value)
+            else:
+                target[key] = value
+
+    def load_designer_settings(self, path: pathlib.Path | None = None) -> dict:
         defaults = default_designer_settings()
-        if not self.settings_persistence_enabled():
+        if not self.settings_persistence_enabled() or path is None:
             return defaults
-        path = self.settings_path()
         try:
             saved = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(saved, dict) and isinstance(saved.get("settings"), dict):
+                saved = saved["settings"]
             if not isinstance(saved, dict):
                 return defaults
         except (OSError, json.JSONDecodeError):
             return defaults
 
-        def merge(target: dict, source: dict) -> None:
-            for key, value in source.items():
-                if isinstance(value, dict) and isinstance(target.get(key), dict):
-                    merge(target[key], value)
-                else:
-                    target[key] = value
-
-        merge(defaults, saved)
+        self.merge_settings(defaults, saved)
         return defaults
 
-    def save_designer_settings(self) -> None:
+    def open_configuration(self, path: pathlib.Path) -> None:
+        resolved = path.expanduser().resolve()
+        try:
+            raw = json.loads(resolved.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise ValueError(f"Configuration JSON is invalid: {error.msg}.") from error
+        except OSError as error:
+            raise ValueError(f"Configuration file could not be opened: {error}.") from error
+        if isinstance(raw, dict) and isinstance(raw.get("settings"), dict):
+            raw = raw["settings"]
+        if not isinstance(raw, dict):
+            raise ValueError("Configuration file must contain a JSON object.")
+        settings = default_designer_settings()
+        self.merge_settings(settings, raw)
+        with self.settings_lock:
+            self.settings = settings
+            self.active_settings_path = resolved
+            self.settings_save_revision += 1
+            self.settings_saved_revision = self.settings_save_revision
+        self.remember_configuration_directory(resolved.parent)
+
+    def save_designer_settings(self, settings: dict | None = None, path: pathlib.Path | None = None) -> pathlib.Path:
         if not self.settings_persistence_enabled():
-            return
-        path = self.settings_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(self.settings, indent=2), encoding="utf-8")
-        temporary.replace(path)
+            return path or self.active_settings_path or self.settings_path()
+        destination = (path or self.active_settings_path)
+        if destination is None:
+            raise ValueError("Choose a name for the configuration before saving.")
+        destination = destination.expanduser().resolve()
+        with self.settings_lock:
+            snapshot = json.loads(json.dumps(settings if settings is not None else self.settings))
+            revision = self.settings_save_revision
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+        temporary.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+        temporary.replace(destination)
+        with self.settings_lock:
+            self.active_settings_path = destination
+            if revision == self.settings_save_revision:
+                self.settings_saved_revision = revision
+        self.remember_configuration_directory(destination.parent)
+        return destination
 
     def save_designer_settings_async(self) -> None:
-        """Coalesce edits and write away from the HTTP/UI response thread."""
-        self.settings_save_revision += 1
-        revision = self.settings_save_revision
+        """Mark the named document dirty; File/Save controls disk persistence."""
+        with self.settings_lock:
+            self.settings_save_revision += 1
 
-        def save_latest() -> None:
-            time.sleep(0.12)
-            if revision != self.settings_save_revision:
-                return
-            with contextlib.suppress(OSError, TypeError):
-                self.save_designer_settings()
+    def configuration_dirty(self) -> bool:
+        with self.settings_lock:
+            return self.settings_save_revision != self.settings_saved_revision
 
-        threading.Thread(target=save_latest, daemon=True, name="ELMA config autosave").start()
+    def last_configuration_directory(self) -> pathlib.Path:
+        fallback = self.portable_home()
+        try:
+            payload = json.loads(self.application_state_path().read_text(encoding="utf-8"))
+            saved = pathlib.Path(str(payload.get("lastConfigurationDirectory", ""))).expanduser()
+            if saved.is_dir():
+                return saved.resolve()
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            pass
+        return fallback.resolve()
+
+    def remember_configuration_directory(self, directory: pathlib.Path) -> None:
+        if not self.settings_persistence_enabled() or not directory.is_dir():
+            return
+        path = self.application_state_path()
+        payload = {}
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                payload = loaded
+        except (OSError, json.JSONDecodeError):
+            pass
+        payload["lastConfigurationDirectory"] = str(directory.resolve())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        temporary.replace(path)
 
     @staticmethod
     def generated_firmware_directory() -> pathlib.Path:
@@ -430,7 +576,9 @@ class DesignerServer:
         return pathlib.Path(__file__).resolve().parents[2] / "release-assets" / f"v{APP_VERSION}"
 
     @staticmethod
-    def generated_firmware_name(family: str, capabilities: dict) -> str:
+    def generated_firmware_name(family: str, capabilities: dict, firmware_mode: str = "full") -> str:
+        if firmware_mode == "minimal":
+            return f"{family}-ota-bridge-v{APP_VERSION}.bin"
         suffix = "-hacs" if bool(capabilities.get("hacs", True)) else ""
         if not bool(capabilities.get("webUi", True)):
             suffix += "-slim"
@@ -442,14 +590,32 @@ class DesignerServer:
         source = resource_path("builder_project")
         target = pathlib.Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "ELMA IoT" / "Flasher" / f"builder-{APP_VERSION}"
         marker = target / ".elma-builder-ready"
-        if not marker.is_file():
+        digest = hashlib.sha256()
+        for path in sorted((item for item in source.rglob("*") if item.is_file()), key=lambda item: item.relative_to(source).as_posix()):
+            relative = path.relative_to(source).as_posix().encode("utf-8")
+            digest.update(len(relative).to_bytes(4, "big"))
+            digest.update(relative)
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        expected_marker = digest.hexdigest()
+        try:
+            current_marker = marker.read_text(encoding="utf-8").strip()
+        except OSError:
+            current_marker = ""
+        if current_marker != expected_marker:
             target.mkdir(parents=True, exist_ok=True)
             for name in ("src", "include", "scripts", "partitions", "web"):
-                shutil.copytree(source / name, target / name, dirs_exist_ok=True)
+                destination = target / name
+                if destination.exists():
+                    shutil.rmtree(destination)
+                shutil.copytree(source / name, destination)
             for name in ("platformio.ini", "sdkconfig.defaults", "package.json", "package-lock.json"):
                 if (source / name).is_file():
                     shutil.copy2(source / name, target / name)
-            marker.write_text(APP_VERSION, encoding="utf-8")
+            temporary_marker = marker.with_suffix(".tmp")
+            temporary_marker.write_text(expected_marker, encoding="utf-8")
+            temporary_marker.replace(marker)
         return target
 
     def compiler_command(self) -> list[str]:
@@ -460,6 +626,425 @@ class DesignerServer:
         if found:
             return [found]
         raise RuntimeError("The portable compiler core is missing. Reinstall ELMA Flasher or use the complete release package.")
+
+    @staticmethod
+    def terminate_job_process(job: DesignerJob) -> None:
+        process = job.process
+        if process is None or process.poll() is not None:
+            return
+        if sys.platform == "win32":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                check=False,
+            )
+        else:
+            process.terminate()
+
+    @staticmethod
+    def chip_family_from_label(value: object) -> str:
+        label = str(value or "").strip().lower().replace("-", "")
+        if "esp32c6" in label or "esp32s2" in label:
+            return ""
+        if "esp32s3" in label or label == "s3":
+            return "esp32s3"
+        if "esp32c3" in label or label == "c3":
+            return "esp32c3"
+        if "esp32" in label:
+            return "esp32"
+        return ""
+
+    def probe_network_device(self, payload: dict, timeout: float = 2.0) -> dict:
+        host = str(payload.get("ip", "")).strip()
+        username = str(payload.get("username", ""))
+        password = str(payload.get("password", ""))
+        client = HttpDeviceClient(host, username, password, timeout=timeout)
+        ip_value = urllib.parse.urlparse(client.base_url).hostname or host
+        cached = self.network_device_cache.get(ip_value)
+        if cached and cached.get("kind") == "esphome" and cached.get("chip"):
+            return dict(cached)
+
+        try:
+            status = client.json("/api/status")
+            firmware = status.get("firmware", {}) if isinstance(status, dict) else {}
+            chip = self.chip_family_from_label(firmware.get("chipFamily"))
+            if chip:
+                system = status.get("system", {}) if isinstance(status.get("system"), dict) else {}
+                return {
+                    "ip": ip_value,
+                    "kind": "elma",
+                    "name": str(system.get("hostname") or system.get("deviceName") or "ELMA device"),
+                    "version": str(firmware.get("version", "")),
+                    "chip": chip,
+                    "upload": "elma-chunked-ota",
+                }
+        except (RuntimeError, OSError, urllib.error.URLError):
+            pass
+
+        try:
+            tasmota = client.json("/cm?cmnd=Status%200")
+            firmware = tasmota.get("StatusFWR", {}) if isinstance(tasmota, dict) else {}
+            chip = self.chip_family_from_label(firmware.get("Hardware") or firmware.get("ESP"))
+            if chip and ("Status" in tasmota or "StatusFWR" in tasmota):
+                status = tasmota.get("Status", {}) if isinstance(tasmota.get("Status"), dict) else {}
+                return {
+                    "ip": ip_value,
+                    "kind": "tasmota",
+                    "name": str(status.get("FriendlyName", ["Tasmota"])[0] if isinstance(status.get("FriendlyName"), list) else status.get("DeviceName") or "Tasmota"),
+                    "version": str(firmware.get("Version", "")),
+                    "chip": chip,
+                    "upload": "tasmota-web-ota",
+                }
+        except (RuntimeError, OSError, urllib.error.URLError):
+            pass
+
+        try:
+            page = client._request("/").decode("utf-8", "replace")
+            if "esphome" in page.lower():
+                chip = self.chip_family_from_label(page)
+                name_match = re.search(r"<title>([^<]+)</title>", page, re.IGNORECASE)
+                return {
+                    "ip": ip_value,
+                    "kind": "esphome",
+                    "name": name_match.group(1).strip() if name_match else "ESPHome device",
+                    "version": "",
+                    "chip": chip,
+                    "upload": "arduino-ota",
+                }
+        except (RuntimeError, OSError, urllib.error.URLError):
+            pass
+        raise RuntimeError("The address did not identify as a compatible ELMA, Tasmota, or ESPHome device.")
+
+    def scan_network_devices(self, payload: dict) -> list[dict]:
+        local_addresses: set[str] = set()
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                probe.connect(("8.8.8.8", 80))
+                local_addresses.add(str(probe.getsockname()[0]))
+        except OSError:
+            pass
+        try:
+            for address in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+                local_addresses.add(str(address[4][0]))
+        except OSError:
+            pass
+        candidates: set[str] = set()
+        for address in local_addresses:
+            try:
+                parsed = ipaddress.ip_address(address)
+                if parsed.is_loopback or parsed.is_link_local:
+                    continue
+                candidates.update(str(host) for host in ipaddress.ip_network(f"{address}/24", strict=False).hosts())
+            except ValueError:
+                continue
+        candidates.difference_update(local_addresses)
+
+        esphome_devices: dict[str, dict] = {}
+
+        class EspHomeListener(ServiceListener):
+            def add_service(listener_self, zeroconf: Zeroconf, service_type: str, name: str) -> None:
+                info = zeroconf.get_service_info(service_type, name, timeout=700)
+                if info is None:
+                    return
+                properties = {
+                    key.decode("utf-8", "replace").lower(): value.decode("utf-8", "replace")
+                    for key, value in info.properties.items()
+                }
+                board = properties.get("board", "")
+                platform = properties.get("platform", "")
+                chip = owner.chip_family_from_label(f"{platform} {board}")
+                for address in info.parsed_scoped_addresses():
+                    try:
+                        if ipaddress.ip_address(address).version != 4:
+                            continue
+                    except ValueError:
+                        continue
+                    esphome_devices[address] = {
+                        "ip": address,
+                        "kind": "esphome",
+                        "name": properties.get("friendly_name") or name.split(".")[0],
+                        "version": properties.get("version", ""),
+                        "chip": chip,
+                        "board": board,
+                        "upload": "arduino-ota",
+                    }
+
+            def update_service(listener_self, zeroconf: Zeroconf, service_type: str, name: str) -> None:
+                listener_self.add_service(zeroconf, service_type, name)
+
+            def remove_service(listener_self, _zeroconf: Zeroconf, _service_type: str, _name: str) -> None:
+                return
+
+        owner = self
+        zeroconf = Zeroconf()
+        browser = ServiceBrowser(zeroconf, "_esphomelib._tcp.local.", EspHomeListener())
+        time.sleep(1.4)
+        browser.cancel()
+        zeroconf.close()
+
+        def inspect(address: str) -> dict | None:
+            try:
+                with socket.create_connection((address, 80), timeout=0.18):
+                    pass
+            except OSError:
+                return None
+            try:
+                return self.probe_network_device({**payload, "ip": address}, timeout=0.7)
+            except (RuntimeError, ValueError, OSError):
+                return None
+
+        devices: list[dict] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=48, thread_name_prefix="elma-lan-scan") as executor:
+            for result in executor.map(inspect, sorted(candidates)):
+                if result:
+                    devices.append(result)
+        known_ips = {str(item.get("ip", "")) for item in devices}
+        devices.extend(device for address, device in esphome_devices.items() if address not in known_ips)
+        self.network_device_cache = {str(item["ip"]): dict(item) for item in devices}
+        return sorted(devices, key=lambda item: tuple(int(part) for part in str(item["ip"]).split(".")))
+
+    def import_network_configuration(self, payload: dict) -> dict:
+        host = str(payload.get("ip", "")).strip()
+        username = str(payload.get("username", ""))
+        password = str(payload.get("password", ""))
+        detected = self.probe_network_device(payload, timeout=3.0)
+        client = HttpDeviceClient(host, username, password, timeout=8.0)
+        result = import_device(client, detected, str(payload.get("yaml", "")))
+        result["ip"] = urllib.parse.urlparse(client.base_url).hostname or host
+        return result
+
+    def upload_elma_ota(self, job: DesignerJob, client: HttpDeviceClient, application: bytes, filename: str) -> None:
+        session_id = uuid.uuid4().hex
+        job.network_client = client
+        job.upload_session_id = session_id
+        start_value = {"sessionId": session_id, "filename": filename, "size": len(application)}
+        client.json_request("/api/firmware/upload/start", value=start_value)
+        job.append("ELMA OTA opened the inactive application partition; the running firmware remains untouched until finish succeeds.")
+        try:
+            offset = 0
+            failures = 0
+            while offset < len(application):
+                if job.cancelled:
+                    client.json_request("/api/firmware/upload/cancel", value={"sessionId": session_id})
+                    raise InterruptedError("OTA upload cancelled safely; the active firmware remains unchanged")
+                chunk = application[offset:offset + 8192]
+                query = urllib.parse.urlencode({"sessionId": session_id, "offset": offset})
+                try:
+                    acknowledgement = client.put_binary(f"/api/firmware/upload/chunk?{query}", chunk)
+                    upload = acknowledgement.get("upload", {})
+                    offset = int(upload.get("offset", offset + len(chunk)))
+                    failures = 0
+                except (OSError, RuntimeError, urllib.error.URLError) as error:
+                    failures += 1
+                    if failures > 8:
+                        raise RuntimeError(f"OTA transfer could not recover after {failures - 1} retries: {error}") from error
+                    job.append(f"Wi-Fi interruption during OTA; reconnecting and resuming (attempt {failures}/8).")
+                    time.sleep(min(5, failures))
+                    try:
+                        status = client.json("/api/firmware/upload/status").get("upload", {})
+                        if status.get("active") and status.get("sessionId") == session_id:
+                            offset = int(status.get("offset", offset))
+                        elif not status.get("active"):
+                            client.json_request("/api/firmware/upload/start", value=start_value)
+                            offset = 0
+                    except (OSError, RuntimeError, urllib.error.URLError):
+                        continue
+                    continue
+                percent = round(offset * 100 / len(application))
+                job.progress = min(98, 70 + round(percent * 0.28))
+                job.status = f"Uploading firmware to IP device — {percent}%"
+            if job.cancelled:
+                client.json_request("/api/firmware/upload/cancel", value={"sessionId": session_id})
+                raise InterruptedError("OTA upload cancelled safely; the active firmware remains unchanged")
+            try:
+                client.json_request("/api/firmware/upload/finish", value={"sessionId": session_id})
+            except (OSError, urllib.error.URLError) as error:
+                # A device may close the socket immediately after committing the
+                # inactive partition. Treat it as success only after it returns.
+                job.append("Final OTA acknowledgement was interrupted by restart; verifying that the device returns.")
+                for _ in range(15):
+                    time.sleep(2)
+                    try:
+                        returned = client.json("/api/status")
+                        if isinstance(returned.get("firmware"), dict):
+                            break
+                    except (OSError, RuntimeError, urllib.error.URLError):
+                        continue
+                else:
+                    raise RuntimeError(f"OTA finalization could not be verified after device restart: {error}") from error
+        finally:
+            job.upload_session_id = ""
+            job.network_client = None
+
+    def upload_elma_legacy_ota(self, job: DesignerJob, client: HttpDeviceClient, application: bytes, filename: str) -> None:
+        parsed = urllib.parse.urlparse(client.base_url)
+        boundary = f"----ELMAFlasher{uuid.uuid4().hex}"
+        prefix = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"firmware\"; filename=\"{filename}\"\r\n"
+                  "Content-Type: application/octet-stream\r\n\r\n").encode("ascii")
+        suffix = f"\r\n--{boundary}--\r\n".encode("ascii")
+        connection = http.client.HTTPConnection(parsed.hostname, parsed.port or 80, timeout=45)
+        connection.putrequest("POST", "/api/firmware/upload")
+        connection.putheader("User-Agent", f"ELMA-Flasher/{APP_VERSION}")
+        connection.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+        connection.putheader("Content-Length", str(len(prefix) + len(application) + len(suffix)))
+        if client.authorization:
+            connection.putheader("Authorization", client.authorization)
+        connection.endheaders()
+        job.append("Older ELMA firmware detected; using its compatible one-shot OTA endpoint. The minimal image and compiled-image cache make retries smaller and faster.")
+        try:
+            connection.send(prefix)
+            for offset in range(0, len(application), 8192):
+                if job.cancelled:
+                    connection.close()
+                    raise InterruptedError("Legacy OTA connection cancelled before finalization")
+                chunk = application[offset:offset + 8192]
+                connection.send(chunk)
+                percent = round((offset + len(chunk)) * 100 / len(application))
+                job.progress = min(98, 70 + round(percent * 0.28))
+                job.status = f"Uploading firmware to older ELMA device — {percent}%"
+            connection.send(suffix)
+            response = connection.getresponse()
+            body = response.read().decode("utf-8", "replace")
+            if response.status >= 400:
+                raise RuntimeError(f"Legacy ELMA OTA HTTP {response.status}: {body[:240]}")
+        finally:
+            connection.close()
+
+    def upload_tasmota_ota(
+        self,
+        job: DesignerJob,
+        host: str,
+        username: str,
+        password: str,
+        application: bytes,
+        filename: str,
+    ) -> None:
+        parsed = urllib.parse.urlparse(HttpDeviceClient(host).base_url)
+        boundary = f"----ELMAFlasher{uuid.uuid4().hex}"
+        prefix = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="u2"; filename="{filename}"\r\n'
+            "Content-Type: application/octet-stream\r\n\r\n"
+        ).encode("ascii")
+        suffix = f"\r\n--{boundary}--\r\n".encode("ascii")
+        connection = http.client.HTTPConnection(parsed.hostname, parsed.port or 80, timeout=30)
+        connection.putrequest("POST", "/u2")
+        connection.putheader("User-Agent", f"ELMA-Flasher/{APP_VERSION}")
+        connection.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+        connection.putheader("Content-Length", str(len(prefix) + len(application) + len(suffix)))
+        if username or password:
+            token = base64.b64encode(f"{username}:{password}".encode()).decode()
+            connection.putheader("Authorization", f"Basic {token}")
+        connection.endheaders()
+        try:
+            connection.send(prefix)
+            for offset in range(0, len(application), 16384):
+                if job.cancelled:
+                    connection.close()
+                    raise InterruptedError("Tasmota OTA upload cancelled safely before activation")
+                chunk = application[offset:offset + 16384]
+                connection.send(chunk)
+                percent = round((offset + len(chunk)) * 100 / len(application))
+                job.progress = min(98, 70 + round(percent * 0.28))
+                job.status = f"Uploading ELMA firmware through Tasmota OTA — {percent}%"
+            if job.cancelled:
+                connection.close()
+                raise InterruptedError("Tasmota OTA upload cancelled safely before activation")
+            connection.send(suffix)
+            response = connection.getresponse()
+            response_body = response.read().decode("utf-8", "replace")
+            if response.status >= 400:
+                raise RuntimeError(f"Tasmota OTA HTTP {response.status}: {response_body[:240]}")
+        finally:
+            connection.close()
+
+    def upload_esphome_ota(
+        self,
+        job: DesignerJob,
+        host: str,
+        password: str,
+        firmware_path: pathlib.Path,
+    ) -> None:
+        response_errors = {
+            0x80: "invalid OTA magic",
+            0x81: "could not prepare flash memory",
+            0x82: "OTA password is invalid",
+            0x83: "failed while writing flash",
+            0x84: "failed while finishing the update",
+            0x85: "device requires a manual reset before its first OTA update",
+            0x86: "current ESPHome flash configuration is invalid",
+            0x87: "ELMA firmware does not match the destination flash configuration",
+            0x88: "destination does not have enough OTA space",
+            0x89: "destination OTA partition is too small",
+            0x8A: "destination has no OTA partition",
+            0x8B: "uploaded firmware checksum mismatch",
+            0xFF: "unknown ESPHome OTA error",
+        }
+
+        def receive_exactly(connection: socket.socket, size: int, expected: int | tuple[int, ...] | None, description: str) -> bytes:
+            result = b""
+            while len(result) < size:
+                chunk = connection.recv(size - len(result))
+                if not chunk:
+                    raise RuntimeError(f"ESPHome disconnected while waiting for {description}.")
+                result += chunk
+            if expected is not None:
+                accepted = expected if isinstance(expected, tuple) else (expected,)
+                if result[0] not in accepted:
+                    detail = response_errors.get(result[0], f"unexpected response 0x{result[0]:02X}")
+                    raise RuntimeError(f"ESPHome OTA rejected {description}: {detail}.")
+            return result
+
+        firmware = firmware_path.read_bytes()
+        connection = socket.create_connection((host, 3232), timeout=10)
+        try:
+            connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            connection.sendall(bytes((0x6C, 0x26, 0xF7, 0x5C, 0x45)))
+            version_reply = receive_exactly(connection, 2, 0x00, "protocol version")
+            version = version_reply[1]
+            if version not in (1, 2):
+                raise RuntimeError(f"ESPHome OTA protocol version {version} is unsupported.")
+            connection.sendall(bytes((0x01,)))
+            features = receive_exactly(connection, 1, (0x40, 0x46), "feature negotiation")[0]
+            upload = gzip.compress(firmware, compresslevel=9) if features == 0x46 else firmware
+            auth = receive_exactly(connection, 1, (0x01, 0x41), "authentication request")[0]
+            if auth == 0x01:
+                if not password:
+                    raise RuntimeError("ESPHome requires an OTA password.")
+                nonce = receive_exactly(connection, 32, None, "authentication nonce").decode("ascii")
+                cnonce = hashlib.md5(str(random.random()).encode()).hexdigest()
+                connection.sendall(cnonce.encode("ascii"))
+                digest = hashlib.md5(f"{password}{nonce}{cnonce}".encode()).hexdigest()
+                connection.sendall(digest.encode("ascii"))
+                receive_exactly(connection, 1, 0x41, "authentication result")
+            connection.settimeout(30)
+            connection.sendall(struct.pack("!I", len(upload)))
+            receive_exactly(connection, 1, 0x42, "binary size")
+            connection.sendall(hashlib.md5(upload).hexdigest().encode("ascii"))
+            receive_exactly(connection, 1, 0x43, "binary checksum")
+            connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 0)
+            for offset in range(0, len(upload), 8192):
+                if job.cancelled:
+                    connection.close()
+                    raise InterruptedError("ESPHome OTA upload cancelled; the previous active firmware remains selected")
+                chunk = upload[offset:offset + 8192]
+                connection.sendall(chunk)
+                if version >= 2:
+                    receive_exactly(connection, 1, 0x47, "chunk acknowledgement")
+                percent = round((offset + len(chunk)) * 100 / len(upload))
+                job.progress = min(98, 70 + round(percent * 0.28))
+                job.status = f"Uploading ELMA firmware through ESPHome OTA — {percent}%"
+            if job.cancelled:
+                connection.close()
+                raise InterruptedError("ESPHome OTA upload cancelled; the previous active firmware remains selected")
+            connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            receive_exactly(connection, 1, 0x44, "firmware receive result")
+            receive_exactly(connection, 1, 0x45, "update activation result")
+            connection.sendall(bytes((0x00,)))
+        finally:
+            connection.close()
 
     def start(self) -> str:
         if self.httpd:
@@ -500,7 +1085,8 @@ class DesignerServer:
                     job = owner.jobs.get(job_id)
                     handler_self.json_response(job.public() if job else {"error": "Unknown builder job"}, 200 if job else 404)
                 elif path == "/api/settings":
-                    handler_self.json_response(owner.settings)
+                    with owner.settings_lock:
+                        handler_self.json_response(json.loads(json.dumps(owner.settings)))
                 elif path == "/api/wifi/scan":
                     try:
                         handler_self.json_response({"started": True, "scanning": False, "networks": owner.scan_pc_wifi()})
@@ -520,8 +1106,20 @@ class DesignerServer:
                     if path == "/api/settings":
                         if not isinstance(body, dict):
                             raise ValueError("Settings must be a JSON object")
-                        owner.settings = body
-                        owner.save_designer_settings_async()
+                        with owner.settings_lock:
+                            changed = body != owner.settings
+                            owner.settings = body
+                        if changed:
+                            owner.save_designer_settings_async()
+                        handler_self.json_response({"ok": True})
+                    elif path == "/api/motor/config":
+                        if not isinstance(body, dict):
+                            raise ValueError("Motor settings must be a JSON object")
+                        with owner.settings_lock:
+                            previous = owner.settings.setdefault("ui", {}).get("motorRuntimeConfig")
+                            owner.settings.setdefault("ui", {})["motorRuntimeConfig"] = body
+                        if body != previous:
+                            owner.save_designer_settings_async()
                         handler_self.json_response({"ok": True})
                     elif path == "/api/pc/wifi/test":
                         handler_self.json_response(owner.test_pc_wifi(body))
@@ -535,6 +1133,12 @@ class DesignerServer:
                             handler_self.json_response({"ok": True, "connected": True})
                         else:
                             handler_self.json_response({"error": "This MQTT runtime action is unavailable in the PC designer."}, 409)
+                    elif path == "/api/builder/network-devices/scan":
+                        handler_self.json_response({"devices": owner.scan_network_devices(body)})
+                    elif path == "/api/builder/network-devices/probe":
+                        handler_self.json_response(owner.probe_network_device(body))
+                    elif path == "/api/builder/migration/import":
+                        handler_self.json_response(owner.import_network_configuration(body))
                     elif path == "/api/builder/jobs":
                         job = owner.create_job(body)
                         handler_self.json_response({"jobId": job.id}, 202)
@@ -545,14 +1149,27 @@ class DesignerServer:
                             handler_self.json_response({"error": "Unknown builder job"}, 404)
                             return
                         job.cancelled = True
-                        if job.process and job.process.poll() is None:
-                            job.process.terminate()
+                        if job.critical_flash:
+                            job.cancel_deferred = True
+                            job.status = "Cancellation requested — completing the critical USB write safely"
+                            job.append("Cancel requested after USB erase/write began. The verified write will finish so the device is not left unbootable.")
+                        elif job.upload_session_id and job.network_client is not None:
+                            try:
+                                job.network_client.json_request(
+                                    "/api/firmware/upload/cancel",
+                                    value={"sessionId": job.upload_session_id},
+                                )
+                                job.append("Destination confirmed that the inactive OTA upload was aborted.")
+                            except RuntimeError as error:
+                                job.append(f"OTA cancel acknowledgement pending: {error}")
+                        if job.process and job.process.poll() is None and not job.critical_flash:
+                            owner.terminate_job_process(job)
                         handler_self.json_response({"ok": True})
                     else:
                         handler_self.json_response({"error": "Unsupported local builder action"}, 404)
                 except (ValueError, json.JSONDecodeError) as error:
                     handler_self.json_response({"error": str(error)}, 400)
-                except (RuntimeError, OSError) as error:
+                except (RuntimeError, OSError, urllib.error.URLError) as error:
                     handler_self.json_response({"error": str(error)}, 409)
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -567,8 +1184,6 @@ class DesignerServer:
         self.httpd = None
         self.thread = None
         self.url = ""
-        with contextlib.suppress(OSError, TypeError):
-            self.save_designer_settings()
         if server is not None:
             server.shutdown()
             server.server_close()
@@ -756,12 +1371,22 @@ class DesignerServer:
         self.pc_mqtt_connected = True
 
     def create_job(self, payload: dict) -> DesignerJob:
-        if not isinstance(payload, dict) or not str(payload.get("port", "")).strip():
+        compile_only = bool(payload.get("compileOnly", False)) if isinstance(payload, dict) else False
+        requested_chip = str(payload.get("chip", "")).strip() if isinstance(payload, dict) else ""
+        transport = str(payload.get("transport", "usb")).strip().lower() if isinstance(payload, dict) else "usb"
+        if transport not in ("usb", "ip"):
+            raise ValueError("Choose USB or IP flashing.")
+        if not isinstance(payload, dict) or (not compile_only and transport == "usb" and not str(payload.get("port", "")).strip()):
             raise ValueError("Select a connected USB device")
+        if not compile_only and transport == "ip" and not str(payload.get("targetIp", "")).strip():
+            raise ValueError("Select or enter an IP device.")
+        if compile_only and requested_chip not in CHIP_FAMILIES:
+            raise ValueError("Choose ESP32, ESP32-S3, or ESP32-C3 before compiling.")
         with self.lock:
             if any(job.state in ("queued", "running") for job in self.jobs.values()):
                 raise ValueError("Another compile or flash job is already running")
             job = DesignerJob()
+            job.transport = transport
             self.jobs[job.id] = job
         threading.Thread(target=self.run_job, args=(job, payload), daemon=True).start()
         return job
@@ -771,7 +1396,10 @@ class DesignerServer:
         job.status = status
         job.append(status)
 
-    def resolve_profile(self, detected: str, requested: dict, settings: dict, job: DesignerJob) -> str:
+    def resolve_profile(self, detected: str, requested: dict, settings: dict, job: DesignerJob, firmware_mode: str = "full") -> str:
+        if firmware_mode == "minimal":
+            job.compatibility = "Minimal OTA bridge: saved NVS configuration is preserved; Wi-Fi sleep and RSSI cutoffs are disabled; only Wi-Fi and resumable OTA are included."
+            return {"esp32": "esp32_ota_bridge", "esp32s3": "esp32s3_ota_bridge", "esp32c3": "esp32c3_ota_bridge"}[detected]
         maximum = bool(requested.get("maximum", True))
         audio_profiles = settings.get("ui", {}).get("peripheralProfiles", {}).get("audioProfiles", []) if isinstance(settings, dict) else []
         configured_audio = any(str(value).strip().lower() not in ("", "none") for value in audio_profiles if value is not None)
@@ -811,39 +1439,129 @@ class DesignerServer:
     def run_job(self, job: DesignerJob, payload: dict) -> None:
         try:
             job.state = "running"
-            port = str(payload["port"])
-            self.set_job(job, 3, f"Detecting the ESP on {port}")
-            detected, flash_size = self.flasher._detect_target_chip(port)
+            job.phase = "preflight"
+            compile_only = bool(payload.get("compileOnly", False))
+            transport = str(payload.get("transport", "usb")).strip().lower()
+            firmware_mode = str(payload.get("firmwareMode", "full")).strip().lower()
+            if firmware_mode not in ("full", "minimal"):
+                raise RuntimeError("Select Full or Minimal firmware.")
+            if firmware_mode == "minimal" and transport != "ip" and not compile_only:
+                raise RuntimeError("Minimal recovery firmware must be installed over IP so the existing partition table and NVS configuration remain untouched.")
+            port = str(payload.get("port", ""))
             requested_chip = str(payload.get("chip", "auto"))
-            if requested_chip != "auto" and requested_chip != detected:
-                raise RuntimeError(f"Manual target {requested_chip.upper()} does not match detected {detected.upper()}. Nothing was erased.")
-            job.append(f"Detected {CHIP_FAMILIES.get(detected, detected)}; flash {flash_size or 'size reported by loader'}")
-            profile = self.resolve_profile(detected, payload.get("capabilities", {}), payload.get("settings", {}), job)
+            if compile_only:
+                detected = requested_chip
+                flash_size = "8 MB" if detected == "esp32s3" else "4 MB"
+                self.set_job(job, 3, f"Preparing {CHIP_FAMILIES[detected]} firmware")
+                job.append(f"Compile-only target: {CHIP_FAMILIES[detected]}")
+            elif transport == "usb":
+                self.set_job(job, 3, f"Detecting the ESP on {port}")
+                detected, flash_size = self.flasher._detect_target_chip(port)
+                if requested_chip != "auto" and requested_chip != detected:
+                    raise RuntimeError(f"Manual target {requested_chip.upper()} does not match detected {detected.upper()}. Nothing was erased.")
+                job.append(f"Detected {CHIP_FAMILIES.get(detected, detected)}; flash {flash_size or 'size reported by loader'}")
+            else:
+                target_ip = str(payload.get("targetIp", "")).strip()
+                self.set_job(job, 3, f"Verifying IP device at {target_ip}")
+                target = self.probe_network_device({
+                    "ip": target_ip,
+                    "username": str(payload.get("username", "")),
+                    "password": str(payload.get("password", "")),
+                })
+                detected = str(target.get("chip", ""))
+                if detected not in CHIP_FAMILIES:
+                    raise RuntimeError("The destination did not report an exact supported ESP chip family. Nothing was compiled or uploaded.")
+                if requested_chip != "auto" and requested_chip != detected:
+                    raise RuntimeError(
+                        f"Destination chip mismatch: device is {detected.upper()}, configured firmware is {requested_chip.upper()}. Nothing was compiled or uploaded."
+                    )
+                job.target_kind = str(target.get("kind", ""))
+                job.target_version = str(target.get("version", ""))
+                if job.target_kind != "elma" and not bool(payload.get("confirmedForeignFirmware", False)):
+                    raise RuntimeError(f"Replacing {job.target_kind or 'foreign'} firmware requires confirmation before compilation.")
+                payload_kind = str(payload.get("targetKind", ""))
+                if payload_kind and payload_kind != job.target_kind:
+                    raise RuntimeError("Destination firmware identity changed after confirmation. Nothing was uploaded.")
+                flash_size = "4 MB"
+                job.ip_address = str(target.get("ip", target_ip))
+                job.append(
+                    f"Verified {job.target_kind.upper()} target at {job.ip_address}: {CHIP_FAMILIES[detected]}"
+                )
+            profile = self.resolve_profile(detected, payload.get("capabilities", {}), payload.get("settings", {}), job, firmware_mode)
             job.profile = profile
+            supplied_settings = payload.get("settings", {})
+            supplied_ui = supplied_settings.get("ui", {}) if isinstance(supplied_settings, dict) else {}
+            selected_board = str(supplied_ui.get("gpioBoardSelection", "")).strip().lower() if isinstance(supplied_ui, dict) else ""
+            if selected_board not in BOARD_PROFILES:
+                selected_board = DEFAULT_BOARD_PROFILE[detected]
+            board_id, board_chip = BOARD_PROFILES[selected_board]
+            if board_chip != detected:
+                raise RuntimeError(
+                    f"Selected board {selected_board} is not compatible with the {CHIP_FAMILIES[detected]} compile target."
+                )
+            if firmware_mode == "full":
+                job.append(f"Fixed firmware board: {selected_board} (other board illustrations excluded)")
+            else:
+                job.append("Minimal bridge does not contain board illustrations or peripheral modules; existing NVS settings are read-only and preserved.")
             if job.cancelled:
                 raise InterruptedError("Build cancelled")
             project = self.project_root()
-            self.set_job(job, 12, f"Compiling {profile} with maximum compatible functionality")
-            command = self.compiler_command() + ["run", "--project-dir", str(project), "--environment", profile]
-            job.append(" ".join(command))
-            creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            compiler_environment = os.environ.copy()
-            compiler_environment["ELMA_PORTABLE_BUILDER"] = "1"
-            job.process = subprocess.Popen(command, cwd=project, env=compiler_environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", creationflags=creation_flags)
-            assert job.process.stdout is not None
-            for line in job.process.stdout:
-                job.append(line)
-                if "Compiling" in line and job.progress < 55:
-                    job.progress += 1
-                if job.cancelled:
-                    job.process.terminate()
-                    raise InterruptedError("Build cancelled")
-            code = job.process.wait()
-            job.process = None
-            if code:
-                raise RuntimeError(f"Firmware compilation failed with exit code {code}. See the build log above.")
+            output_name = self.generated_firmware_name(detected, payload.get("capabilities", {}), firmware_mode)
+            requested_output = str(payload.get("outputPath", "")).strip()
+            output_path = pathlib.Path(requested_output).expanduser().resolve() if requested_output else self.generated_firmware_directory() / output_name
+            source_digest = hashlib.sha256()
+            source_inputs = [project / "platformio.ini"]
+            for source_directory in ("src", "include", "scripts", "partitions", "web"):
+                source_inputs.extend(sorted((project / source_directory).glob("**/*")))
+            for source_input in source_inputs:
+                if source_input.is_file() and not source_input.name.startswith("generated_web_assets"):
+                    source_digest.update(source_input.relative_to(project).as_posix().encode())
+                    source_digest.update(str(source_input.stat().st_mtime_ns).encode())
+                    source_digest.update(str(source_input.stat().st_size).encode())
+            signature_payload = {"version": APP_VERSION, "source": source_digest.hexdigest(), "profile": profile, "board": selected_board, "mode": firmware_mode,
+                                 "settings": payload.get("settings", {}), "capabilities": payload.get("capabilities", {})}
+            build_signature = hashlib.sha256(json.dumps(signature_payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            cache_path = self.portable_home() / "ELMA-Flasher.build-cache.json"
+            cached = {}
+            try:
+                cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
+            reuse_build = transport == "ip" and cached.get("signature") == build_signature and output_path.is_file()
+            job.phase = "compiling"
+            self.set_job(job, 12, f"Compiling {profile}" if not reuse_build else "Reusing unchanged compiled firmware")
+            if reuse_build:
+                application = output_path.read_bytes()
+                if chip_family_from_image(application) != detected or hashlib.sha256(application).hexdigest() != cached.get("sha256"):
+                    reuse_build = False
+                else:
+                    job.append("Configuration and build inputs are unchanged; reusing the verified binary from the previous attempt.")
+            if not reuse_build:
+                command = self.compiler_command() + ["run", "--project-dir", str(project), "--environment", profile]
+                job.append(" ".join(command))
+                creation_flags = (subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP) if sys.platform == "win32" else 0
+                compiler_environment = os.environ.copy()
+                compiler_environment["ELMA_PORTABLE_BUILDER"] = "1"
+                compiler_environment["ELMA_SELECTED_BOARD_PROFILE"] = selected_board
+                compiler_environment["ELMA_SELECTED_BOARD_PROFILE_ID"] = str(board_id)
+                wifi_settings = supplied_settings.get("wifi", {})
+                compiler_environment["ELMA_STA_TX_POWER_DBM"] = str(wifi_settings.get("staTxPowerDbm", 15.0))
+                compiler_environment["ELMA_AP_TX_POWER_DBM"] = str(wifi_settings.get("apTxPowerDbm", 15.0))
+                job.process = subprocess.Popen(command, cwd=project, env=compiler_environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", creationflags=creation_flags)
+                assert job.process.stdout is not None
+                for line in job.process.stdout:
+                    job.append(line)
+                    if "Compiling" in line and job.progress < 55:
+                        job.progress += 1
+                    if job.cancelled:
+                        self.terminate_job_process(job)
+                        raise InterruptedError("Build cancelled")
+                code = job.process.wait()
+                job.process = None
+                if code:
+                    raise RuntimeError(f"Firmware compilation failed with exit code {code}. See the build log above.")
+                application = (project / ".pio" / "build" / profile / "firmware.bin").read_bytes()
             build = project / ".pio" / "build" / profile
-            application = (build / "firmware.bin").read_bytes()
             family = chip_family_from_image(application)
             if family != detected:
                 raise RuntimeError("Compiler output chip family does not match the connected target")
@@ -860,21 +1578,79 @@ class DesignerServer:
             if len(application) > min(MAX_APPLICATION_SIZE, flash_mb * 1024 * 1024):
                 raise RuntimeError(f"Generated application is {len(application):,} bytes and does not fit this target safely.")
             job.append(f"Generated application: {len(application):,} bytes")
-            output_directory = self.generated_firmware_directory()
-            output_directory.mkdir(parents=True, exist_ok=True)
-            output_name = self.generated_firmware_name(family, payload.get("capabilities", {}))
-            output_path = output_directory / output_name
-            temporary_output = output_path.with_suffix(".tmp")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_output = output_path.with_name(f".{output_path.name}.{os.getpid()}.tmp")
             temporary_output.write_bytes(application)
             temporary_output.replace(output_path)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps({"signature": build_signature, "firmware": str(output_path), "sha256": hashlib.sha256(application).hexdigest()}, indent=2), encoding="utf-8")
             job.firmware_file = str(output_path)
-            job.append(f"Saved generated firmware beside ELMA Flasher: {output_name}")
+            job.append(f"Saved generated firmware: {output_path.name}")
+            if compile_only:
+                job.progress = 100
+                job.status = "Firmware compilation complete"
+                job.state = "complete"
+                return
+            if transport == "ip":
+                if job.cancelled:
+                    raise InterruptedError("Build cancelled before OTA upload; destination flash was not changed")
+                job.phase = "uploading"
+                self.set_job(job, 70, f"Starting safe OTA upload to {job.ip_address}")
+                username = str(payload.get("username", ""))
+                password = str(payload.get("password", ""))
+                if job.target_kind == "elma":
+                    client = HttpDeviceClient(job.ip_address, username, password, timeout=30)
+                    version_numbers = tuple(int(value) for value in re.findall(r"\d+", job.target_version)[:3])
+                    if version_numbers and version_numbers < (0, 1, 40):
+                        self.upload_elma_legacy_ota(job, client, application, output_path.name)
+                    else:
+                        try:
+                            self.upload_elma_ota(job, client, application, output_path.name)
+                        except RuntimeError as error:
+                            if "HTTP 404" not in str(error):
+                                raise
+                            self.upload_elma_legacy_ota(job, client, application, output_path.name)
+                elif job.target_kind == "tasmota":
+                    job.append("Replacing Tasmota through its web OTA path. No partition-table erase is performed over IP.")
+                    self.upload_tasmota_ota(job, job.ip_address, username, password, application, output_path.name)
+                elif job.target_kind == "esphome":
+                    job.append("Replacing ESPHome through its Arduino-compatible OTA listener. No partition-table erase is performed over IP.")
+                    self.upload_esphome_ota(job, job.ip_address, password, output_path)
+                else:
+                    raise RuntimeError("Destination OTA type is unsupported.")
+                job.progress = 100
+                job.status = "Compile and IP flash complete — destination restarting"
+                job.state = "complete"
+                job.phase = "complete"
+                return
             if job.cancelled:
                 raise InterruptedError("Build cancelled before erase")
             boot_address = 0 if family in ("esp32s3", "esp32c3") else 0x1000
             parts = [(boot_address, (build / "bootloader.bin").read_bytes()), (0x8000, (build / "partitions.bin").read_bytes()), (APPLICATION_ADDRESS, application)]
+            job.phase = "usb-critical-write"
+            job.critical_flash = True
             self.set_job(job, 66, "Writing and verifying firmware")
-            self.flasher._write_flash(port, family, parts, bool(payload.get("erase", True)))
+
+            def append_flash_progress(line: str) -> None:
+                job.append(line)
+                match = re.search(r"\((\d+)\s*%\)", line)
+                if not match:
+                    return
+                percent = max(0, min(100, int(match.group(1))))
+                job.progress = max(job.progress, min(92, 66 + round(percent * 0.26)))
+                job.status = f"Writing and verifying firmware — {percent}%"
+
+            self.flasher._write_flash(
+                port,
+                family,
+                parts,
+                bool(payload.get("erase", True)),
+                append_flash_progress,
+            )
+            job.critical_flash = False
+            if job.cancelled:
+                raise InterruptedError("Cancellation completed after the USB firmware write was safely finished and verified")
+            job.phase = "provisioning"
             configuration = sanitize_clone_configuration(payload.get("settings", self.settings))
             self.settings = payload.get("settings", self.settings)
             self.set_job(job, 93, "Provisioning Wi-Fi, MQTT, identity and peripheral configuration")
@@ -883,25 +1659,42 @@ class DesignerServer:
             job.progress = 100
             job.status = "Compile, flash and configuration complete"
             job.state = "complete"
+            job.phase = "complete"
             job.append("Target device identity and MQTT IDs were regenerated from its own hardware ID.")
         except InterruptedError as error:
+            job.critical_flash = False
             job.state = "cancelled"
+            job.phase = "cancelled"
             job.status = str(error)
             job.append(job.status)
         except BaseException as error:
+            job.critical_flash = False
             job.state = "failed"
+            job.phase = "failed"
             job.error = friendly_error(error)
             job.status = "Build or flash failed"
             job.append(f"ERROR: {job.error}")
 
 
-def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bool = False) -> bool:
+def run_native_designer_window(
+    url: str,
+    icon_path: pathlib.Path,
+    designer_server: DesignerServer | None = None,
+    smoke_test: bool = False,
+) -> bool:
     """Render the PC designer, compiler and USB flasher in one native ELMA window."""
-    from PySide6.QtCore import QTimer, QUrl
-    from PySide6.QtGui import QIcon
+    from PySide6.QtCore import QByteArray, Qt, QTimer, QUrl, QUrlQuery
+    from PySide6.QtGui import QAction, QIcon, QKeySequence
     from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
     from PySide6.QtWebEngineWidgets import QWebEngineView
-    from PySide6.QtWidgets import QApplication, QMainWindow
+    from PySide6.QtWidgets import (
+        QApplication,
+        QFileDialog,
+        QInputDialog,
+        QMainWindow,
+        QMessageBox,
+        QProgressDialog,
+    )
 
     origin = urllib.parse.urlparse(url)
 
@@ -963,7 +1756,365 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
     profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
     profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.MemoryHttpCache)
 
-    window = QMainWindow()
+    window_state_path = DesignerServer.portable_home() / "ELMA-Flasher.window.json"
+
+    def load_window_geometry() -> tuple[bytes, bool] | None:
+        if smoke_test:
+            return None
+        try:
+            payload = json.loads(window_state_path.read_text(encoding="utf-8"))
+            geometry = base64.b64decode(str(payload.get("geometry", "")), validate=True)
+            return geometry, bool(payload.get("maximized", False))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError, binascii.Error):
+            return None
+
+    class PersistentDesignerWindow(QMainWindow):
+        """Native document shell for the shared web-based Device Designer."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self._initial_configuration_prompted = False
+            self._close_capture_complete = False
+            self._compile_job: DesignerJob | None = None
+            self._compile_progress: QProgressDialog | None = None
+            self._geometry_save_timer = QTimer(self)
+            self._geometry_save_timer.setSingleShot(True)
+            self._geometry_save_timer.setInterval(350)
+            self._geometry_save_timer.timeout.connect(self._save_geometry)
+            self._document_state_timer = QTimer(self)
+            self._document_state_timer.setInterval(250)
+            self._document_state_timer.timeout.connect(self._update_document_title)
+            self._document_state_timer.start()
+            self._compile_poll_timer = QTimer(self)
+            self._compile_poll_timer.setInterval(300)
+            self._compile_poll_timer.timeout.connect(self._poll_compile_job)
+            self._create_file_menu()
+
+        def _create_file_menu(self) -> None:
+            file_menu = self.menuBar().addMenu("&File")
+            self.open_action = QAction("&Open Configuration…", self)
+            self.open_action.setShortcut(QKeySequence.StandardKey.Open)
+            self.open_action.triggered.connect(self._request_open_configuration)
+            file_menu.addAction(self.open_action)
+
+            self.save_action = QAction("&Save Configuration", self)
+            self.save_action.setShortcut(QKeySequence.StandardKey.Save)
+            self.save_action.triggered.connect(lambda: self._request_save_configuration(False))
+            file_menu.addAction(self.save_action)
+
+            self.save_as_action = QAction("Save Configuration &As…", self)
+            self.save_as_action.setShortcut(QKeySequence.StandardKey.SaveAs)
+            self.save_as_action.triggered.connect(lambda: self._request_save_configuration(True))
+            file_menu.addAction(self.save_as_action)
+
+            file_menu.addSeparator()
+            self.compile_save_action = QAction("&Compile Firmware and Save As…", self)
+            self.compile_save_action.setShortcut(QKeySequence("Ctrl+Shift+B"))
+            self.compile_save_action.triggered.connect(self._request_compile_and_save)
+            file_menu.addAction(self.compile_save_action)
+
+            file_menu.addSeparator()
+            self.exit_action = QAction("E&xit", self)
+            self.exit_action.setShortcut(QKeySequence.StandardKey.Quit)
+            self.exit_action.triggered.connect(self.close)
+            file_menu.addAction(self.exit_action)
+
+        def _dialog_directory(self) -> pathlib.Path:
+            if designer_server is None:
+                return DesignerServer.portable_home()
+            return designer_server.last_configuration_directory()
+
+        @staticmethod
+        def _ensure_extension(path: pathlib.Path, extension: str) -> pathlib.Path:
+            return path if path.suffix.lower() == extension else path.with_suffix(extension)
+
+        def _update_document_title(self) -> None:
+            if designer_server is None:
+                self.setWindowTitle(f"ELMA Flasher v{APP_VERSION}")
+                return
+            path = designer_server.active_settings_path
+            label = path.name if path is not None else "Untitled configuration"
+            dirty = " *" if designer_server.configuration_dirty() else ""
+            self.setWindowTitle(f"{label}{dirty} — ELMA Flasher v{APP_VERSION}")
+            self.save_action.setEnabled(designer_server.configuration_dirty() or path is None)
+
+        def _capture_page_settings(self, callback: Callable[[], None]) -> None:
+            if designer_server is None or not designer_view.page():
+                callback()
+                return
+
+            def captured(value) -> None:
+                try:
+                    settings = json.loads(value) if isinstance(value, str) else None
+                    if isinstance(settings, dict):
+                        with designer_server.settings_lock:
+                            changed = settings != designer_server.settings
+                            designer_server.settings = settings
+                        if changed:
+                            designer_server.save_designer_settings_async()
+                except (TypeError, json.JSONDecodeError):
+                    pass
+                callback()
+
+            designer_view.page().runJavaScript(
+                "window.elmaCollectDesignerSettings ? window.elmaCollectDesignerSettings() : null",
+                0,
+                captured,
+            )
+
+        def _save_configuration(self, save_as: bool = False) -> bool:
+            if designer_server is None:
+                return False
+            destination = designer_server.active_settings_path
+            if save_as or destination is None:
+                suggested_name = destination.name if destination is not None else "ELMA-Device.config.json"
+                selected, _ = QFileDialog.getSaveFileName(
+                    self,
+                    "Save ELMA configuration",
+                    str(self._dialog_directory() / suggested_name),
+                    "ELMA configuration (*.json);;JSON files (*.json);;All files (*.*)",
+                )
+                if not selected:
+                    return False
+                destination = self._ensure_extension(pathlib.Path(selected), ".json")
+            try:
+                designer_server.save_designer_settings(path=destination)
+                self._update_document_title()
+                return True
+            except (OSError, TypeError, ValueError) as error:
+                QMessageBox.critical(self, "Configuration was not saved", str(error))
+                return False
+
+        def _request_save_configuration(self, save_as: bool) -> None:
+            self._capture_page_settings(lambda: self._save_configuration(save_as))
+
+        def _confirm_unsaved_changes(self) -> bool:
+            if designer_server is None:
+                return True
+            unnamed = designer_server.active_settings_path is None
+            if not designer_server.configuration_dirty() and not unnamed:
+                return True
+            response = QMessageBox.warning(
+                self,
+                "Name and save configuration?" if unnamed else "Save configuration changes?",
+                "Choose a name and save the current configuration before closing."
+                if unnamed
+                else "The current configuration has unsaved changes.",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save,
+            )
+            if response == QMessageBox.StandardButton.Cancel:
+                return False
+            if response == QMessageBox.StandardButton.Save:
+                return self._save_configuration(False)
+            return True
+
+        def _open_configuration(self, confirm_changes: bool = True) -> None:
+            if designer_server is None or (confirm_changes and not self._confirm_unsaved_changes()):
+                return
+            selected, _ = QFileDialog.getOpenFileName(
+                self,
+                "Open ELMA configuration",
+                str(self._dialog_directory()),
+                "ELMA configuration (*.json);;JSON files (*.json);;All files (*.*)",
+            )
+            if not selected:
+                return
+            try:
+                designer_server.open_configuration(pathlib.Path(selected))
+                designer_view.reload()
+                self._update_document_title()
+            except (OSError, TypeError, ValueError) as error:
+                QMessageBox.critical(self, "Configuration could not be opened", str(error))
+
+        def _request_open_configuration(self) -> None:
+            self._capture_page_settings(self._open_configuration)
+
+        def prompt_for_initial_configuration(self) -> None:
+            if self._initial_configuration_prompted or smoke_test or designer_server is None:
+                return
+            self._initial_configuration_prompted = True
+            if designer_server.active_settings_path is None:
+                self._open_configuration(confirm_changes=False)
+
+        def _request_compile_and_save(self) -> None:
+            if designer_server is None or designer_server.flasher is None:
+                QMessageBox.critical(self, "Compiler unavailable", "The portable firmware compiler is unavailable.")
+                return
+            if self._compile_job and self._compile_job.state in ("queued", "running"):
+                QMessageBox.information(self, "Compilation in progress", "A firmware compilation is already running.")
+                return
+
+            def begin_after_capture() -> None:
+                designer_view.page().runJavaScript(
+                    "JSON.stringify({"
+                    "chip:document.getElementById('localBuilderChip')?.value||'auto',"
+                    "firmwareMode:document.getElementById('localBuilderFirmwareMode')?.value||'full',"
+                    "maximum:Boolean(document.getElementById('localBuilderMaximum')?.checked),"
+                    "webUi:Boolean(document.getElementById('localBuilderWebUi')?.checked),"
+                    "hacs:Boolean(document.getElementById('localBuilderHacs')?.checked),"
+                    "audio:Boolean(document.getElementById('localBuilderAudio')?.checked)"
+                    "})",
+                    0,
+                    self._begin_compile_and_save,
+                )
+
+            self._capture_page_settings(begin_after_capture)
+
+        def _begin_compile_and_save(self, raw_options) -> None:
+            if designer_server is None:
+                return
+            try:
+                options = json.loads(raw_options) if isinstance(raw_options, str) else {}
+            except json.JSONDecodeError:
+                options = {}
+            chip = str(options.get("chip", "auto"))
+            if chip not in CHIP_FAMILIES:
+                labels = list(CHIP_FAMILIES.values())
+                selected, accepted = QInputDialog.getItem(
+                    self,
+                    "Choose firmware target",
+                    "Target chip:",
+                    labels,
+                    0,
+                    False,
+                )
+                if not accepted:
+                    return
+                chip = next(key for key, label in CHIP_FAMILIES.items() if label == selected)
+            capabilities = {
+                "maximum": bool(options.get("maximum", True)),
+                "webUi": bool(options.get("webUi", True)),
+                "hacs": bool(options.get("hacs", True)),
+                "audio": bool(options.get("audio", False)) and chip != "esp32c3",
+            }
+            firmware_mode = str(options.get("firmwareMode", "full"))
+            suggested = designer_server.generated_firmware_name(chip, capabilities, firmware_mode)
+            selected, _ = QFileDialog.getSaveFileName(
+                self,
+                "Compile and save firmware",
+                str(self._dialog_directory() / suggested),
+                "ESP32 firmware (*.bin);;Binary files (*.bin);;All files (*.*)",
+            )
+            if not selected:
+                return
+            destination = self._ensure_extension(pathlib.Path(selected), ".bin")
+            designer_server.remember_configuration_directory(destination.parent)
+            with designer_server.settings_lock:
+                settings = json.loads(json.dumps(designer_server.settings))
+            try:
+                self._compile_job = designer_server.create_job({
+                    "compileOnly": True,
+                    "firmwareMode": firmware_mode,
+                    "chip": chip,
+                    "settings": settings,
+                    "capabilities": capabilities,
+                    "outputPath": str(destination),
+                })
+            except (RuntimeError, ValueError) as error:
+                QMessageBox.critical(self, "Compilation could not start", str(error))
+                return
+            self._compile_progress = QProgressDialog("Preparing firmware compiler…", "Cancel", 0, 100, self)
+            self._compile_progress.setWindowTitle("Compile ELMA firmware")
+            self._compile_progress.setWindowModality(Qt.WindowModality.WindowModal)
+            self._compile_progress.setMinimumDuration(0)
+            self._compile_progress.canceled.connect(self._cancel_compile_job)
+            self._compile_progress.show()
+            self.compile_save_action.setEnabled(False)
+            self._compile_poll_timer.start()
+
+        def _cancel_compile_job(self) -> None:
+            if self._compile_job is None:
+                return
+            self._compile_job.cancelled = True
+            if self._compile_job.process and self._compile_job.process.poll() is None:
+                self._compile_job.process.terminate()
+
+        def _poll_compile_job(self) -> None:
+            job = self._compile_job
+            if job is None:
+                self._compile_poll_timer.stop()
+                return
+            if self._compile_progress is not None:
+                self._compile_progress.setValue(job.progress)
+                self._compile_progress.setLabelText(job.status or "Compiling firmware…")
+            if job.state in ("queued", "running"):
+                return
+            self._compile_poll_timer.stop()
+            if self._compile_progress is not None:
+                self._compile_progress.close()
+                self._compile_progress.deleteLater()
+                self._compile_progress = None
+            self.compile_save_action.setEnabled(True)
+            self._compile_job = None
+            if job.state == "complete":
+                QMessageBox.information(
+                    self,
+                    "Firmware compiled",
+                    f"Firmware was compiled and saved to:\n{job.firmware_file}",
+                )
+            elif job.state != "cancelled":
+                QMessageBox.critical(self, "Firmware compilation failed", job.error or job.status)
+
+        def _queue_geometry_save(self) -> None:
+            if not smoke_test and self.isVisible():
+                self._geometry_save_timer.start()
+
+        def _save_geometry(self) -> None:
+            if smoke_test:
+                return
+            payload = {
+                "geometry": base64.b64encode(bytes(self.saveGeometry())).decode("ascii"),
+                "maximized": self.isMaximized(),
+            }
+            try:
+                window_state_path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = window_state_path.with_suffix(".tmp")
+                temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                temporary.replace(window_state_path)
+            except OSError:
+                pass
+
+        def moveEvent(self, event) -> None:
+            super().moveEvent(event)
+            self._queue_geometry_save()
+
+        def resizeEvent(self, event) -> None:
+            super().resizeEvent(event)
+            self._queue_geometry_save()
+
+        def closeEvent(self, event) -> None:
+            if not self._close_capture_complete and not smoke_test:
+                event.ignore()
+                self._capture_page_settings(self._finish_close_after_capture)
+                return
+            self._close_capture_complete = False
+            if not smoke_test and not self._confirm_unsaved_changes():
+                event.ignore()
+                return
+            if self._compile_job and self._compile_job.state in ("queued", "running"):
+                response = QMessageBox.question(
+                    self,
+                    "Cancel firmware compilation?",
+                    "Firmware compilation is still running. Cancel it and close ELMA Flasher?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if response != QMessageBox.StandardButton.Yes:
+                    event.ignore()
+                    return
+                self._cancel_compile_job()
+            self._geometry_save_timer.stop()
+            self._save_geometry()
+            super().closeEvent(event)
+
+        def _finish_close_after_capture(self) -> None:
+            self._close_capture_complete = True
+            self.close()
+
+    window = PersistentDesignerWindow()
     window.setWindowTitle(f"ELMA Flasher v{APP_VERSION}")
     window.setWindowIcon(icon)
     window.resize(1280, 900)
@@ -977,6 +2128,15 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
         "designer_loaded": False,
         "responsive_ok": not smoke_test,
         "pc_interface_ok": not smoke_test,
+        "file_menu_ok": all(
+            action.text()
+            for action in (
+                window.open_action,
+                window.save_action,
+                window.save_as_action,
+                window.compile_save_action,
+            )
+        ),
         "responsive_test_started": False,
         "interface_attempts": 0,
     }
@@ -1005,12 +2165,34 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
                 and value.get("storageHidden")
                 and value.get("builderVisible")
                 and value.get("designerTitle")
+                and value.get("controlResponsive")
+                and value.get("boardChoiceCount", 0) > 1
+                and value.get("boardSelectorEnabled")
+                and value.get("boardAutodetectVisible")
+                and value.get("boardAutodetectOnBehavior")
+                and value.get("boardAutodetectCompact")
+                and value.get("boardStartupStateConsistent")
+                and value.get("boardDropdownTip")
+                and value.get("ipFlashControls")
+                and value.get("ipTransportLabel")
+                and value.get("singleCancelButton")
+                and value.get("motorVisible")
+                and value.get("motorControlsStable")
+                and value.get("touchAssignmentVisible")
+                and value.get("touchAssignmentStable")
+                and value.get("interactionResponsive")
+                and value.get("tabPaintResponsive")
+                and value.get("eyeButtonsBare")
+                and value.get("migrationVisible")
+                and value.get("migrationControls")
+                and value.get("wifiPowerControls")
             )
             if not result["pc_interface_ok"] and result["interface_attempts"] < 20:
                 QTimer.singleShot(300, check_pc_interface)
                 return
             if not result["pc_interface_ok"]:
                 print(f"PC Designer adaptation smoke test failed: {value}")
+            window.showNormal()
             window.resize(700, 680)
             QTimer.singleShot(150, verify_responsive_zoom)
 
@@ -1028,14 +2210,94 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
         def check_pc_interface() -> None:
             result["interface_attempts"] += 1
             designer_view.page().runJavaScript(
-                "JSON.stringify({"
+                "(()=>{"
+                "let control=document.querySelector('select[data-peripheral-control-index=\"0\"]');"
+                "if(control&&control.value!=='drv8833-dual-motor-driver'){"
+                "control.value='drv8833-dual-motor-driver';"
+                "control.dispatchEvent(new Event('change',{bubbles:true}));"
+                "control=document.querySelector('select[data-peripheral-control-index=\"0\"]');"
+                "}"
+                "let touchInput=document.querySelector('select[data-peripheral-input-index=\"0\"]');"
+                "if(touchInput&&touchInput.value!=='ttp223-touch-button'){"
+                "touchInput.value='ttp223-touch-button';"
+                "touchInput.dispatchEvent(new Event('change',{bubbles:true}));"
+                "}"
+                "let duration=document.getElementById('motorChannelAForwardDuration');"
+                "let movement=document.getElementById('motorChannelAForwardRole');"
+                "let stopSwitch=document.getElementById('motorChannelAForwardLimit');"
+                "let boardSelector=document.getElementById('gpioBoardSelector');"
+                "let boardAutodetect=document.getElementById('gpioBoardAutodetect');"
+                "let flashTransport=document.getElementById('localBuilderTransport');"
+                "let flashAction=document.getElementById('localBuilderCompileFlash');"
+                "if(flashTransport&&!window.__elmaIpTransportSmoke){"
+                "flashTransport.value='ip';flashTransport.dispatchEvent(new Event('change',{bubbles:true}));"
+                "window.__elmaIpTransportSmoke=!document.getElementById('localBuilderIpTarget')?.hidden&&flashAction?.textContent.includes('Flash IP Device');"
+                "flashTransport.value='usb';flashTransport.dispatchEvent(new Event('change',{bubbles:true}));"
+                "}"
+                "if(boardSelector&&boardAutodetect&&!window.__elmaBoardModeSmokeStarted){"
+                "window.__elmaBoardStartupStateConsistent=boardAutodetect.checked===boardSelector.disabled;"
+                "window.__elmaBoardModeSmokeStarted=true;"
+                "boardAutodetect.checked=true;"
+                "boardAutodetect.dispatchEvent(new Event('change',{bubbles:true}));"
+                "setTimeout(()=>{"
+                "window.__elmaBoardAutodetectOnBehavior=boardSelector.disabled&&boardSelector.title.includes('Board autodetect is on');"
+                "boardAutodetect.checked=false;"
+                "boardAutodetect.dispatchEvent(new Event('change',{bubbles:true}));"
+                "},500);"
+                "}"
+                "if(duration&&!window.__elmaMotorControlSmokeStart){"
+                "let interactionStarted=performance.now();"
+                "duration.value='3000';"
+                "duration.dispatchEvent(new Event('input',{bubbles:true}));"
+                "duration.dispatchEvent(new Event('change',{bubbles:true}));"
+                "duration.focus();"
+                "if(movement){movement.value='opening';movement.dispatchEvent(new Event('change',{bubbles:true}));}"
+                "if(stopSwitch){stopSwitch.dispatchEvent(new Event('change',{bubbles:true}));}"
+                "let touchAction=document.querySelector('select[data-motor-touch-action=\"button1\"]');"
+                "if(touchAction){touchAction.value='toggle_open_close';touchAction.dispatchEvent(new Event('change',{bubbles:true}));touchAction.focus();}"
+                "window.__elmaMotorInteractionLatency=performance.now()-interactionStarted;"
+                "let wifiTab=document.querySelector('[data-tab=wifi]');"
+                "let motorTab=document.querySelector('[data-tab=motor]');"
+                "if(wifiTab&&motorTab){"
+                "wifiTab.click();"
+                "setTimeout(()=>{"
+                "let tabStarted=performance.now();"
+                "motorTab.click();"
+                "window.__elmaTabSwitchLatency=performance.now()-tabStarted;"
+                "requestAnimationFrame(()=>requestAnimationFrame(()=>{window.__elmaMotorTabPaintLatency=performance.now()-tabStarted;}));"
+                "},180);"
+                "}"
+                "window.__elmaMotorControlSmokeStart=Date.now();"
+                "}"
+                "return JSON.stringify({"
                 "mode:document.body.classList.contains('local-builder-mode'),"
                 "powerHidden:getComputedStyle(document.querySelector('.hero-actions')).display==='none',"
                 "hardwareEstimate:getComputedStyle(document.querySelector('[data-tab=hardware]')).display!=='none'&&document.querySelector('#tab-hardware h2')?.textContent.includes('Estimate'),"
                 "storageHidden:getComputedStyle(document.querySelector('[data-tab=storage-internal]')).display==='none',"
                 "builderVisible:getComputedStyle(document.getElementById('localBuilderPanel')).display!=='none',"
-                "designerTitle:document.getElementById('deviceTitle')?.textContent.includes('Designer')"
-                "})",
+                "designerTitle:document.getElementById('deviceTitle')?.textContent.includes('Designer'),"
+                "controlResponsive:control?.value==='drv8833-dual-motor-driver',"
+                "boardChoiceCount:boardSelector?.options?.length||0,"
+                "boardSelectorEnabled:Boolean(window.__elmaBoardAutodetectOnBehavior&&!boardAutodetect?.checked&&!boardSelector?.disabled),"
+                "boardAutodetectVisible:!boardAutodetect?.disabled&&!boardAutodetect?.closest('label')?.hidden,"
+                "boardAutodetectOnBehavior:Boolean(window.__elmaBoardAutodetectOnBehavior),"
+                "boardAutodetectCompact:Boolean(boardAutodetect?.closest('label')?.textContent?.trim()===''&&Math.abs(parseFloat(getComputedStyle(boardAutodetect.closest('label')).width)-parseFloat(getComputedStyle(document.querySelector('.peripheral-profile-action-add')).width))<=2),"
+                "boardStartupStateConsistent:Boolean(window.__elmaBoardStartupStateConsistent),"
+                "boardDropdownTip:boardSelector?.title?.includes('concrete board'),"
+                "ipFlashControls:Boolean(document.getElementById('localBuilderIpDevice')&&document.getElementById('localBuilderIpAddress')&&document.getElementById('localBuilderScanIpDevices')),"
+                "ipTransportLabel:Boolean(window.__elmaIpTransportSmoke&&flashAction?.textContent.includes('Flash USB Device')),"
+                "singleCancelButton:Boolean(document.getElementById('localBuilderCancel')?.hidden),"
+                "motorVisible:getComputedStyle(document.querySelector('[data-tab=motor]')).display!=='none'&&!document.querySelector('[data-tab=motor]').hidden,"
+                "motorControlsStable:Boolean(window.__elmaMotorControlSmokeStart&&Date.now()-window.__elmaMotorControlSmokeStart>2200&&duration?.value==='3000'&&movement?.value==='opening'),"
+                "touchAssignmentVisible:Boolean(document.querySelector('select[data-motor-touch-action=\"button1\"]')),"
+                "touchAssignmentStable:Boolean(window.__elmaMotorControlSmokeStart&&Date.now()-window.__elmaMotorControlSmokeStart>2200&&document.querySelector('select[data-motor-touch-action=\"button1\"]')?.value==='toggle_open_close'),"
+                "interactionResponsive:Boolean(window.__elmaMotorInteractionLatency<150&&window.__elmaTabSwitchLatency<250),"
+                "tabPaintResponsive:Boolean(window.__elmaMotorTabPaintLatency<500),"
+                "eyeButtonsBare:Array.from(document.querySelectorAll('.password-toggle')).every(button=>{let style=getComputedStyle(button);return style.backgroundColor==='rgba(0, 0, 0, 0)'&&parseFloat(style.borderTopWidth)===0}),"
+                "migrationVisible:getComputedStyle(document.querySelector('[data-tab=migration]')).display!=='none'&&!document.querySelector('[data-tab=migration]').hidden,"
+                "migrationControls:Boolean(document.getElementById('migrationScanButton')&&document.getElementById('migrationInspectButton')&&document.getElementById('migrationApplyButton')&&document.getElementById('migrationYamlFile')),"
+                "wifiPowerControls:Boolean(document.querySelectorAll('[data-wifi-power][type=range]').length===2&&!document.getElementById('wifiApplyPowerButton').disabled&&document.getElementById('wifiPowerStatus').textContent.includes('Future ESP device')&&Array.from(document.querySelectorAll('[data-wifi-power]')).every(input=>input.min==='2'&&input.max==='19.5'&&input.step==='0.5'))"
+                "});})()",
                 0,
                 verify_pc_interface,
             )
@@ -1046,6 +2308,7 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
         result["designer_loaded"] = bool(ok)
         if ok:
             designer_view.applyResponsiveZoom()
+            QTimer.singleShot(0, window.prompt_for_initial_configuration)
         maybe_finish_smoke_test()
         if not ok and not smoke_test:
             designer_view.setHtml(
@@ -1056,17 +2319,28 @@ def run_native_designer_window(url: str, icon_path: pathlib.Path, smoke_test: bo
             )
 
     designer_view.loadFinished.connect(designer_loaded)
+    saved_window_geometry = load_window_geometry()
+    if saved_window_geometry:
+        geometry, was_maximized = saved_window_geometry
+        window.restoreGeometry(QByteArray(geometry))
+    else:
+        was_maximized = True
+
     if smoke_test:
         QTimer.singleShot(15000, finish_smoke_test)
     else:
-        window.showMaximized()
-    designer_view.setUrl(QUrl(url))
-    window.show() if smoke_test else None
+        window.showMaximized() if was_maximized else window.show()
+    designer_url = QUrl(url)
+    designer_query = QUrlQuery(designer_url)
+    designer_query.addQueryItem("elmaRuntime", "pc-designer")
+    designer_url.setQuery(designer_query)
+    designer_view.setUrl(designer_url)
+    window.showMaximized() if smoke_test else None
     qt_app.exec()
     designer_view.deleteLater()
     window.deleteLater()
     qt_app.processEvents()
-    return result["designer_loaded"] and result["pc_interface_ok"] and result["responsive_ok"]
+    return result["designer_loaded"] and result["pc_interface_ok"] and result["responsive_ok"] and result["file_menu_ok"]
 
 
 class FlasherApplication:
@@ -1670,8 +2944,13 @@ class FlasherApplication:
         output = "\n".join(lines)
         return chip_family_from_esptool_output(output), flash_size_from_esptool_output(output)
 
-    def _esptool(self, arguments: list[str]) -> None:
-        bridge = EsptoolOutput(self._handle_esptool_line)
+    def _esptool(self, arguments: list[str], line_handler: Callable[[str], None] | None = None) -> None:
+        def handle_line(line: str) -> None:
+            self._handle_esptool_line(line)
+            if line_handler is not None:
+                line_handler(line)
+
+        bridge = EsptoolOutput(handle_line)
         try:
             with self.esptool_lock, contextlib.redirect_stdout(bridge), contextlib.redirect_stderr(bridge):
                 esptool.main(arguments)
@@ -1683,13 +2962,20 @@ class FlasherApplication:
 
     def _handle_esptool_line(self, line: str) -> None:
         self._log(line)
-        match = re.search(r"\((\d+) %\)", line)
+        match = re.search(r"\((\d+)\s*%\)", line)
         if match:
             self._emit("status", 25 + int(match.group(1)) * 0.65, "Flashing firmware", line, ORANGE)
         elif "Hash of data verified" in line:
             self._emit("status", 90, "Firmware verified", "Flash hashes verified successfully.", ORANGE)
 
-    def _write_flash(self, port: str, family: str, parts: list[tuple[int, bytes]], erase: bool) -> None:
+    def _write_flash(
+        self,
+        port: str,
+        family: str,
+        parts: list[tuple[int, bytes]],
+        erase: bool,
+        line_handler: Callable[[str], None] | None = None,
+    ) -> None:
         with tempfile.TemporaryDirectory(prefix="elma-flasher-") as temp_dir:
             paths: list[tuple[int, pathlib.Path]] = []
             for index, (address, data) in enumerate(parts):
@@ -1702,12 +2988,12 @@ class FlasherApplication:
             common = ["--chip", family, "--port", port, "--baud", str(FLASH_BAUD), "--before", "default-reset"]
             if erase:
                 self._emit("status", 18, "Erasing target flash", "Performing the requested full-chip erase.", ORANGE)
-                self._esptool(common + ["--after", "no-reset", "erase-flash"])
+                self._esptool(common + ["--after", "no-reset", "erase-flash"], line_handler)
             self._emit("status", 25, "Flashing firmware", "Writing bootloader, partitions, OTA selection and application.", ORANGE)
             write_arguments = common + ["--after", "hard-reset", "write-flash", "--flash-mode", "keep", "--flash-freq", "keep", "--flash-size", "detect"]
             for address, path in paths:
                 write_arguments.extend([f"0x{address:X}", str(path)])
-            self._esptool(write_arguments)
+            self._esptool(write_arguments, line_handler)
 
     def _provision(self, port: str, configuration: dict, expect_wifi_ip: bool) -> str:
         payload = json.dumps(configuration, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -1839,7 +3125,7 @@ class FlasherApplication:
             url = self.designer_server.start()
             self._log("Opening the bundled ELMA Device Designer window")
             self.root.withdraw()
-            run_native_designer_window(url, self.window_icon_path)
+            run_native_designer_window(url, self.window_icon_path, self.designer_server)
         except BaseException as error:
             messagebox.showerror("ELMA Device Designer", friendly_error(error))
         finally:
@@ -1867,6 +3153,7 @@ def self_test() -> int:
             resource_path("ELMA-Compiler-Core.exe"),
             resource_path("web/index.html"),
             resource_path("web/modules/local-builder.js"),
+            resource_path("web/modules/device-migration-tab.js"),
             resource_path("builder_project/platformio.ini"),
             resource_path("builder_project/src/generated_web_assets.cpp"),
         ])
@@ -1955,7 +3242,12 @@ def main() -> int:
         root.withdraw()
         try:
             designer_url = app.designer_server.start()
-            native_designer_ok = run_native_designer_window(designer_url, app.window_icon_path, smoke_test=True)
+            native_designer_ok = run_native_designer_window(
+                designer_url,
+                app.window_icon_path,
+                app.designer_server,
+                smoke_test=True,
+            )
         finally:
             app.designer_server.stop()
             root.destroy()
@@ -1969,27 +3261,48 @@ def main() -> int:
             return 8
         compiler_environment = os.environ.copy()
         compiler_environment["ELMA_PORTABLE_BUILDER"] = "1"
-        command = server.compiler_command() + [
-            "run", "--project-dir", str(project), "--environment", "esp32c3_designer_hacs",
-        ]
         creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        completed = subprocess.run(
-            command,
-            cwd=project,
-            env=compiler_environment,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=creation_flags,
-            timeout=600,
-            check=False,
+        profiles = (
+            ("esp32c3_designer_hacs", "esp32c3", "esp32-c3"),
+            ("esp32s3_notifier_hacs", "esp32s3", "esp32-s3-super-mini"),
+            ("esp32_notifier_hacs", "esp32", "esp32-wroom"),
         )
-        firmware = project / ".pio" / "build" / "esp32c3_designer_hacs" / "firmware.bin"
-        if completed.returncode or not firmware.is_file():
-            return 9
-        try:
-            return 0 if chip_family_from_image(firmware.read_bytes()[:24]) == "esp32c3" else 9
-        except (OSError, ValueError):
-            return 9
+        for profile, expected_family, board_profile in profiles:
+            board_id, _ = BOARD_PROFILES[board_profile]
+            compiler_environment["ELMA_SELECTED_BOARD_PROFILE"] = board_profile
+            compiler_environment["ELMA_SELECTED_BOARD_PROFILE_ID"] = str(board_id)
+            command = server.compiler_command() + [
+                "run", "--project-dir", str(project), "--environment", profile,
+            ]
+            completed = subprocess.run(
+                command,
+                cwd=project,
+                env=compiler_environment,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creation_flags,
+                timeout=600,
+                check=False,
+            )
+            firmware = project / ".pio" / "build" / profile / "firmware.bin"
+            if completed.returncode or not firmware.is_file():
+                return 9
+            try:
+                firmware_bytes = firmware.read_bytes()
+                if chip_family_from_image(firmware_bytes[:24]) != expected_family:
+                    return 9
+                selected_asset = BOARD_ASSET_FILES[board_profile].encode()
+                if selected_asset not in firmware_bytes:
+                    return 9
+                if any(
+                    asset.encode() in firmware_bytes
+                    for profile_name, asset in BOARD_ASSET_FILES.items()
+                    if profile_name != board_profile
+                ):
+                    return 9
+            except (OSError, ValueError):
+                return 9
+        return 0
     # Start directly in the unified native window. A hidden controller supplies
     # the proven serial detection, erase, flash and provisioning implementation
     # to the loopback-only Designer backend.
@@ -1999,7 +3312,7 @@ def main() -> int:
     root.withdraw()
     try:
         designer_url = app.designer_server.start()
-        run_native_designer_window(designer_url, app.window_icon_path)
+        run_native_designer_window(designer_url, app.window_icon_path, app.designer_server)
     finally:
         app.designer_server.stop()
         root.destroy()

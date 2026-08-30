@@ -31,6 +31,12 @@ jobs:
         run: pip install platformio
       - name: Validate project version
         run: python scripts/project_version.py
+      - name: Wi-Fi power regression tests
+        run: |
+          node --test tests/wifi-power.test.mjs
+          python -m unittest discover -s tests -p test_wifi_power_defaults.py
+          g++ -std=c++17 tests/wifi_power_policy_test.cpp -o /tmp/wifi_power_policy_test
+          /tmp/wifi_power_policy_test
       - name: Validate portable reduced builder version path
         run: |
           mkdir -p .portable-builder-validation/include
@@ -60,6 +66,12 @@ jobs:
             asset: esp32s3-notifier-hacs-slim-${{ github.event.release.tag_name }}.bin
           - env: esp32c3_designer_hacs
             asset: esp32c3-notifier-hacs-${{ github.event.release.tag_name }}.bin
+          - env: esp32_ota_bridge
+            asset: esp32-ota-bridge-${{ github.event.release.tag_name }}.bin
+          - env: esp32s3_ota_bridge
+            asset: esp32s3-ota-bridge-${{ github.event.release.tag_name }}.bin
+          - env: esp32c3_ota_bridge
+            asset: esp32c3-ota-bridge-${{ github.event.release.tag_name }}.bin
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -76,6 +88,8 @@ jobs:
       - name: Validate release tag and firmware version
         run: python scripts/project_version.py --tag "${{ github.event.release.tag_name }}"
       - name: Build release firmware
+        env:
+          ELMA_SELECTED_BOARD_PROFILE_ID: ${{ startsWith(matrix.env, 'esp32c3') && '11' || startsWith(matrix.env, 'esp32s3') && '1' || '8' }}
         run: pio run -e ${{ matrix.env }}
       - name: Stage OTA asset
         run: |
@@ -84,6 +98,7 @@ jobs:
       - name: Upload OTA asset to release
         uses: softprops/action-gh-release@v2
         with:
+          overwrite_files: false
           files: dist/${{ matrix.asset }}
 
   release-flasher:
@@ -134,4 +149,5 @@ jobs:
       - name: Upload ELMA Flasher to release
         uses: softprops/action-gh-release@v2
         with:
+          overwrite_files: false
           files: release-assets/${{ github.event.release.tag_name }}/ELMA-Flasher-${{ github.event.release.tag_name }}.exe

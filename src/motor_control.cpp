@@ -217,6 +217,11 @@ void MotorController::applySettings(const SettingsBundle& settings) {
     }
 
     if (channelPinsEqual(configuredChannels_[0], nextChannels[0]) && channelPinsEqual(configuredChannels_[1], nextChannels[1])) {
+        // Runtime settings application initializes button fallbacks before it
+        // reaches the motor controller. A disabled button can share a legacy
+        // default GPIO with a configured bridge input, so restore OUTPUT mode
+        // even when the motor mapping itself did not change.
+        configurePins();
         return;
     }
 
@@ -224,6 +229,13 @@ void MotorController::applySettings(const SettingsBundle& settings) {
     releaseConfiguredPins();
     configuredChannels_[0] = nextChannels[0];
     configuredChannels_[1] = nextChannels[1];
+    configurePins();
+}
+
+void MotorController::reclaimConfiguredPins() {
+    // Input initialization may touch a disabled input's legacy/default GPIO.
+    // Reassert the configured bridge pins afterward so a default button pin
+    // cannot silently turn one DRV8833 direction back into an input.
     configurePins();
 }
 

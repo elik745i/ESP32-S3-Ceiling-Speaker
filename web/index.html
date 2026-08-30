@@ -128,6 +128,9 @@
           <button class="tab-button tab-button-icon tab-storage-external" type="button" role="tab" aria-label="External Storage" data-tooltip="External Storage" title="External Storage" aria-selected="false" aria-controls="tab-storage-external" data-tab="storage-external" hidden>
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h10l3 3v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"></path><path d="M9 13h6"></path><path d="M12 10v6"></path></svg>
           </button>
+          <button id="migrationTabButton" class="tab-button tab-button-icon tab-migration" type="button" role="tab" aria-label="Import Device" data-tooltip="Import Device" title="Import Device" aria-selected="false" aria-controls="tab-migration" data-tab="migration" hidden>
+            <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h7v6H4z"></path><path d="M13 13h7v6h-7z"></path><path d="M8 11v5h5"></path><path d="m10 14 3 2-3 2"></path></svg>
+          </button>
           <button class="tab-button tab-button-icon tab-firmware" type="button" role="tab" aria-label="Firmware" data-tooltip="Firmware" title="Firmware" aria-selected="false" aria-controls="tab-firmware" data-tab="firmware">
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10"></path><path d="m8 9 4 4 4-4"></path><path d="M5 17v2h14v-2"></path></svg>
           </button>
@@ -377,6 +380,23 @@
               </label>
             </div>
             <label class="check"><input name="wifi.apFallbackEnabled" type="checkbox"> Enable AP fallback</label>
+            <fieldset class="wifi-power-panel">
+              <legend>Wi-Fi transmit power</legend>
+              <div class="row">
+                <label>STA mode (router connection) <output id="wifiSTAPowerValue">15 dBm</output>
+                  <input name="wifi.staTxPowerDbm" data-wifi-power type="range" min="2" max="19.5" step="0.5" value="15" aria-label="STA transmit-power limit">
+                </label>
+                <label>AP mode (device access point) <output id="wifiAPPowerValue">15 dBm</output>
+                  <input name="wifi.apTxPowerDbm" data-wifi-power type="range" min="2" max="19.5" step="0.5" value="15" aria-label="AP transmit-power limit">
+                </label>
+              </div>
+              <p class="note">Requested radio output, not received signal (RSSI). The chip/driver may round or cap the limit. AP+STA shares one radio and uses the higher request. Lower power can disconnect a distant device.</p>
+              <p class="note">Full firmware: saved device settings override compiled defaults after OTA. Minimal recovery uses maximum recovery power and preserves the saved Full settings.</p>
+              <div class="inline-actions">
+                <button id="wifiApplyPowerButton" type="button" class="secondary">Apply Power Settings</button>
+                <span id="wifiPowerStatus" class="scan-status" role="status">Waiting for radio status…</span>
+              </div>
+            </fieldset>
             <label class="check"><input id="useStaticIpToggle" name="wifi.useStaticIp" type="checkbox"> Use static IP</label>
             <div class="row static-ip-group">
               <label>Static IP
@@ -745,7 +765,7 @@
                   <option value="esp32-c6">ESP32-C6</option>
                   <option value="esp32-c3">ESP32-C3 Super Mini</option>
                 </select>
-                <label class="gpio-controls-autodetect" title="Autodetect board profile">
+                <label class="gpio-controls-autodetect" title="Automatically choose a compatible board from the detected target chip">
                   <input id="gpioBoardAutodetect" type="checkbox" checked aria-label="Autodetect board profile">
                 </label>
               </div>
@@ -912,7 +932,7 @@
                 <div id="peripheralDiagramItems" class="peripheral-diagram-items" aria-hidden="true"></div>
                 <div id="peripheralDiagramBoardShell" class="peripheral-diagram-board-shell">
                   <button id="peripheralDiagramBoardEdit" type="button" class="peripheral-diagram-board-edit" data-board-edit="true" aria-label="Edit ESP board labels" title="Edit labels">Edit</button>
-                  <img id="peripheralDiagramBoardImage" class="peripheral-diagram-board-image" src="/esp32-s3-supermini-breadboard.svg" alt="ESP32-S3 Super Mini board in peripheral diagram" />
+                  <img id="peripheralDiagramBoardImage" class="peripheral-diagram-board-image" alt="Selected ESP32 board in peripheral diagram" />
                 </div>
               </div>
               <div class="peripheral-diagram-placeholder-text">Dynamic diagram of connected peripherals will appear here.</div>
@@ -922,7 +942,7 @@
             <div id="gpioLeftPins" class="gpio-pin-column"></div>
             <div class="gpio-board-stack">
               <div class="gpio-board-wrap">
-                <img id="gpioBoardImage" class="gpio-board-svg gpio-board-svg-rotated" src="/esp32-s3-supermini-breadboard.svg" alt="ESP32-S3 Super Mini board" />
+                <img id="gpioBoardImage" class="gpio-board-svg gpio-board-svg-rotated" alt="Selected ESP32 board" />
               </div>
               <div id="gpioBoardRecommendations" class="gpio-board-recommendations" aria-label="ESP32 board recommendations"></div>
             </div>
@@ -1237,6 +1257,41 @@
           </div>
         </dialog>
 
+        <div id="tab-migration" class="tab-panel" role="tabpanel" hidden>
+          <h2>Import Existing Device</h2>
+          <p class="note">Discover a Tasmota or ESPHome device, save a migration snapshot, and translate recoverable GPIO assignments into the ELMA Configuration tab before compiling.</p>
+          <div class="migration-card">
+            <div class="migration-device-row">
+              <label>Discovered device
+                <select id="migrationDeviceSelect"><option value="">Scan or enter an IP address</option></select>
+              </label>
+              <button id="migrationScanButton" type="button" class="secondary">Scan LAN</button>
+            </div>
+            <div class="migration-credentials-grid">
+              <label>IP address or hostname<input id="migrationIpAddress" type="text" placeholder="192.168.1.53"></label>
+              <label>Web username<input id="migrationUsername" type="text" autocomplete="username" placeholder="Optional"></label>
+              <label>Web / OTA password<input id="migrationPassword" type="password" autocomplete="current-password" placeholder="Optional"></label>
+            </div>
+            <div id="migrationYamlRow" class="migration-yaml-row">
+              <div><strong>ESPHome YAML</strong><span id="migrationYamlLabel">Optional, but required to recover physical ESPHome GPIOs</span></div>
+              <label class="button-like secondary">Choose YAML<input id="migrationYamlFile" type="file" accept=".yaml,.yml,text/yaml" hidden></label>
+            </div>
+            <div class="inline-actions">
+              <button id="migrationInspectButton" type="button">Pull & Preview Configuration</button>
+              <button id="migrationDownloadButton" type="button" class="secondary" disabled>Save Source Snapshot</button>
+              <span id="migrationStatus" class="scan-status">Ready to discover source devices.</span>
+            </div>
+          </div>
+          <div id="migrationPreview" class="migration-preview" hidden>
+            <div class="migration-board-row">
+              <label>ELMA board assignment<select id="migrationBoardSelect"></select></label>
+              <p id="migrationBoardReason" class="note"></p>
+            </div>
+            <div id="migrationPreviewContent"></div>
+            <div class="actions"><button id="migrationApplyButton" type="button" disabled>Apply Wiring to Configuration</button></div>
+          </div>
+        </div>
+
         <div id="tab-firmware" class="tab-panel" role="tabpanel">
           <h2>Firmware</h2>
           <section id="localBuilderPanel" class="local-builder-panel" hidden>
@@ -1248,6 +1303,12 @@
               <span id="localBuilderBadge" class="badge current">Local compiler</span>
             </div>
             <div class="local-builder-grid">
+              <label>Flash connection
+                <select id="localBuilderTransport">
+                  <option value="usb" selected>USB device</option>
+                  <option value="ip">IP device (OTA)</option>
+                </select>
+              </label>
               <label>Target chip
                 <select id="localBuilderChip">
                   <option value="auto">Auto-detect from USB</option>
@@ -1256,10 +1317,33 @@
                   <option value="esp32c3">ESP32-C3</option>
                 </select>
               </label>
-              <label>Connected USB device
-                <select id="localBuilderPort"></select>
+              <label class="local-builder-firmware-selection">Select firmware
+                <select id="localBuilderFirmwareMode">
+                  <option value="full" selected>Full firmware</option>
+                  <option value="minimal">Minimal Wi-Fi + OTA bridge</option>
+                </select>
               </label>
-              <button id="localBuilderRefreshPorts" type="button" class="secondary">Refresh USB devices</button>
+              <div id="localBuilderUsbTarget" class="local-builder-target-row">
+                <label>Connected USB device
+                  <select id="localBuilderPort"></select>
+                </label>
+                <button id="localBuilderRefreshPorts" type="button" class="secondary">Refresh USB devices</button>
+              </div>
+              <div id="localBuilderIpTarget" class="local-builder-ip-target" hidden>
+                <label>Compatible device on this LAN
+                  <select id="localBuilderIpDevice"><option value="">Scan or enter an IP address</option></select>
+                </label>
+                <button id="localBuilderScanIpDevices" type="button" class="secondary">Scan LAN</button>
+                <label>IP address or hostname
+                  <input id="localBuilderIpAddress" type="text" inputmode="url" placeholder="192.168.1.53">
+                </label>
+                <label>Web username
+                  <input id="localBuilderIpUsername" type="text" autocomplete="username" placeholder="Only if web login is enabled">
+                </label>
+                <label>Web / OTA password
+                  <input id="localBuilderIpPassword" type="password" autocomplete="current-password" placeholder="Only if web login is enabled">
+                </label>
+              </div>
             </div>
             <fieldset class="local-builder-features">
               <legend>Firmware capability policy</legend>
@@ -1277,7 +1361,7 @@
             <pre id="localBuilderLog" class="log-box">Waiting for a build...</pre>
             <div class="actions">
               <button id="localBuilderCompileFlash" type="button">Compile Firmware &amp; Flash USB Device</button>
-              <button id="localBuilderCancel" type="button" class="secondary danger" hidden>Cancel Build / Flash</button>
+              <button id="localBuilderCancel" type="button" class="secondary danger" hidden aria-hidden="true">Cancel Build / Flash</button>
             </div>
           </section>
           <div id="runtimeFirmwarePanel">

@@ -57,8 +57,14 @@ export function createUiHistoryModule({
   }
 
   function buildSnapshot() {
+    // In the PC Designer, autosave keeps state.settings current. Re-collecting
+    // and normalizing every form control for each undo point is needlessly
+    // expensive in Qt WebEngine and can block the next click for seconds.
+    const settings = document.body.classList.contains("local-builder-mode")
+      ? state.settings
+      : currentSettingsSnapshot?.();
     return {
-      settings: cloneValue(currentSettingsSnapshot?.() || {}),
+      settings: cloneValue(settings || {}),
       activeTab: String(activeTabName?.() || "gpio"),
       playbackForm: {
         url: String(elements.playUrl?.value || ""),
@@ -111,12 +117,15 @@ export function createUiHistoryModule({
     return true;
   }
 
-  function scheduleCapture(delayMs = 0) {
+  function scheduleCapture(delayMs) {
     clearScheduledCapture();
+    const resolvedDelayMs = Number.isFinite(Number(delayMs))
+      ? Math.max(0, Number(delayMs))
+      : (document.body.classList.contains("local-builder-mode") ? 1200 : 0);
     historyState.scheduledCaptureTimer = window.setTimeout(() => {
       historyState.scheduledCaptureTimer = null;
       captureSnapshot();
-    }, delayMs);
+    }, resolvedDelayMs);
   }
 
   function restoreSnapshot(snapshot) {

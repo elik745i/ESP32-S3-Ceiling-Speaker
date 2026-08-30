@@ -314,7 +314,6 @@ export function createConfigurationPeripheralsTab({
       }));
       elements.peripheralControlsList.appendChild(row);
     });
-    renderPeripheralDiagram();
   }
 
   function renderPeripheralExpansionControls() {
@@ -710,6 +709,7 @@ export function createConfigurationPeripheralsTab({
       syncGpioMappingControls();
       renderPeripheralDiagram();
       savePeripheralProfileSelections();
+      queueSettingsSave(150);
       onPeripheralConfigurationChange?.();
     });
 

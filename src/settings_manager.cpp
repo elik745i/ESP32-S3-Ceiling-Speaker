@@ -5,6 +5,7 @@
 
 #include "default_config.h"
 #include "motor_runtime_config.h"
+#include "wifi_power_policy.h"
 
 namespace {
 constexpr char PREF_NAMESPACE[] = "notifier";
@@ -619,6 +620,8 @@ SettingsBundle SettingsManager::defaults() const {
 
 SettingsBundle SettingsManager::sanitize(const SettingsBundle& input) const {
     SettingsBundle settings = input;
+    settings.wifi.staTxPowerDbm = WifiPowerPolicy::normalize(settings.wifi.staTxPowerDbm);
+    settings.wifi.apTxPowerDbm = WifiPowerPolicy::normalize(settings.wifi.apTxPowerDbm);
     settings.wifi.ssid.trim();
     settings.wifi.password.trim();
     settings.wifi.apSsid.trim();
@@ -815,6 +818,8 @@ SettingsBundle SettingsManager::load() {
     settings.wifi.apPassword = readString("wifi_appass", settings.wifi.apPassword);
     settings.wifi.apFallbackEnabled = readBool("wifi_apfb", settings.wifi.apFallbackEnabled);
     settings.wifi.useStaticIp = readBool("wifi_static", settings.wifi.useStaticIp);
+    settings.wifi.staTxPowerDbm = readFloat("wifi_sta_tx", settings.wifi.staTxPowerDbm);
+    settings.wifi.apTxPowerDbm = readFloat("wifi_ap_tx", settings.wifi.apTxPowerDbm);
     settings.wifi.staticIp = readString("wifi_ip", settings.wifi.staticIp);
     settings.wifi.gateway = readString("wifi_gw", settings.wifi.gateway);
     settings.wifi.subnet = readString("wifi_sub", settings.wifi.subnet);
@@ -940,6 +945,8 @@ bool SettingsManager::save(const SettingsBundle& settings) {
     changed |= writeStringIfChanged("wifi_appass", sanitized.wifi.apPassword);
     changed |= writeBoolIfChanged("wifi_apfb", sanitized.wifi.apFallbackEnabled);
     changed |= writeBoolIfChanged("wifi_static", sanitized.wifi.useStaticIp);
+    changed |= writeFloatIfChanged("wifi_sta_tx", sanitized.wifi.staTxPowerDbm);
+    changed |= writeFloatIfChanged("wifi_ap_tx", sanitized.wifi.apTxPowerDbm);
     changed |= writeStringIfChanged("wifi_ip", sanitized.wifi.staticIp);
     changed |= writeStringIfChanged("wifi_gw", sanitized.wifi.gateway);
     changed |= writeStringIfChanged("wifi_sub", sanitized.wifi.subnet);
@@ -1072,6 +1079,8 @@ void SettingsManager::toJson(const SettingsBundle& settings, JsonObject root) co
     wifi["apPassword"] = settings.wifi.apPassword;
     wifi["apFallbackEnabled"] = settings.wifi.apFallbackEnabled;
     wifi["useStaticIp"] = settings.wifi.useStaticIp;
+    wifi["staTxPowerDbm"] = settings.wifi.staTxPowerDbm;
+    wifi["apTxPowerDbm"] = settings.wifi.apTxPowerDbm;
     wifi["staticIp"] = settings.wifi.staticIp;
     wifi["gateway"] = settings.wifi.gateway;
     wifi["subnet"] = settings.wifi.subnet;
@@ -1260,6 +1269,8 @@ bool SettingsManager::updateFromJson(SettingsBundle& settings, JsonVariantConst 
         copyString(wifi, "dns2", settings.wifi.dns2);
         if (wifi["apFallbackEnabled"].is<bool>()) settings.wifi.apFallbackEnabled = wifi["apFallbackEnabled"].as<bool>();
         if (wifi["useStaticIp"].is<bool>()) settings.wifi.useStaticIp = wifi["useStaticIp"].as<bool>();
+        if (wifi["staTxPowerDbm"].is<float>()) settings.wifi.staTxPowerDbm = wifi["staTxPowerDbm"].as<float>();
+        if (wifi["apTxPowerDbm"].is<float>()) settings.wifi.apTxPowerDbm = wifi["apTxPowerDbm"].as<float>();
     }
 
     JsonObjectConst mqtt = object["mqtt"];

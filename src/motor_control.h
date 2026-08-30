@@ -20,6 +20,7 @@ class MotorController {
 
     void begin(LimitInputReader limitInputReader);
     void applySettings(const SettingsBundle& settings);
+    void reclaimConfiguredPins();
     void prepareForRestart();
     void loop();
     bool available() const;

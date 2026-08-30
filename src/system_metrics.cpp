@@ -21,6 +21,38 @@ bool tickHookRegistered[portNUM_PROCESSORS] = {false};
 #define APP_BOARD_PROFILE ""
 #endif
 
+#ifndef APP_COMPILED_BOARD_PROFILE_ID
+#define APP_COMPILED_BOARD_PROFILE_ID 0
+#endif
+
+const char* compiledBoardProfile() {
+#if APP_COMPILED_BOARD_PROFILE_ID == 1
+    return "esp32-s3-super-mini";
+#elif APP_COMPILED_BOARD_PROFILE_ID == 2
+    return "esp32-s3-zero";
+#elif APP_COMPILED_BOARD_PROFILE_ID == 3
+    return "esp32-s3-psram";
+#elif APP_COMPILED_BOARD_PROFILE_ID == 4
+    return "esp32-spk-n16r8";
+#elif APP_COMPILED_BOARD_PROFILE_ID == 5
+    return "esp32-s3-devkit-c1";
+#elif APP_COMPILED_BOARD_PROFILE_ID == 6
+    return "esp32-s3-cam-module";
+#elif APP_COMPILED_BOARD_PROFILE_ID == 7
+    return "esp32-wrover";
+#elif APP_COMPILED_BOARD_PROFILE_ID == 8
+    return "esp32-wroom";
+#elif APP_COMPILED_BOARD_PROFILE_ID == 9
+    return "esp32-mini";
+#elif APP_COMPILED_BOARD_PROFILE_ID == 10
+    return "wemos-lolin32-mini";
+#elif APP_COMPILED_BOARD_PROFILE_ID == 11
+    return "esp32-c3";
+#else
+    return APP_BOARD_PROFILE;
+#endif
+}
+
 uint64_t clampUsedBytes(uint64_t totalBytes, uint64_t freeBytes) {
     return totalBytes > freeBytes ? totalBytes - freeBytes : 0;
 }
@@ -82,7 +114,7 @@ void sampleCpuLoad(SystemMetricsSnapshot& snapshot) {
 
 void populateStaticHardwareInfo(HardwareInfoSnapshot& hardware) {
     hardware.chipModel = ESP.getChipModel();
-    hardware.boardProfile = APP_BOARD_PROFILE;
+    hardware.boardProfile = compiledBoardProfile();
     hardware.chipRevision = ESP.getChipRevision();
     hardware.cpuCores = ESP.getChipCores();
     hardware.cpuFreqMHz = ESP.getCpuFreqMHz();

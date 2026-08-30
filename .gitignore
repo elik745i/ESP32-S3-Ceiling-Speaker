@@ -15,6 +15,7 @@ include/generated_web_assets.h
 *.log
 *.exe
 ELMA-Flasher.config.json
+ELMA-Flasher.window.json
 tools/elma_flasher/launcher/bin/
 tools/elma_flasher/launcher/obj/
 .elma-flasher-build/

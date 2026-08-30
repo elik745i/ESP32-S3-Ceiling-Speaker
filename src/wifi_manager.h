@@ -35,6 +35,7 @@ class WiFiManager {
     ScanSnapshot getScanSnapshot();
     bool startScan();
     void appendScanResultsJson(JsonArray networks);
+    void appendTxPowerStatus(JsonObject network) const;
     bool shouldRedirectCaptivePortal(const String& hostHeader) const;
     bool prepareStationHandoff(IPAddress& stationIp, uint32_t& shutdownDelayMs);
 
@@ -79,6 +80,7 @@ class WiFiManager {
     wifi_event_id_t disconnectEventId_ = 0;
     wifi_err_reason_t lastDisconnectReason_ = WIFI_REASON_UNSPECIFIED;
     String apSsid_;
+    int txPowerApplyError_ = 0;
 
     void startStation();
     void startAccessPoint();
@@ -95,4 +97,5 @@ class WiFiManager {
     void finishUserScan();
     PreferredAccessPoint findPreferredAccessPoint();
     void updateRadioModeAndSleep();
+    void applyRadioTxPower();
 };

@@ -26,8 +26,33 @@ SKIPPED_WEB_ASSETS = {
     "ttp223-touch-icon.svg",
 }
 
+BOARD_ASSET_IDS = {
+    "esp32-s3-supermini-breadboard.svg": 1,
+    "esp32-s3-zero-breadboard.svg": 2,
+    "esp32-s3-psram-breadboard.svg": 3,
+    "esp32-spk-n16r8-breadboard.svg": 4,
+    "esp32-s3-devkit-c1-n8r8-v1-breadboard.svg": 5,
+    "esp32-s3-cam-module-breadboard.svg": 6,
+    "esp32-wrover-breadboard.svg": 7,
+    "esp32-wroom-breadboard.svg": 8,
+    "esp32-mini-breadboard.svg": 9,
+    "wemos-lolin32-mini-breadboard.svg": 10,
+    "esp32-c3-breadboard.svg": 11,
+    "esp32-s2-mini-breadboard.svg": 12,
+    "esp32-c6-mini-breadboard.svg": 13,
+}
+
+selected_board_id_text = os.environ.get("ELMA_SELECTED_BOARD_PROFILE_ID", "0").strip()
+if not selected_board_id_text.isdigit():
+    raise SystemExit("ELMA_SELECTED_BOARD_PROFILE_ID must be a numeric board identifier")
+selected_board_id = int(selected_board_id_text)
+if selected_board_id and selected_board_id not in BOARD_ASSET_IDS.values():
+    raise SystemExit(f"Unknown ELMA selected board identifier: {selected_board_id}")
+env.Append(CPPDEFINES=[("APP_COMPILED_BOARD_PROFILE_ID", selected_board_id)])
+
 if os.environ.get("ELMA_PORTABLE_BUILDER") == "1" and HEADER.is_file() and SOURCE.is_file():
-    print("[web-assets] portable builder is using the prebundled ELMA web configurator")
+    selected_label = os.environ.get("ELMA_SELECTED_BOARD_PROFILE", "all supported boards")
+    print(f"[web-assets] portable builder is using the prebundled configurator for {selected_label}")
     Return()
 
 
@@ -225,12 +250,20 @@ source_lines = [
 ]
 
 for asset_path, symbol, _, payload, _ in assets:
+    board_asset_id = BOARD_ASSET_IDS.get(asset_path)
+    if board_asset_id:
+        guard = f"#if APP_COMPILED_BOARD_PROFILE_ID == 0 || APP_COMPILED_BOARD_PROFILE_ID == {board_asset_id}"
+        header_lines.append(guard)
+        source_lines.append(guard)
     header_lines.append(f"extern const uint8_t {symbol}[];")
     header_lines.append(f"extern const size_t {symbol}_len;")
     source_lines.append(f"const uint8_t {symbol}[] PROGMEM = {{")
     source_lines.append(f"    {c_array(payload)}")
     source_lines.append("};")
     source_lines.append(f"const size_t {symbol}_len = sizeof({symbol});")
+    if board_asset_id:
+        header_lines.append("#endif")
+        source_lines.append("#endif")
     source_lines.append("")
 
 header_lines.append("extern const EmbeddedWebAsset WEB_ASSETS[];")
@@ -238,9 +271,14 @@ header_lines.append("extern const size_t WEB_ASSET_COUNT;")
 
 source_lines.append("const EmbeddedWebAsset WEB_ASSETS[] = {")
 for asset_path, symbol, mime, _, gzip_encoded in assets:
+    board_asset_id = BOARD_ASSET_IDS.get(asset_path)
+    if board_asset_id:
+        source_lines.append(f"#if APP_COMPILED_BOARD_PROFILE_ID == 0 || APP_COMPILED_BOARD_PROFILE_ID == {board_asset_id}")
     source_lines.append(
         f'    {{"/{asset_path}", "{mime}", {symbol}, {symbol}_len, {str(gzip_encoded).lower()}}},'
     )
+    if board_asset_id:
+        source_lines.append("#endif")
 source_lines.append("};")
 source_lines.append("const size_t WEB_ASSET_COUNT = sizeof(WEB_ASSETS) / sizeof(WEB_ASSETS[0]);")
 

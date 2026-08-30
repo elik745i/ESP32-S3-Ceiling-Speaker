@@ -95,6 +95,7 @@ class WebServerManager {
     bool redirectCaptivePortalIfNeeded(AsyncWebServerRequest* request);
     void sendJson(AsyncWebServerRequest* request, const JsonDocument& doc, int statusCode = 200);
     void registerApiRoutes();
+    void registerFirmwareRoutes();
     void registerWebRoutes();
   #endif
 };
